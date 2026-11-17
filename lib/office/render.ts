@@ -690,6 +690,7 @@ const VIG_EDGE = 10;
 function drawAlertVignette(c: Ctx, o: Office) {
   let age = Infinity; // age of the freshest alert: a long-standing one calms down
   for (const e of o.employees.values()) {
+    // hidden (filtered) waiting sessions still raise the alert
     if (e.state === "SEATED" && e.act === "handup") age = Math.min(age, o.clock - e.actSince);
     for (const it of e.interns.values()) if (it.act === "handup") age = Math.min(age, o.clock - it.since);
   }
@@ -847,7 +848,18 @@ function drawMonster(c: Ctx, e: Employee, t: number) {
   }
 }
 
-function drawFx(c: Ctx, e: Employee, t: number) {
+/** context-window "mana": 12x2 under the hearts, below the feet so it never covers the sprite. Unknown = not drawn. */
+function manaBar(c: Ctx, e: Employee, t: number, o: Office) {
+  const f = o.ctxFrac(e.id);
+  if (f === null) return;
+  const w = 12, x = Math.round(e.x - w / 2), y = Math.round(e.y + 13);
+  const col = f > 0.9 ? (Math.floor(t * 3) % 2 === 0 ? "#ff5a5a" : "#ff8f8f") : f > 0.7 ? "#f2c14e" : "#4aa3ff";
+  rect(c, INK, x - 1, y - 1, w + 2, 4);
+  rect(c, "#1f2b4a", x, y, w, 2);
+  if (f > 0) rect(c, col, x, y, Math.max(1, Math.round(w * f)), 2);
+}
+
+function drawFx(c: Ctx, e: Employee, t: number, o: Office) {
   // quest note popping up (board pause or new prompt)
   if (e.state === "ENTERING" && e.holdUntil > t) {
     const u = Math.min(1, (t - e.noteAt) / 0.3);
@@ -877,6 +889,7 @@ function drawFx(c: Ctx, e: Employee, t: number) {
   if (e.deskIdx >= 0 && e.hearts < MAX_HEARTS) {
     for (let k = 0; k < MAX_HEARTS; k++) blitC(c, k < e.hearts ? "heart" : "heart_empty", e.x - 7 + k * 7, e.y + 5);
   }
+  manaBar(c, e, t, o);
   if (e.deskIdx >= 0 && e.hearts === 0 && !e.resting) blitC(c, "sweat" + (Math.floor(t * 3) % 2), e.x - 9, e.y - 22);
   if (e.slashUntil > t && e.monPos && !e.monDead) {
     blitC(c, "slash" + (Math.floor(t * 20) % 2), e.monPos.x - 3 + (e.boss ? 4 : 0), e.monPos.y - 9);
@@ -1073,6 +1086,7 @@ export function drawScene(c: Ctx, o: Office) {
 
   // resting campfire glow + rain go under every entity so characters stay crisp
   for (const e of o.employees.values()) {
+    if (o.isHidden(e)) continue;
     if (e.state === "SEATED" && e.resting) {
       c.globalAlpha = 0.16 + 0.05 * Math.sin(t * 9);
       c.fillStyle = "#ffb050"; c.beginPath(); c.arc(e.x + 10, e.y - 4, 11, 0, Math.PI * 2); c.fill();
@@ -1083,9 +1097,10 @@ export function drawScene(c: Ctx, o: Office) {
 
   const ents: { y: number; fn: () => void }[] = [];
   for (const e of o.employees.values()) {
+    if (o.isHidden(e)) continue;
     const te = ts(e, t);
     ents.push({ y: e.y, fn: () => drawAdventurer(c, e, te) });
-    ents.push({ y: e.y + 0.4, fn: () => drawFx(c, e, te) });
+    ents.push({ y: e.y + 0.4, fn: () => drawFx(c, e, te, o) });
     if (e.monPos) { const mp = e.monPos; ents.push({ y: mp.y, fn: () => drawMonster(c, e, te) }); }
     if ((e.deskIdx >= 0 || e.slot >= 0) && e.state !== "LEAVING") {
       const camp = e.deskIdx < 0;
@@ -1116,6 +1131,7 @@ export function drawScene(c: Ctx, o: Office) {
 
   // bubbles, highlights, tags
   for (const e of o.employees.values()) {
+    if (o.isHidden(e)) continue;
     if (e.state === "SEATED" && e.act === "handup" && !e.tempBubble) {
       if (Math.floor(t * 4) % 2 === 0 || o.selectedId === e.id) drawAlert(c, e.x, e.y - CH_H - 1);
     } else {

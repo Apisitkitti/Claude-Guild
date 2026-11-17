@@ -88,6 +88,11 @@ export class Simulator {
     const base = { session_id: id, cwd };
     const send = (name: string, extra: Record<string, unknown> = {}) =>
       this.emit({ ...base, hook_event_name: name, ...extra });
+    // fake context window: grows with work, occasionally "compacts" (drops back down)
+    let used = randInt(8000, 60000);
+    const limit = 200000;
+    const push = () => this.o.setContext(id, used, limit, false);
+    push();
     yield 0;
     send("SessionStart", { source: "startup" });
     yield rand(2, 4);
@@ -97,6 +102,9 @@ export class Simulator {
       yield rand(1, 2);
       const steps = randInt(4, 10);
       for (let s = 0; s < steps; s++) {
+        used += randInt(1500, 9000);
+        if (used > limit * 0.97 || Math.random() < 0.01) { used = randInt(10000, 30000); send("PreCompact", { trigger: "auto" }); }
+        push();
         const tool = pickTool();
         const tool_input = toolInput(tool, project, cwd);
         const tool_use_id = "toolu_" + hex8();

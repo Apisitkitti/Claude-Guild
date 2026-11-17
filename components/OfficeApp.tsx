@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { EMPTY_VIEW, Office, type InternRow, type OfficeView, type RosterAct, type RosterRow } from "@/lib/office/engine";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { EMPTY_VIEW, Office, type InternRow, type OfficeView, type RosterAct, type RosterRow, type WaitingRow } from "@/lib/office/engine";
 import { charSprite } from "@/lib/office/sprites";
 import { CLASS_LABEL, type Look } from "@/lib/office/palette";
 import { connectLive } from "@/lib/office/live";
@@ -50,6 +50,24 @@ const INTERN_CHIP: Record<InternRow["act"], { cls: string; label: string }> = {
 // Optional RPG fields the engine may add; widened locally so this compiles before and after.
 type RpgRow = RosterRow & { level?: number; xp?: number; xpNext?: number; gold?: number; kills?: number; hp?: number; hpMax?: number };
 const isNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+
+const fmtTok = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+
+function Mana({ p }: { p: RpgRow }) {
+  const { ctxUsed: used, ctxLimit: limit } = p;
+  if (!isNum(used) || !isNum(limit) || limit <= 0) return null;
+  const pct = Math.max(0, Math.min(100, Math.round((used / limit) * 100)));
+  const lvl = pct > 90 ? " hot" : pct > 70 ? " warn" : "";
+  const tip = `${fmtTok(used)} / ${fmtTok(limit)} tokens${p.ctxGuessed ? " (ประมาณ)" : ""}`;
+  return (
+    <div className="mana" title={tip}>
+      <div className={`bar${lvl}`} role="progressbar" aria-label="Context" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-valuetext={`${pct}% ${tip}`}>
+        <i style={{ width: `${pct}%` }} />
+      </div>
+      <span className="mpct">🔮 {p.ctxGuessed ? "≈" : ""}{pct}%</span>
+    </div>
+  );
+}
 
 function Stats({ p }: { p: RpgRow }) {
   const { xp, xpNext, hp, hpMax, gold, kills } = p;
@@ -144,6 +162,8 @@ export default function OfficeApp() {
   const [secHidden, setSecHidden] = useState<Record<string, boolean>>({});
   const [lvFlash, setLvFlash] = useState<Record<string, boolean>>({});
   const [bump, setBump] = useState(false);
+  const [fq, setFq] = useState("");
+  const [fStray, setFStray] = useState(false);
   const prevLv = useRef<Map<string, number>>(new Map());
   const prevTreasury = useRef<number | undefined>(undefined);
 
@@ -187,6 +207,81 @@ export default function OfficeApp() {
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
+  const [notifyPerm, setNotifyPerm] = useState<NotificationPermission | "unsupported">("unsupported");
+  const [notifyOn, setNotifyOn] = useState(false);
+  const notifyOnRef = useRef(false);
+  const prevWaiting = useRef<Set<string>>(new Set());
+  const lastNotified = useRef<Map<string, number>>(new Map());
+  const baseTitle = useRef<string | null>(null);
+
+  useEffect(() => {
+    baseTitle.current = document.title;
+    queueMicrotask(() => {
+      if (typeof Notification === "undefined") return;
+      setNotifyPerm(Notification.permission);
+      try { if (localStorage.getItem("guild.notify") === "1") setNotifyOn(true); } catch {}
+    });
+    return () => { if (baseTitle.current !== null) document.title = baseTitle.current; };
+  }, []);
+  useEffect(() => { notifyOnRef.current = notifyOn && notifyPerm === "granted"; }, [notifyOn, notifyPerm]);
+  const saveNotify = (on: boolean) => { try { localStorage.setItem("guild.notify", on ? "1" : "0"); } catch {} };
+  const toggleNotify = async () => {
+    if (typeof Notification === "undefined") return;
+    if (notifyOn && Notification.permission === "granted") { setNotifyOn(false); saveNotify(false); return; }
+    try {
+      const perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
+      setNotifyPerm(perm);
+      const on = perm === "granted";
+      setNotifyOn(on);
+      saveNotify(on);
+    } catch {}
+  };
+
+  // Tab title + desktop notification when adventurers wait on the user (Live only)
+  const waiting = useMemo(() => (mode === "live" ? view.waiting ?? [] : []), [view.waiting, mode]);
+  const waitingN = waiting.length;
+  const hiddenSet = useMemo(() => new Set(view.hiddenIds ?? []), [view.hiddenIds]);
+  useEffect(() => {
+    if (baseTitle.current === null) return;
+    document.title = waitingN > 0 ? `❗(${waitingN}) Claude Guild ⚔️` : baseTitle.current;
+  }, [waitingN]);
+  useEffect(() => {
+    const cur = new Set<string>();
+    const fresh: WaitingRow[] = [];
+    for (const r of waiting) {
+      cur.add(r.id);
+      if (!prevWaiting.current.has(r.id)) fresh.push(r);
+    }
+    prevWaiting.current = cur;
+    for (const id of [...lastNotified.current.keys()]) if (!view.roster.some((r) => r.id === id) && !(view.hiddenIds ?? []).includes(id)) lastNotified.current.delete(id);
+    if (!fresh.length || !notifyOnRef.current || typeof Notification === "undefined") return;
+    if (!document.hidden && document.hasFocus()) return;
+    const now = Date.now();
+    for (const r of fresh) {
+      const last = lastNotified.current.get(r.id);
+      if (last !== undefined && now - last < 30000) continue;
+      lastNotified.current.set(r.id, now);
+      try {
+        const n = new Notification(`❗ ${r.project || r.tag} ต้องการคุณ`, {
+          body: `${r.tag}${r.status ? `: ${r.status}` : ""}`,
+          tag: `guild-${r.id}`,
+        });
+        n.onclick = () => {
+          window.focus();
+          const off = officeRef.current;
+          if (off?.isHidden(off.employees.get(r.id))) {
+            // relax the query filter so the session is visible, then select it
+            setFq("");
+            off.setFilter({ query: "" });
+            try { localStorage.setItem("guild.filter", JSON.stringify({ query: "", hideStray: off.getFilter().hideStray })); } catch {}
+          }
+          off?.select(r.id);
+          n.close();
+        };
+      } catch {}
+    }
+  }, [waiting, view.roster, view.hiddenIds]);
+
   const toggleCollapsed = () => {
     setCollapsed((c) => {
       try { localStorage.setItem("office.panelCollapsed", c ? "0" : "1"); } catch {}
@@ -204,6 +299,27 @@ export default function OfficeApp() {
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       else appRef.current?.requestFullscreen().catch(() => {});
     } catch {}
+  };
+
+  // session filter: restore once, push to the engine, persist
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const j = JSON.parse(localStorage.getItem("guild.filter") ?? "null");
+        if (j && typeof j === "object") {
+          if (typeof j.query === "string") setFq(j.query.slice(0, 80));
+          if (j.hideStray === true) setFStray(true);
+        }
+      } catch {}
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    officeRef.current?.setFilter({ query: fq, hideStray: fStray });
+  }, [fq, fStray, mounted]);
+  const saveFilter = (query: string, hideStray: boolean) => {
+    setFq(query); setFStray(hideStray);
+    try { localStorage.setItem("guild.filter", JSON.stringify({ query, hideStray })); } catch {}
   };
 
   // Guild engine (once)
@@ -231,6 +347,7 @@ export default function OfficeApp() {
     const live = connectLive({
       onSnapshot: (s) => o.loadSnapshot(s),
       onEvent: (e) => o.event(e),
+      onContext: (m) => { if (m && typeof m.session_id === "string") o.setContext(m.session_id, m.used, m.limit, !!m.limitGuessed); },
       onStatus: (s) => {
         if (s === "open") { opened = true; setConn("connected"); } else { errored = true; setConn(opened ? "reconnecting" : "connecting"); }
       },
@@ -337,6 +454,15 @@ export default function OfficeApp() {
         )}
         {note && <span className="note">{note}</span>}
         <span className="spacer" />
+        {(notifyPerm === "default" || notifyPerm === "granted") && (
+          <button
+            className={`bell${notifyOn && notifyPerm === "granted" ? " on" : ""}`}
+            onClick={toggleNotify}
+            aria-pressed={notifyOn && notifyPerm === "granted"}
+            aria-label={notifyOn && notifyPerm === "granted" ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}
+            title={notifyOn && notifyPerm === "granted" ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}
+          >{notifyOn && notifyPerm === "granted" ? "🔔" : "🔕"}</button>
+        )}
         <button onClick={toggleFull} title="Fullscreen" aria-label="Fullscreen">{full ? "⤡" : "⤢"}</button>
         <button onClick={toggleCollapsed} aria-expanded={!collapsed} title="ซ่อน/แสดงแผงกิลด์">{collapsed ? "◀ แสดงแผงกิลด์" : "ซ่อนแผงกิลด์ ▶"}</button>
       </header>
@@ -359,6 +485,21 @@ export default function OfficeApp() {
               {secHidden.roster ? "▸" : "▾"} นักผจญภัย <small>({view.roster.length})</small>
             </button>
           </h2>
+          <div className="gfilter">
+            <input
+              type="search"
+              value={fq}
+              onChange={(e) => saveFilter(e.target.value, fStray)}
+              placeholder="กรองโปรเจกต์"
+              aria-label="กรองโปรเจกต์"
+              maxLength={80}
+            />
+            <label>
+              <input type="checkbox" checked={fStray} onChange={(e) => saveFilter(fq, e.target.checked)} />
+              ซ่อน session ที่ไม่ได้เริ่มที่นี่
+            </label>
+            {(view.hiddenCount ?? 0) > 0 && <small className="hid" role="status">(ซ่อน {view.hiddenCount})</small>}
+          </div>
           <ul className="roster" id="sec-roster" hidden={!!secHidden.roster}>
             {view.roster.length === 0 && <li className="empty">ยังไม่มีนักผจญภัย — เปิด Claude Code เพื่อรับเควส</li>}
             {view.roster.map((r) => {
@@ -386,6 +527,7 @@ export default function OfficeApp() {
                     <span className={`chip ${chip.cls}`}>{chip.label}</span>
                   </button>
                   <Stats p={p} />
+                  <Mana p={p} />
                   {r.interns > 0 && (
                     <button
                       className="itoggle"
@@ -408,7 +550,7 @@ export default function OfficeApp() {
             </button>
           </h2>
           <ul className="log" id="sec-log" hidden={!!secHidden.log}>
-            {view.log.map((l) => (
+            {view.log.filter((l) => !l.sid || !hiddenSet.has(l.sid)).map((l) => (
               <li key={l.id} className={`${l.bad ? "bad " : ""}${l.intern ? "intern" : ""}`} title={l.text}>
                 <time>{hms(l.time)}</time>
                 <span className="dot" style={{ background: l.color }} />

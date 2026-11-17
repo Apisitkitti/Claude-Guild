@@ -3,6 +3,7 @@ import type { HookEvt, SnapshotMsg } from "./engine";
 export interface LiveHandlers {
   onSnapshot(s: SnapshotMsg): void;
   onEvent(e: HookEvt): void;
+  onContext?(m: { session_id: string; used: number | null; limit: number | null; limitGuessed?: boolean }): void;
   onStatus(s: "open" | "error"): void;
 }
 
@@ -27,6 +28,9 @@ export function connectLive(h: LiveHandlers): { close(): void } {
     };
     src.addEventListener("snapshot", (ev) => {
       try { h.onSnapshot(JSON.parse((ev as MessageEvent).data)); } catch { /* ignore bad frame */ }
+    });
+    src.addEventListener("context", (ev) => {
+      try { h.onContext?.(JSON.parse((ev as MessageEvent).data)); } catch { /* ignore bad frame */ }
     });
     src.onmessage = (ev) => {
       try { h.onEvent(JSON.parse(ev.data)); } catch { /* ignore bad frame */ }

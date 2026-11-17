@@ -20,8 +20,12 @@ export interface HookEvt {
   [k: string]: unknown;
 }
 
+export interface CtxMsg { used: number | null; limit: number | null; limitGuessed?: boolean }
+export interface Ctx { used: number; limit: number; guessed: boolean }
+export interface GuildFilter { query: string; hideStray: boolean }
+
 export interface SnapshotMsg {
-  sessions?: { session_id: string; cwd?: string; interns?: string[] }[];
+  sessions?: { session_id: string; cwd?: string; interns?: string[]; context?: CtxMsg | null; waiting?: boolean }[];
   events?: HookEvt[];
 }
 
@@ -113,6 +117,12 @@ export interface Employee {
   lvlAt: number;
   lvlTo: number;
   dustAcc: number;
+  /** a live/snapshot SessionStart was seen for this session */
+  sawStart: boolean;
+  /** events observed for this session (snapshot events included) */
+  evCount: number;
+  /** the server listed this session in a snapshot `sessions` array (a real, tracked session) */
+  known: boolean;
 }
 
 export interface Particle {
@@ -142,12 +152,17 @@ const MAX_POPUPS = 20;
 export interface LogRow {
   id: number; color: string; text: string; bad?: boolean;
   time: number; tag: string; project: string; kind: string; detail: string; intern: boolean; internLabel: string;
+  /** full session id (lets the UI hide rows of filtered sessions) */
+  sid?: string;
 }
+/** an adventurer waiting on the user, regardless of the session filter */
+export interface WaitingRow { id: string; tag: string; project: string; status: string; hidden: boolean }
 export type RosterAct = Act | "enter" | "leave" | "stretch" | "coffee" | "intern_handup";
 export interface RosterRow {
   id: string; tag: string; project: string; color: string; status: string; interns: number; internList: InternRow[]; desk: number;
   look: Look; act: RosterAct;
   level?: number; xp?: number; xpNext?: number; gold?: number; kills?: number; hp?: number; hpMax?: number;
+  ctxUsed?: number; ctxLimit?: number; ctxGuessed?: boolean;
 }
 export interface OfficeView {
   roster: RosterRow[];
@@ -155,8 +170,14 @@ export interface OfficeView {
   hoverId: string | null;
   selectedId: string | null;
   treasury?: number;
+  /** employees hidden by the session filter */
+  hiddenCount?: number;
+  /** ids hidden by the session filter */
+  hiddenIds?: string[];
+  /** everyone waiting on the user, unfiltered */
+  waiting?: WaitingRow[];
 }
-export const EMPTY_VIEW: OfficeView = { roster: [], log: [], hoverId: null, selectedId: null };
+export const EMPTY_VIEW: OfficeView = { roster: [], log: [], hoverId: null, selectedId: null, hiddenCount: 0, hiddenIds: [], waiting: [] };
 
 declare global {
   interface Window { officeEvent?: (evt: HookEvt) => void }
@@ -232,6 +253,12 @@ export class Office {
   private endedAgents = new Map<string, number>();
   private listeners = new Set<(v: OfficeView) => void>();
   private sim: { update(): void; addSession(): void } | null = null;
+  /** context-window usage per session id; survives leave/re-enter, dropped on reset (null) */
+  private ctxMap = new Map<string, Ctx>();
+  private filter: GuildFilter = { query: "", hideStray: false };
+  /** isHidden cache; invalidated by bumping hidVer (filter/events/snapshot) or when the act changes */
+  private hidVer = 0;
+  private hidCache = new Map<string, { v: number; act: string; h: boolean; proj: string }>();
 
   // ---- effects (render reads these) ----
   readonly particles: Particle[] = Array.from({ length: MAX_PARTICLES }, () => ({
@@ -441,20 +468,87 @@ export class Office {
     this.selectedId = null;
     this.ended.clear();
     this.endedAgents.clear();
+    this.ctxMap.clear();
     for (const p of this.particles) p.on = false;
     this.popups = []; this.banners = []; this.trauma = 0; this.flash = 0;
     this.dirty = true;
     this.emit(true);
   }
 
+  setContext(sid: string, used: number | null | undefined, limit: number | null | undefined, guessed = false) {
+    if (!sid) return;
+    if (typeof used !== "number" || typeof limit !== "number" || !Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0 || used < 0) {
+      if (this.ctxMap.delete(sid)) this.dirty = true;
+      return;
+    }
+    this.ctxMap.delete(sid); // re-insert = most recent
+    this.ctxMap.set(sid, { used, limit, guessed: !!guessed });
+    if (this.ctxMap.size > 300) this.ctxMap.delete(this.ctxMap.keys().next().value as string);
+    this.dirty = true;
+  }
+  /** used/limit clamped to 0..1, or null when unknown */
+  ctxFrac(id: string): number | null {
+    const c = this.ctxMap.get(id);
+    return c ? Math.max(0, Math.min(1, c.used / c.limit)) : null;
+  }
+  ctxOf(id: string): Ctx | null { return this.ctxMap.get(id) ?? null; }
+
+  setFilter(f: Partial<GuildFilter>) {
+    const n = { query: (f.query ?? this.filter.query).trim(), hideStray: f.hideStray ?? this.filter.hideStray };
+    if (n.query === this.filter.query && n.hideStray === this.filter.hideStray) return;
+    this.filter = n;
+    this.hidVer++;
+    if (this.hoverId && this.isHidden(this.employees.get(this.hoverId))) this.hoverId = null;
+    if (this.selectedId && this.isHidden(this.employees.get(this.selectedId))) this.selectedId = null;
+    this.dirty = true;
+  }
+  getFilter(): GuildFilter { return { ...this.filter }; }
+  /** waiting on the user (main handup, or a squire with a raised hand) */
+  private isWaiting(e: Employee): boolean {
+    if (e.state === "LEAVING") return false;
+    if (e.act === "handup") return true;
+    for (const it of e.interns.values()) if (it.act === "handup") return true;
+    return false;
+  }
+  /** Everyone waiting on the user, regardless of the session filter (tab title, notifications). */
+  waitingIds(): string[] {
+    const out: string[] = [];
+    for (const e of this.employees.values()) if (this.isWaiting(e)) out.push(e.id);
+    return out;
+  }
+  /**
+   * Hidden by the session filter. State keeps updating and the spot stays reserved; only drawing/roster/hit-testing skip it.
+   * "Stray" = a session first seen live without SessionStart, never listed in a server snapshot's `sessions`,
+   * with fewer than 3 observed events. Snapshot-listed sessions and anyone waiting on the user (handup) are never stray.
+   * Result is cached per employee (see hidVer).
+   */
+  isHidden(e: Employee | undefined): boolean {
+    if (!e) return false;
+    const c = this.hidCache.get(e.id);
+    if (c && c.v === this.hidVer && c.act === e.act) return c.h;
+    const proj = c && c.v === this.hidVer ? c.proj : e.project.toLowerCase();
+    const q = this.filter.query.toLowerCase();
+    let h = false;
+    if (q && !proj.includes(q)) h = true;
+    else if (this.filter.hideStray && !e.sawStart && !e.known && e.evCount < 3 && !this.isWaiting(e)) h = true;
+    this.hidCache.set(e.id, { v: this.hidVer, act: e.act, h, proj });
+    return h;
+  }
+
   private signature(): string {
     let s = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
+    s += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}`;
     for (const e of this.employees.values()) {
-      s += `;${e.id},${this.statusOf(e)},${e.interns.size},${e.deskIdx},${e.lv}:${e.xp}:${e.gold}:${e.kills}:${e.hearts}`;
+      if (this.isHidden(e)) { s += `;h${e.id}${this.isWaiting(e) ? "w" + this.statusOf(e) : ""}`; continue; }
+      const cf = this.ctxFrac(e.id);
+      s += `;${e.id}${cf === null ? "" : "c" + Math.round(cf * 100) + (this.ctxMap.get(e.id)!.guessed ? "g" : "")},${this.statusOf(e)},${e.interns.size},${e.deskIdx},${e.lv}:${e.xp}:${e.gold}:${e.kills}:${e.hearts}`;
       for (const it of e.interns.values()) s += `,${it.id}:${it.label}:${it.act}:${it.detail ?? ""}:${it.count}:${it.failed ? 1 : 0}`;
     }
     return s;
   }
+
+  /** push the view to subscribers if it changed (the frame loop calls this ~5x/s) */
+  publish() { this.emit(); }
 
   private emit(force = false) {
     if (!this.listeners.size) return;
@@ -467,14 +561,24 @@ export class Office {
   }
 
   getView(): OfficeView {
+    let hiddenCount = 0;
+    const hiddenIds: string[] = [];
+    const waiting: WaitingRow[] = [];
+    for (const e of this.employees.values()) {
+      if (this.isWaiting(e)) waiting.push({ id: e.id, tag: e.tag, project: e.project, status: this.statusOf(e), hidden: this.isHidden(e) });
+    }
     const roster = [...this.employees.values()]
+      .filter((e) => { if (this.isHidden(e)) { hiddenCount++; hiddenIds.push(e.id); return false; } return true; })
       .sort((a, b) => a.order - b.order)
-      .map((e) => ({
+      .map((e) => {
+        const cx = this.ctxMap.get(e.id);
+        return {
+        ...(cx ? { ctxUsed: cx.used, ctxLimit: cx.limit, ctxGuessed: cx.guessed } : {}),
         id: e.id, tag: e.tag, project: e.project, color: e.look.shirt, status: this.statusOf(e),
         interns: e.interns.size, internList: [...e.interns.values()].map(internRow), desk: e.deskIdx, look: e.look, act: this.rosterAct(e),
         level: e.lv, xp: e.xp, xpNext: xpNeed(e.lv), gold: e.gold, kills: e.kills, hp: e.hearts, hpMax: MAX_HEARTS,
-      }));
-    return { roster, log: this.log.slice(), hoverId: this.hoverId, selectedId: this.selectedId, treasury: this.treasury };
+      };});
+    return { roster, log: this.log.slice(), hoverId: this.hoverId, selectedId: this.selectedId, treasury: this.treasury, hiddenCount, hiddenIds, waiting };
   }
 
   private rosterAct(e: Employee): RosterAct {
@@ -520,6 +624,7 @@ export class Office {
   hit(lx: number, ly: number): string | null {
     let best: Employee | null = null;
     for (const e of this.employees.values()) {
+      if (this.isHidden(e)) continue;
       if (lx >= e.x - CH_W / 2 && lx <= e.x + CH_W / 2 && ly >= e.y - CH_H && ly <= e.y) {
         if (!best || e.y >= best.y) best = e;
       }
@@ -848,7 +953,7 @@ export class Office {
       monHp: 3, monHpMax: 3, boss: null, bossAt: -1, lv: 1, xp: 0, gold: 0, kills: 0, hearts: MAX_HEARTS,
       pending: new Map(), toolCalls: 0, qKills: 0, qGold: 0, resting: false,
       windupUntil: 0, hsUntil: 0, hsAt: 0, lungeUntil: 0, flashUntil: 0, monLungeUntil: 0, monKnockUntil: 0, redUntil: 0, slashUntil: 0,
-      lvlAt: -99, lvlTo: 1, dustAcc: 0,
+      lvlAt: -99, lvlTo: 1, dustAcc: 0, sawStart: false, evCount: 0, known: false,
     };
     const sv = this.demo ? undefined : this.progress[id];
     if (sv) { e.lv = sv.lv; e.xp = sv.xp; e.gold = sv.gold; e.kills = sv.kills; }
@@ -861,19 +966,34 @@ export class Office {
 
   loadSnapshot(snap: SnapshotMsg) {
     const ids = new Set<string>();
+    const seen = new Map<string, { n: number; start: boolean }>();
+    for (const ev of snap.events ?? []) {
+      const k = str(ev?.session_id);
+      if (!k) continue;
+      const r = seen.get(k) ?? { n: 0, start: false };
+      r.n++; if (ev.hook_event_name === "SessionStart") r.start = true;
+      seen.set(k, r);
+    }
     for (const s of snap.sessions ?? []) {
       if (!s.session_id) continue;
       ids.add(s.session_id);
+      if (s.context === null) this.setContext(s.session_id, null, null);
+      else if (s.context) this.setContext(s.session_id, s.context.used, s.context.limit, !!s.context.limitGuessed);
       this.ended.delete(s.session_id);
       let e = this.employees.get(s.session_id);
       if (!e) e = this.spawn(s.session_id, s.cwd, true);
+      e.known = true;
+      const sn = seen.get(s.session_id);
+      if (sn) { e.evCount = Math.max(e.evCount, sn.n); if (sn.start) e.sawStart = true; }
       if (e.state === "LEAVING") { e.returning = true; e.lastEventAt = this.clock; continue; }
+      if (s.waiting && e.act !== "handup") this.setAct(e, "handup", "❗");
       const want = new Set(s.interns ?? []);
       for (const k of [...e.interns.keys()]) if (!want.has(k)) e.interns.delete(k);
       for (const a of want) if (!e.interns.has(a)) e.interns.set(a, newIntern(a, "squire", this.clock, this.clock - 1));
     }
     for (const e of [...this.employees.values()]) if (!ids.has(e.id)) { e.returning = false; this.leave(e); }
     if (!this.log.length) for (const ev of [...(snap.events ?? [])]) this.pushLog(ev);
+    this.hidVer++;
     this.dirty = true;
   }
 
@@ -904,7 +1024,7 @@ export class Office {
       ? `${name} ${str(evt.agent_type)}`.trim()
       : what;
     this.log.unshift({
-      id: this.logSeq++, color: lookFor(sid).shirt, bad,
+      id: this.logSeq++, sid, color: lookFor(sid).shirt, bad,
       text: `${who} · ${project} · ${detailTxt}`,
       time: Date.now(), tag, project, intern: !!evt.agent_id && name !== "SubagentStart" && name !== "SubagentStop",
       internLabel: str(evt.agent_type) || "agent",
@@ -941,11 +1061,15 @@ export class Office {
       return;
     }
     if (name === "SessionStart" && e) {
+      e.sawStart = true;
       if (e.state === "LEAVING") { e.returning = true; e.lastEventAt = this.clock; this.pushLog(evt); }
       return;
     }
     const fresh = !e;
     if (!e) e = this.spawn(sid, evt.cwd, false);
+    if (name === "SessionStart") e.sawStart = true;
+    e.evCount++;
+    this.hidVer++;
     if (evt.cwd && (fresh || e.project === "unknown")) { e.cwd = evt.cwd; e.project = projectOf(evt.cwd); }
     this.pushLog(evt);
     e.lastEventAt = this.clock;
