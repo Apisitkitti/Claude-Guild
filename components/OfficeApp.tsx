@@ -486,17 +486,21 @@ export default function OfficeApp() {
             </button>
           </h2>
           <div className="gfilter">
-            <input
-              type="search"
-              value={fq}
-              onChange={(e) => saveFilter(e.target.value, fStray)}
-              placeholder="กรองโปรเจกต์"
-              aria-label="กรองโปรเจกต์"
-              maxLength={80}
-            />
-            <label>
-              <input type="checkbox" checked={fStray} onChange={(e) => saveFilter(fq, e.target.checked)} />
-              ซ่อน session ที่ไม่ได้เริ่มที่นี่
+            <div className="gsearch">
+              <span className="gsearch-ico" aria-hidden="true">🔍</span>
+              <input
+                type="search"
+                value={fq}
+                onChange={(e) => saveFilter(e.target.value, fStray)}
+                placeholder="ค้นหาโปรเจกต์…"
+                aria-label="กรองโปรเจกต์"
+                maxLength={80}
+              />
+            </div>
+            <label className="gtoggle" title="ซ่อน session ที่ไม่ได้เข้ากิลด์ทางประตู (ไม่เห็น SessionStart และมี event น้อย) — ถ้ารอ permission จะยังแสดงเสมอ">
+              <input type="checkbox" role="switch" checked={fStray} onChange={(e) => saveFilter(fq, e.target.checked)} />
+              <span className="gtoggle-track" aria-hidden="true"><span className="gtoggle-knob" /></span>
+              <span>ซ่อนผู้มาเยือนหลงทาง</span>
             </label>
             {(view.hiddenCount ?? 0) > 0 && <small className="hid" role="status">(ซ่อน {view.hiddenCount})</small>}
           </div>
