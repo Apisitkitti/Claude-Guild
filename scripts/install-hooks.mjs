@@ -17,16 +17,13 @@ Options:
                      settings.json.bak-YYYYMMDD-HHMMSS is made first.
   --uninstall        remove only our curl hooks (localhost:<port>/events)
   --port N           use port N instead of 5050 in installed commands
-  --url <base>       post to a remote guild host (e.g. https://xxx.trycloudflare.com)
-                     instead of http://localhost:<port>
-  --token <t>        guild token, sent as 'Authorization: Bearer <t>' (use with --url)
   --help             show this help
 `;
 
 const die = (m) => { console.error('error: ' + m); process.exit(1); };
 
 function parseArgs(argv) {
-  const o = { apply: false, uninstall: false, port: 5050, url: null, token: null };
+  const o = { apply: false, uninstall: false, port: 5050 };
   const targets = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -41,27 +38,16 @@ function parseArgs(argv) {
       const p = Number(val());
       if (!Number.isInteger(p) || p < 1 || p > 65535) die('invalid --port');
       o.port = p;
-    } else if (a === '--url') {
-      const u = val();
-      try { const x = new URL(u); if (!/^https?:$/.test(x.protocol)) throw new Error('protocol'); o.url = u.replace(/\/+$/, ''); } catch { die('invalid --url (need http(s)://host[:port])'); }
-    } else if (a === '--token') {
-      o.token = val();
-      if (!/^[A-Za-z0-9_.~+\/=-]+$/.test(o.token)) die('invalid --token characters');
     } else die(`unknown argument ${a}\n\n${HELP}`);
   }
   if (targets.length !== 1) die(`exactly one of --global, --project, --file is required\n\n${HELP}`);
-  if (o.token && !o.url) die('--token requires --url');
   o.file = targets[0];
   return o;
 }
 
-// Ours: a curl posting to .../events (local default, or a remote guild installed with --url).
-const isOurs = (cmd, target) => {
-  if (typeof cmd !== 'string' || !cmd.includes('/events')) return false;
-  if (target == null) return /localhost:\d+\/events/.test(cmd) || /curl .*--data-binary @- \S+\/events\b/.test(cmd);
-  return cmd.includes(`${target}/events`);
-};
-const targetOf = (o) => (o.url ?? `http://localhost:${o.port}`);
+const isOurs = (cmd, port) =>
+  typeof cmd === 'string' && cmd.includes('/events') &&
+  (port == null ? /localhost:\d+\/events/.test(cmd) : cmd.includes(`localhost:${port}`));
 
 const hookCmds = (group) => (Array.isArray(group?.hooks) ? group.hooks : []).map((h) => h?.command);
 
@@ -92,14 +78,11 @@ if (!o.uninstall) {
   for (const [event, groups] of Object.entries(example.hooks ?? {})) {
     const existing = settings.hooks?.[event];
     if (existing !== undefined && !Array.isArray(existing)) die(`hooks.${event} in target is not an array. Nothing written.`);
-    if ((existing ?? []).some((g) => hookCmds(g).some((c) => isOurs(c, targetOf(o))))) {
+    if ((existing ?? []).some((g) => hookCmds(g).some((c) => isOurs(c, o.port)))) {
       log.push(`  = ${event}: already installed, skipped`);
       continue;
     }
-    let add = JSON.parse(JSON.stringify(groups).replace(/http:\/\/localhost:\d+/g, targetOf(o)));
-    if (o.token) {
-      add = JSON.parse(JSON.stringify(add).replace(/-H 'Content-Type: application\/json'/g, `-H 'Content-Type: application/json' -H 'Authorization: Bearer ${o.token}'`));
-    }
+    const add = JSON.parse(JSON.stringify(groups).replace(/localhost:\d+/g, `localhost:${o.port}`));
     settings.hooks ??= {};
     settings.hooks[event] = [...(existing ?? []), ...add];
     log.push(`  + ${event}: add ${add.length} matcher group(s)${add[0]?.matcher ? ` (matcher ${add[0].matcher})` : ''}`);

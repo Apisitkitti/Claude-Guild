@@ -34,7 +34,7 @@ const EVT_ICON: Record<string, string> = {
   Read: "📖", Grep: "🔎", Glob: "🔎", LS: "📂", Edit: "✏️", Write: "✏️", MultiEdit: "✏️", NotebookEdit: "✏️",
   Bash: "💻", WebFetch: "🌐", WebSearch: "🌐", TodoWrite: "📝", TaskCreate: "📝", TaskUpdate: "📝",
   Agent: "🤖", Task: "🤖", Workflow: "🤖", SubagentStart: "🛡️", SubagentStop: "🛡️",
-  Notification: "🔔", Shout: "📣", Clash: "⚔️", PermissionRequest: "❗", SessionStart: "📜", SessionEnd: "🏰", PreCompact: "🗜️", UserPromptSubmit: "💬", Stop: "⏹️",
+  Notification: "🔔", Clash: "⚔️", PermissionRequest: "❗", SessionStart: "📜", SessionEnd: "🏰", PreCompact: "🗜️", UserPromptSubmit: "💬", Stop: "⏹️",
 };
 const iconFor = (kind: string) => EVT_ICON[kind] ?? (kind.startsWith("mcp__") ? "🔌" : "•");
 const pad2 = (n: number) => String(n).padStart(2, "0");

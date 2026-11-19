@@ -98,35 +98,6 @@ export class TerritoryTracker {
     return this.refresh(now);
   }
 
-  /** Release a session's claims: all of them, or just the given absolute files. */
-  releaseFiles(sid: string, files: string[] | undefined, now: number): boolean {
-    const m = this.claims.get(sid);
-    if (m) {
-      if (!files) this.claims.delete(sid);
-      else {
-        for (const f of files) m.delete(f);
-        if (m.size === 0) this.claims.delete(sid);
-      }
-    }
-    return this.refresh(now);
-  }
-
-  /** Who holds (claim) or recently touched an absolute file. */
-  holdersOf(file: string, now: number): { sid: string; kind: "claim" | "recent"; at: number }[] {
-    const out: { sid: string; kind: "claim" | "recent"; at: number }[] = [];
-    const seen = new Set<string>();
-    for (const [sid, m] of this.claims) {
-      const c = m.get(file);
-      if (c && now - c.lastTouch < CLAIM_TTL_MS) {
-        out.push({ sid, kind: "claim", at: c.lastTouch });
-        seen.add(sid);
-      }
-    }
-    const r = this.recent.get(file);
-    if (r) for (const [sid, t] of r) if (!seen.has(sid) && now - t < RECENT_MS) out.push({ sid, kind: "recent", at: t });
-    return out;
-  }
-
   /** Forget a session entirely (ended / stale). */
   dropSession(sid: string, now: number): boolean {
     this.claims.delete(sid);
