@@ -666,9 +666,35 @@ function drawPopups(c: Ctx, o: Office) {
 }
 
 // ---- territory: claim flags, conflict lines and swords (all drawn as separate UI; never over/through characters' colours) ----
-interface TLink { ax: number; ay: number; bx: number; by: number; level: "overlap" | "clash" }
+interface TLink { ax: number; ay: number; bx: number; by: number; ix: number; iy: number; level: "overlap" | "clash" }
 const linkPool: TLink[] = [];
 let linkN = 0;
+// badge sits above the heads: head top (CH_H) + tallest overhead bubble (17) + gap (6) + badge radius (7)
+const ICON_R = 7, ICON_UP = CH_H + 17 + 6 + ICON_R, ICON_STEP = 6, ICON_TRIES = 4;
+function hitsBox(x0: number, y0: number, x1: number, y1: number, cx: number, cy: number): boolean {
+  return cx + ICON_R > x0 && cx - ICON_R < x1 && cy + ICON_R > y0 && cy - ICON_R < y1;
+}
+/** true if the badge box at (cx,cy) overlaps any visible adventurer / monster / boss sprite box */
+function iconBlocked(o: Office, cx: number, cy: number): boolean {
+  for (const e of o.employees.values()) {
+    if (o.isHidden(e) || e.state === "LEAVING") continue;
+    if (hitsBox(e.x - CH_W / 2, e.y - CH_H, e.x + CH_W / 2, e.y, cx, cy)) return true;
+    const p = e.monPos;
+    if (p && !e.monDead) {
+      const spr = e.boss ? bossSprite(e.boss, 0, false) : monsterSprite(e.monKind, 0, false);
+      const mcx = p.x + (e.boss ? 4 : 0);
+      if (hitsBox(mcx - spr.width / 2, p.y - spr.height - 7, mcx + spr.width / 2, p.y, cx, cy)) return true;
+    }
+  }
+  return false;
+}
+function placeLinkIcon(o: Office, l: TLink, topFeetY: number) {
+  const x = Math.max(ICON_R + 1, Math.min(W - ICON_R - 1, Math.round((l.ax + l.bx) / 2)));
+  let y = Math.round(topFeetY - ICON_UP);
+  for (let k = 0; k < ICON_TRIES && y > ICON_R + 1 && iconBlocked(o, x, y); k++) y -= ICON_STEP;
+  l.ix = x; l.iy = Math.max(ICON_R + 1, Math.min(H - ICON_R - 1, y));
+}
+
 /** fills the shared pool; returns the live count */
 function territoryLinks(o: Office): number {
   linkN = 0;
@@ -678,8 +704,9 @@ function territoryLinks(o: Office): number {
       const e = o.employees.get(r.sids[k]);
       if (!e || o.isHidden(e) || e.state === "LEAVING" || e.x < 0 || e.x > W || e.y < 0 || e.y > H) continue;
       if (!first) { first = e; continue; }
-      const l = linkPool[linkN] ?? (linkPool[linkN] = { ax: 0, ay: 0, bx: 0, by: 0, level: "overlap" });
+      const l = linkPool[linkN] ?? (linkPool[linkN] = { ax: 0, ay: 0, bx: 0, by: 0, ix: 0, iy: 0, level: "overlap" });
       l.ax = first.x; l.ay = first.y - 9; l.bx = e.x; l.by = e.y - 9; l.level = r.level;
+      placeLinkIcon(o, l, Math.min(first.y, e.y));
       linkN++;
     }
   }
@@ -720,6 +747,13 @@ function drawLinks(c: Ctx, n: number, t: number, o: Office) {
     c.beginPath(); c.moveTo(l.ax, l.ay); c.lineTo(l.bx, l.by); c.stroke();
   }
   c.setLineDash([]);
+  c.lineWidth = 1; // thin tick from the link up to its badge (drawn under entities, so it never covers a character)
+  for (let i = 0; i < n; i++) {
+    const l = linkPool[i];
+    c.strokeStyle = l.level === "clash" ? "#ff4a4a" : "#ffd94a";
+    const mx = Math.round((l.ax + l.bx) / 2) + 0.5, my = (l.ay + l.by) / 2;
+    c.beginPath(); c.moveTo(mx, my); c.lineTo(l.ix + 0.5, l.iy + ICON_R); c.stroke();
+  }
   c.restore();
 }
 
@@ -741,7 +775,7 @@ function drawSwords(c: Ctx, x: number, y: number, col: string, k: number) {
 function drawLinkIcons(c: Ctx, n: number, t: number, o: Office) {
   for (let i = 0; i < n; i++) {
     const l = linkPool[i];
-    const mx = (l.ax + l.bx) / 2, my = (l.ay + l.by) / 2;
+    const mx = l.ix, my = l.iy;
     if (l.level === "clash") {
       const ph = o.reducedMotion ? 0 : Math.sin(t * 5);
       drawSwords(c, mx, my, "#ff5a5a", 1 + 0.1 * ph);
@@ -1185,7 +1219,6 @@ export function drawScene(c: Ctx, o: Office) {
   // a character's footprint, so nothing translucent ever sits on top of a character
   const nLinks = territoryLinks(o);
   drawLinks(c, nLinks, t, o);
-  drawLinkIcons(c, nLinks, t, o);
   drawClaimFlags(c, o, t);
 
   const ents: { y: number; fn: () => void }[] = [];
@@ -1219,6 +1252,7 @@ export function drawScene(c: Ctx, o: Office) {
   }
   ents.sort((a, b) => a.y - b.y);
   for (const en of ents) en.fn();
+  drawLinkIcons(c, nLinks, t, o); // after entities: the opaque badge is never hidden
   drawParticles(c, o);
   drawPopups(c, o);
 
