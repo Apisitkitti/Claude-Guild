@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerritoryMsg } from "@/lib/office/engine";
+import { DUEL_EXCHANGES, DUEL_EX, DUEL_FIGHT, DUEL_FINAL, DUEL_FINAL_AT, DUEL_FLOURISH, DUEL_FLOURISH_LEN, DUEL_IMPACT, DUEL_INTRO, DUEL_KNOCK, DUEL_KNOCK_KO, DUEL_DASH, DUEL_PIPS, duelExchangeAt, duelScript, newDuelScript, type Duel } from "@/lib/office/engine";
+import { DUEL_HALF, HALL_W, W, SPOT_COLS, SPOT_ROWS, duelMidOfDesks } from "@/lib/office/layout";
 import { emp, ev, newOffice, seat, sid, stubStorage, tick } from "./helpers";
 
 beforeEach(() => { vi.useFakeTimers(); stubStorage(); });
@@ -76,6 +78,29 @@ describe("territory duel", () => {
     expect(emp(o, a).state).toBe("SEATED");
     expect(emp(o, b).state).toBe("SEATED");
     expect(emp(o, a).act).toBe("handup");
+  });
+
+  it("a finished duel settles the clash (arena cleared); an aborted one does not; a new clash file shows again", () => {
+    const { o, a, b } = two();
+    const clash = { file: "src/a.ts", level: "clash" };
+    o.setTerritory(msg(a, b, "clash"));
+    tick(o, 4);
+    expect(o.isSettled(clash)).toBe(false); // mid-fight
+    tick(o, 12);
+    expect(o.duels).toHaveLength(0);
+    expect(o.isSettled(clash)).toBe(true);
+    expect(o.conflictRows()).toHaveLength(1); // still listed in the panel, only the field art is cleared
+    o.setTerritory(msg(a, b, "clash", "src/b.ts"));
+    expect(o.isSettled({ file: "src/b.ts", level: "clash" })).toBe(false);
+    expect(o.isSettled(clash)).toBe(false); // pruned once the old clash is gone
+
+    const t = two();
+    t.o.setTerritory(msg(t.a, t.b, "clash"));
+    tick(t.o, 2.5);
+    t.o.event(ev(t.a, "PermissionRequest", { tool_name: "Bash" }));
+    tick(t.o, 8);
+    expect(t.o.duels).toHaveLength(0);
+    expect(t.o.isSettled(clash)).toBe(false);
   });
 
   it("Stop during a duel: finishes the duel, then goes to the tavern", () => {
@@ -169,7 +194,7 @@ describe("territory duel", () => {
     const d = o.duels[0];
     const early = d.winner === 0 ? d.l : d.r;
     o.event(ev(early, "PostToolUseFailure", { tool_name: "Edit", tool_input: { file_path: "/w/x/a.ts" } }));
-    tick(o, 2.8 + 3.6);
+    tick(o, 2.8 + 7.4);
     expect(d.flourished).toBe(true);
     expect(d.winner === 0 ? d.l : d.r).not.toBe(early);
   });
@@ -366,5 +391,148 @@ describe("territory duel: second pair after an older clash", () => {
     o.setTerritory({ claims, conflicts: [c2, c1] });
     tick(o, 1);
     expect(o.duels).toHaveLength(0); // same pair is on cooldown, nobody else re-duels
+  });
+});
+
+describe("duel choreography", () => {
+  const fake = (over: Partial<Duel> = {}): Duel => ({
+    l: "a", r: "b", kind: "sword", styleL: "sword", styleR: "sword", agg: 0, walk: true, still: false, phase: "fight",
+    start: 0, t0: 0, winner: 0, failer: null, ix: 0, iy: 0, beat: -1, fxm: 0, decided: true, flourished: false, ...over,
+  });
+
+  it("timeline constants are consistent", () => {
+    expect(DUEL_FINAL_AT).toBeCloseTo(DUEL_INTRO + DUEL_EXCHANGES * DUEL_EX);
+    expect(DUEL_FLOURISH).toBeCloseTo(DUEL_FINAL_AT + DUEL_FINAL);
+    expect(DUEL_FIGHT).toBeCloseTo(DUEL_FLOURISH + DUEL_FLOURISH_LEN);
+    expect(DUEL_FIGHT).toBeGreaterThanOrEqual(8);
+    expect(DUEL_FIGHT).toBeLessThanOrEqual(9.5);
+    expect(DUEL_HALF).toBeGreaterThanOrEqual(28);
+    expect(duelExchangeAt(0)).toBe(-1);
+    expect(duelExchangeAt(DUEL_INTRO + 0.01)).toBe(0);
+    expect(duelExchangeAt(DUEL_FINAL_AT + 0.01)).toBe(DUEL_EXCHANGES);
+    expect(duelExchangeAt(DUEL_FLOURISH)).toBe(5);
+  });
+
+  it("hp: the loser ends at 0, the winner keeps pips, for both outcomes and every kind", () => {
+    for (const kind of ["sword", "orb", "arrows", "magic_sword", "arrow_sword", "arrow_magic"] as const) {
+      for (const winner of [0, 1] as const) {
+        const d = fake({ kind, winner, agg: kind === "sword" || kind === "orb" || kind === "arrows" ? 0 : 1 });
+        const a = newDuelScript(), b = newDuelScript();
+        for (let u = 0; u <= DUEL_FIGHT; u += 0.05) {
+          duelScript(d, 0, u, a); duelScript(d, 1, u, b);
+          expect(a.hp).toBeLessThanOrEqual(DUEL_PIPS); expect(b.hp).toBeGreaterThanOrEqual(0);
+        }
+        duelScript(d, 0, DUEL_FLOURISH + 0.5, a); duelScript(d, 1, DUEL_FLOURISH + 0.5, b);
+        const [w, l] = winner === 0 ? [a, b] : [b, a];
+        expect(l.hp).toBe(0);
+        expect(w.hp).toBeGreaterThan(0);
+        expect(l.ko).toBe(true);
+        expect(l.pose).toBe("hurt");
+        expect(w.pose).toBe("cheer");
+      }
+    }
+  });
+
+  it("early exchanges drop both sides evenly (no commitment to the winner)", () => {
+    for (const winner of [0, 1] as const) {
+      const d = fake({ kind: "orb", styleL: "magic", styleR: "magic", winner });
+      const a = newDuelScript(), b = newDuelScript();
+      duelScript(d, 0, DUEL_FINAL_AT - 0.01, a); duelScript(d, 1, DUEL_FINAL_AT - 0.01, b);
+      expect(a.hp).toBe(b.hp);
+      expect(a.hp).toBeGreaterThan(0);
+    }
+  });
+
+  it("is deterministic and defenders are knocked back during the recoil", () => {
+    const d = fake();
+    const a = newDuelScript(), b = newDuelScript(), a2 = newDuelScript();
+    const u = DUEL_INTRO + DUEL_IMPACT + 0.25; // exchange 0: left attacks right
+    duelScript(d, 0, u, a); duelScript(d, 0, u, a2); duelScript(d, 1, u, b);
+    expect(a2).toEqual(a);
+    expect(a.atk).toBe(0);
+    expect(a.dx).toBeGreaterThan(20); // dashed forward
+    expect(b.dx).toBeGreaterThanOrEqual(DUEL_KNOCK - 2); // right defender pushed right (away)
+    expect(b.pose).toBe("hurt");
+    // final blow: the loser is thrown farther and sinks
+    duelScript(d, 1, DUEL_FINAL_AT + 1.3, b);
+    expect(b.dx).toBeGreaterThanOrEqual(11);
+    expect(b.dy).toBeGreaterThan(0);
+  });
+
+  it("fighters never overlap during the choreography", () => {
+    for (const kind of ["sword", "arrow_sword"] as const) {
+      const d = fake({ kind, styleR: kind === "sword" ? "sword" : "arrow", agg: kind === "sword" ? 0 : 1 });
+      const a = newDuelScript(), b = newDuelScript();
+      for (let u = 0; u <= DUEL_FIGHT; u += 0.02) {
+        duelScript(d, 0, u, a); duelScript(d, 1, u, b);
+        const sep = (2 * DUEL_HALF + b.dx) - a.dx;
+        expect(sep).toBeGreaterThanOrEqual(16 + 4);
+      }
+    }
+  });
+
+  it("the loser of a live duel is the failer's side", () => {
+    for (const loser of [0, 1]) {
+      const { o, a, b } = two();
+      const m = msg(a, b, "clash");
+      m.conflicts[0].failer = loser === 0 ? a : b;
+      o.setTerritory(m);
+      const d = o.duels[0];
+      tick(o, 2.8 + DUEL_FINAL_AT + 0.2);
+      expect(d.decided).toBe(true);
+      const lid = loser === 0 ? a : b;
+      expect(d.winner === 0 ? d.r : d.l).toBe(lid);
+      const s = newDuelScript();
+      duelScript(d, d.winner === 0 ? 1 : 0, DUEL_FLOURISH + 0.1, s);
+      expect(s.hp).toBe(0);
+    }
+  });
+});
+
+describe("duel fixes", () => {
+  const fk = (over: Partial<Duel> = {}): Duel => ({
+    l: "a", r: "b", kind: "arrow_sword", styleL: "sword", styleR: "arrow", agg: 1, walk: true, still: false, phase: "fight",
+    start: 0, t0: 0, winner: 0, failer: null, ix: 0, iy: 0, beat: -1, fxm: 0, decided: true, flourished: false, ...over,
+  });
+  it("the right-hand attacker's script carries the projectile (fly), the defender's does not", () => {
+    const d = fk();
+    const u = DUEL_INTRO + DUEL_IMPACT - DUEL_DASH / 2;
+    const s0 = duelScript(d, 0, u, newDuelScript()), s1 = duelScript(d, 1, u, newDuelScript());
+    expect(s0.atk).toBe(1);
+    expect(s1.fly).toBeGreaterThan(0);
+    expect(s1.fly).toBeLessThan(1);
+    expect(s0.fly).toBe(-1);
+  });
+
+  it("hit-stop freezes the defender's frame", () => {
+    const d = fk({ styleL: "sword", styleR: "sword", kind: "sword", agg: 0 });
+    const a = duelScript(d, 1, DUEL_INTRO + DUEL_IMPACT + 0.01, newDuelScript());
+    const b = duelScript(d, 1, DUEL_INTRO + DUEL_IMPACT + 0.07, newDuelScript());
+    expect(a.stop && b.stop).toBe(true);
+    expect([a.frame, a.dx]).toEqual([b.frame, b.dx]);
+  });
+
+  it("every walking desk pair keeps fighters + K.O. knock-back inside [HALL_W, W]", () => {
+    const m = { x: 0, y: 0 };
+    let n = 0;
+    for (let a = 0; a < 8; a++) for (let b = a + 1; b < 8; b++) {
+      const ax = SPOT_COLS[a % 4], ay = SPOT_ROWS[(a / 4) | 0], bx = SPOT_COLS[b % 4], by = SPOT_ROWS[(b / 4) | 0];
+      if (Math.hypot(ax - bx, ay - by) > 130) continue;
+      duelMidOfDesks(a, b, m); n++;
+      expect(m.x - DUEL_HALF - DUEL_KNOCK_KO - 8).toBeGreaterThanOrEqual(HALL_W);
+      expect(m.x + DUEL_HALF + DUEL_KNOCK_KO + 8).toBeLessThanOrEqual(W);
+    }
+    expect(n).toBeGreaterThan(8);
+  });
+
+  it("a bystander in the movement band turns a walking duel into a still one", () => {
+    const o = newOffice(); const a = sid(), mid = sid(), b = sid();
+    seat(o, a); seat(o, mid); seat(o, b);
+    expect([emp(o, a).deskIdx, emp(o, mid).deskIdx, emp(o, b).deskIdx]).toEqual([0, 1, 2]);
+    o.setTerritory({ claims: [], conflicts: [{ file: "x.ts", sids: [a, b], level: "clash", since: 1 }] });
+    expect(o.duels).toHaveLength(1);
+    expect(o.duels[0].walk).toBe(false);
+    expect(o.duels[0].still).toBe(true);
+    expect(emp(o, a).state).toBe("SEATED");
   });
 });

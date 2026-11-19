@@ -65,13 +65,182 @@ export interface Duel {
   failer: string | null;
   /** current impact point (beam end / orb / clang) for the renderer */
   ix: number; iy: number;
+  /** last exchange whose one-shot effects were handled (-1 intro .. 4 final, 5 flourish) */
   beat: number;
+  /** one-shot effect bits already fired in the current exchange (1 launch, 2 impact, 4 KO) */
+  fxm: number;
+  /** the winner was decided (at the start of the final blow) */
+  decided: boolean;
   flourished: boolean;
 }
-export const DUEL_FIGHT = 4.4;
+// ---- duel choreography (shared by the engine fx and the renderer) ----
+/** face-off before the first exchange (VS plate) */
 export const DUEL_INTRO = 0.8;
-export const DUEL_FLOURISH = 3.4;
-export const DUEL_BEAT = 0.5;
+/** one regular exchange: wind-up, dash / projectile, impact (+ hit-stop), recoil, settle */
+export const DUEL_EX = 1.1;
+export const DUEL_EXCHANGES = 4;
+/** the final blow + KO */
+export const DUEL_FINAL = 1.6;
+/** start of the final exchange */
+export const DUEL_FINAL_AT = DUEL_INTRO + DUEL_EXCHANGES * DUEL_EX;
+/** start of the flourish (winner cheers + crown, loser is KO'd) */
+export const DUEL_FLOURISH = DUEL_FINAL_AT + DUEL_FINAL;
+export const DUEL_FLOURISH_LEN = 2;
+/** whole fight (walking duels): intro + exchanges + final + flourish ~ 8.8s */
+export const DUEL_FIGHT = DUEL_FLOURISH + DUEL_FLOURISH_LEN;
+/** "still" duels (camp / reduced motion): VS badge + emotes only */
+export const DUEL_STILL = 4.4;
+/** the loser gets up again during the last bit of the flourish */
+export const DUEL_RECOVER = 0.4;
+export const DUEL_PIPS = 3;
+/** which regular exchange is the sword-vs-sword blade lock */
+export const DUEL_CLASH_EX = 2;
+/** seconds of dash / projectile flight before the impact */
+export const DUEL_DASH = 0.25;
+/** impact time inside a regular / the final exchange, and the hit-stop that follows it */
+export const DUEL_IMPACT = 0.5;
+export const DUEL_IMPACT_FINAL = 0.7;
+export const DUEL_STOP = 0.08;
+export const DUEL_STOP_FINAL = 0.12;
+/** px: melee dash distance, blade-lock reach (each), recoil / KO knock-back, KO sink */
+export const DUEL_REACH = 32;
+export const DUEL_CLASH_REACH = 17;
+export const DUEL_KNOCK = 7;
+export const DUEL_KNOCK_KO = 12;
+export const DUEL_KO_DROP = 3;
+
+export type DuelPose = "idle" | "attack" | "cast" | "hurt" | "cheer";
+/** One fighter's scripted state at fight time u (+ the exchange info both fighters share). Offsets are screen px from the walk spot. */
+export interface DuelScript {
+  dx: number; dy: number; pose: DuelPose; frame: number;
+  /** pips left (already counting a blow that has landed) */
+  hp: number;
+  /** -1 face-off, 0..3 regular exchange, 4 final blow, 5 flourish */
+  ex: number;
+  /** seconds into the exchange */
+  q: number;
+  /** attacking side of this exchange (-1 = blade lock / none) */
+  atk: number;
+  /** 0 none, 1 melee dash, 2 ranged projectile, 3 clash */
+  act: 0 | 1 | 2 | 3;
+  /** 0 none, 1 wind-up, 2 dash / flight, 3 hit-stop, 4 aftermath */
+  stage: 0 | 1 | 2 | 3 | 4;
+  /** projectile progress 0..1 while in flight, else -1 */
+  fly: number;
+  big: boolean;
+  /** knocked out: stars circle the head */
+  ko: boolean;
+  /** this fighter has been struck in this exchange */
+  hit: boolean;
+  stop: boolean;
+}
+export const newDuelScript = (): DuelScript => ({
+  dx: 0, dy: 0, pose: "idle", frame: 0, hp: DUEL_PIPS, ex: -1, q: 0, atk: -1, act: 0, stage: 0, fly: -1, big: false, ko: false, hit: false, stop: false,
+});
+const DS_SCRATCH = newDuelScript();
+const FX0 = newDuelScript(), FX1 = newDuelScript();
+const sstep = (x: number): number => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+
+/** exchange index at fight time u: -1 face-off, 0..3 regular, 4 final, 5 flourish */
+export function duelExchangeAt(u: number): number {
+  if (u < DUEL_INTRO) return -1;
+  if (u >= DUEL_FLOURISH) return 5;
+  if (u >= DUEL_FINAL_AT) return DUEL_EXCHANGES;
+  return Math.min(DUEL_EXCHANGES - 1, Math.floor((u - DUEL_INTRO) / DUEL_EX));
+}
+/** attacking side of exchange k (-1 = clash). Mixed kinds alternate who attacks, starting with `agg`; the last blow is the winner's. */
+function exAtk(d: Duel, k: number): number {
+  if (k >= DUEL_EXCHANGES) return d.winner;
+  if (k === DUEL_CLASH_EX && d.kind === "sword") return -1;
+  return (k & 1) === 0 ? d.agg : 1 - d.agg;
+}
+function duelHp(d: Duel, side: number, k: number, landed: boolean): number {
+  let taken = 0;
+  const n = Math.min(k, DUEL_EXCHANGES);
+  for (let j = 0; j < n; j++) { const a = exAtk(d, j); if (a >= 0 && a !== side) taken++; }
+  if (k < DUEL_EXCHANGES && landed) { const a = exAtk(d, k); if (a >= 0 && a !== side) taken++; }
+  if (k >= DUEL_EXCHANGES && (k > DUEL_EXCHANGES || landed) && side !== d.winner) return 0;
+  return Math.max(0, DUEL_PIPS - taken);
+}
+
+/**
+ * The fight script: a pure, allocation-free function of (duel, side, fight time u). Writes into `o` (module scratch by default)
+ * and returns it. Regular exchange (1.1s): wind-up pull-back -> dash / projectile -> impact + hit-stop -> recoil (defender knocked back
+ * and shaking) -> both ease home. The sword-vs-sword exchange #2 is a blade lock. The final blow is the winner's; the loser is KO'd.
+ * Only the final exchange and later read d.winner, so it can be decided at the start of the final blow.
+ */
+export function duelScript(d: Duel, side: 0 | 1, u: number, o: DuelScript = DS_SCRATCH): DuelScript {
+  const dir = side === 0 ? 1 : -1, style = side === 0 ? d.styleL : d.styleR;
+  o.dx = 0; o.dy = 0; o.pose = style === "magic" ? "cast" : "attack"; o.frame = 0; o.hp = DUEL_PIPS;
+  o.ex = -1; o.q = 0; o.atk = -1; o.act = 0; o.stage = 0; o.fly = -1; o.big = false; o.ko = false; o.hit = false; o.stop = false;
+  if (u < DUEL_INTRO) {
+    if (u < DUEL_INTRO - 0.25) { o.pose = "idle"; o.frame = Math.floor(u * 4) & 1; }
+    return o;
+  }
+  if (u >= DUEL_FLOURISH) {
+    o.ex = 5; o.q = u - DUEL_FLOURISH; o.hp = duelHp(d, side, 5, true);
+    if (side === d.winner) { o.pose = "cheer"; o.frame = Math.floor(u * 5) & 1; return o; }
+    const rec = sstep((u - (DUEL_FIGHT - DUEL_RECOVER)) / DUEL_RECOVER);
+    o.dx = Math.round(-dir * DUEL_KNOCK_KO * (1 - rec)); o.dy = Math.round(DUEL_KO_DROP * (1 - rec));
+    o.ko = rec < 0.5; o.pose = rec < 0.5 ? "hurt" : "idle"; o.frame = 1;
+    return o;
+  }
+  const k = duelExchangeAt(u), fin = k === DUEL_EXCHANGES;
+  const q = Math.max(0, fin ? u - DUEL_FINAL_AT : u - DUEL_INTRO - k * DUEL_EX);
+  const imp = fin ? DUEL_IMPACT_FINAL : DUEL_IMPACT, stopLen = fin ? DUEL_STOP_FINAL : DUEL_STOP;
+  const wind = imp - DUEL_DASH, rec = fin ? 0.3 : 0.22, ret = fin ? 0.4 : 0.3;
+  const stopped = q >= imp && q < imp + stopLen;
+  const q2 = q < imp ? q : stopped ? imp : q - stopLen; // game time: frozen during the hit-stop
+  const atk = exAtk(d, k);
+  o.ex = k; o.q = q; o.atk = atk; o.big = fin; o.stop = stopped;
+  o.stage = q < wind ? 1 : q < imp ? 2 : stopped ? 3 : 4;
+  o.hp = duelHp(d, side, k, q >= imp);
+  let fw = 0; // px toward the opponent
+  if (atk < 0) { // blade lock
+    o.act = 3; o.pose = "attack";
+    const reach = DUEL_CLASH_REACH, lockEnd = imp + 0.25, shoveEnd = lockEnd + 0.15;
+    if (q2 < wind) { fw = -3 * sstep(q2 / wind); }
+    else if (q2 < imp) { fw = -3 + (reach + 3) * sstep((q2 - wind) / DUEL_DASH); o.frame = 1; }
+    else if (q2 < lockEnd) { fw = reach + (stopped ? 0 : ((Math.floor(q * 50) + side) & 1) * 2 - 1); o.frame = 1; }
+    else if (q2 < shoveEnd) { fw = reach - (reach + 6) * sstep((q2 - lockEnd) / 0.15); o.pose = "hurt"; }
+    else fw = -6 * (1 - sstep((q2 - shoveEnd) / 0.12));
+  } else if (side === atk) {
+    const melee = style === "sword", back = fin ? 5 : 3;
+    o.act = melee ? 1 : 2;
+    if (melee) {
+      if (q2 < wind) fw = -back * sstep(q2 / wind);
+      else if (q2 < imp) { fw = -back + (DUEL_REACH + back) * sstep((q2 - wind) / DUEL_DASH); o.frame = 1; }
+      else if (q2 < imp + rec) { fw = DUEL_REACH - 2 * sstep((q2 - imp) / rec); o.frame = 1; }
+      else fw = (DUEL_REACH - 2) * (1 - sstep((q2 - imp - rec) / ret));
+    } else {
+      fw = q2 < wind ? -back * sstep(q2 / wind) : -back * (1 - sstep((q2 - wind) / DUEL_DASH));
+      if (q >= wind && q < imp) o.fly = (q - wind) / DUEL_DASH;
+      o.frame = style === "magic" ? (q2 >= wind && q2 < imp + rec ? 1 : 0) : (q2 < wind ? 1 : 0);
+    }
+  } else { // defender
+    o.act = (side === 0 ? d.styleR : d.styleL) === "sword" ? 1 : 2;
+    const K = fin ? DUEL_KNOCK_KO : DUEL_KNOCK;
+    if (q2 >= imp) {
+      o.hit = true;
+      const away = q2 < imp + rec ? K * sstep((q2 - imp) / rec) : fin ? K : K * (1 - sstep((q2 - imp - rec) / ret));
+      fw = -away;
+      if (!stopped && q2 < imp + rec) fw += (Math.floor(q * 60) & 1) * 2 - 1; // shake
+      if (fin || q2 < imp + rec + 0.1) { o.pose = "hurt"; o.frame = fin && q2 >= imp + rec ? 1 : Math.floor(q2 * 10) & 1; }
+      if (fin) { o.dy = Math.round(DUEL_KO_DROP * sstep((q2 - imp - 0.12) / 0.3)); o.ko = q2 >= imp + rec * 0.8; }
+    }
+  }
+  o.dx = Math.round(fw * dir);
+  return o;
+}
+
+const POINT_SCRATCH: Pt = { x: 0, y: 0 };
+/** where this exchange's blow lands (the blade lock sits between the two; otherwise on the defender's front). Allocation-free. */
+export function duelContact(L: { x: number; y: number }, R: { x: number; y: number }, s: DuelScript, out: Pt = POINT_SCRATCH): Pt {
+  if (s.atk < 0) { out.x = (L.x + R.x) / 2; out.y = (L.y + R.y) / 2 - 14; return out; }
+  const a = s.atk === 0 ? 1 : -1, D = s.atk === 0 ? R : L;
+  out.x = D.x - a * (s.act === 1 ? 8 : 4); out.y = D.y - 13;
+  return out;
+}
 const DUEL_COOLDOWN = 60;
 /** a clash that could not duel yet (participant still walking in, etc.) keeps trying this long (sim seconds) */
 const DUEL_WAIT = 30;
@@ -88,6 +257,8 @@ const HOLY_COLS = ["#ffffff", "#ffe27a", "#fff6c0", "#ffd24a"];
 const ARROW_COLS = ["#ffffff", "#c69c6d", "#d8dde8", "#ffe14a"];
 const CLASH_COLS = ["#ff4a4a", "#ffd94a", "#ffffff"];
 const GOLD_COLS = ["#ffe14a", "#ffffff", "#f2c14e"];
+const DUST_COLS = ["#d8c9a0", "#b59a6a", "#ffffff"];
+
 const styleOf = (cls: string): DuelStyle => (cls === "mage" || cls === "cleric" ? "magic" : cls === "ranger" ? "arrow" : "sword");
 
 export interface Intern {
@@ -330,6 +501,8 @@ export class Office {
   private conflicts: TerritoryConflict[] = [];
   /** key -> Infinity while the conflict is live, else the time its dismissal expires (kept briefly so clash->overlap flaps stay dismissed) */
   private dismissed = new Map<string, number>();
+  /** clash conflictKeys already fought out by a finished duel: their contested strip / flag / link are no longer drawn */
+  private settled = new Set<string>();
   private pendingClash = new Map<string, TerritoryConflict>();
   private rowsCache: ConflictRow[] | null = null;
   private seenClash = new Set<string>();
@@ -611,6 +784,7 @@ export class Office {
     this.claimN = claims;
     this.conflicts = conflicts;
     const keys = new Set(conflicts.map(conflictKey));
+    for (const k of this.settled) if (!keys.has(k)) this.settled.delete(k);
     const now = Date.now();
     for (const [k, exp] of [...this.dismissed]) {
       if (keys.has(k)) this.dismissed.set(k, Infinity);
@@ -667,7 +841,7 @@ export class Office {
   }
 
   /**
-   * a NEW clash: the two adventurers duel for ~4.4s (walking to the flag when both sit at battle spots).
+   * a NEW clash: the two adventurers duel for ~9s (walking to the flag when both sit at battle spots).
    * When a pair is blocked only by a transient condition (someone still walking in / at the tavern / mid-duel, or both duel slots busy)
    * the clash waits in `duelWait` and is retried every frame for DUEL_WAIT seconds while it stays live.
    */
@@ -710,7 +884,14 @@ export class Office {
     const dist = Math.hypot(a.x - b.x, a.y - b.y);
     if (dist < DUEL_MIN_DIST) return false; // stacked on the same camp slot: nothing to draw between them
     const bothSpots = a.deskIdx >= 0 && b.deskIdx >= 0;
-    const walk = !this.reducedMotion && bothSpots && dist <= DUEL_WALK_MAX;
+    let walk = !this.reducedMotion && bothSpots && dist <= DUEL_WALK_MAX;
+    if (walk) { // a bystander standing in the fight's movement band would be run through: duel in place instead
+      const m = duelMidOfDesks(a.deskIdx, b.deskIdx, this.tmpPt), reach = DUEL_HALF + DUEL_KNOCK_KO + CH_W; // fighters' sprite boxes + a bystander's box
+      for (const o of this.employees.values()) {
+        if (o === a || o === b || o.state === "LEAVING" || this.isHidden(o)) continue;
+        if (Math.abs(o.x - m.x) < reach && Math.abs(o.y - m.y) < CH_H) { walk = false; break; }
+      }
+    }
     if (!walk && dist > DUEL_RANGE_MAX) return false;
     // in-place duels (camp / far apart / reduced motion) are "still": a VS badge + emotes, no effects between the sprites
     const still = !walk;
@@ -726,7 +907,7 @@ export class Office {
     const d: Duel = {
       l: L.id, r: R.id, kind, styleL: sl, styleR: sr, agg, walk, still, phase: walk ? "go" : "fight",
       start: this.clock, t0: walk ? -1 : this.clock, winner: this.duelWinner(L, R, failer), failer,
-      ix: (L.x + R.x) / 2, iy: (L.y + R.y) / 2 - 12, beat: -1, flourished: false,
+      ix: (L.x + R.x) / 2, iy: (L.y + R.y) / 2 - 12, beat: -1, fxm: 0, decided: false, flourished: false,
     };
     this.duels.push(d);
     L.duel = d; R.duel = d;
@@ -759,6 +940,13 @@ export class Office {
     this.tugs.push({ a: a.id, b: b.id, until: this.clock + 2.4 });
     if (this.tugs.length > 6) this.tugs.shift();
   }
+  /** the duel was fought to the end: every clash between these two counts as settled */
+  private settle(d: Duel) {
+    for (const c of this.conflicts) if (c.level === "clash" && c.sids.includes(d.l) && c.sids.includes(d.r)) this.settled.add(conflictKey(c));
+  }
+  /** true once a finished duel has settled this clash (the arena between the plots is cleared) */
+  isSettled(c: { file: string; level: string }): boolean { return this.settled.has(conflictKey(c)); }
+
   /** end time of the flag tug between two sessions (0 when none) */
   tugUntil(a: string, b: string): number {
     for (const t of this.tugs) if ((t.a === a && t.b === b) || (t.a === b && t.b === a)) return t.until;
@@ -809,7 +997,8 @@ export class Office {
       if ((d.phase as Duel["phase"]) === "fight") {
         const u = this.clock - d.t0;
         L!.facing = 1; R!.facing = -1;
-        if (u >= DUEL_FIGHT) {
+        if (u >= (d.still ? DUEL_STILL : DUEL_FIGHT)) {
+          this.settle(d);
           if (d.walk) { d.phase = "back"; this.sendHome(L, d); this.sendHome(R, d); }
           else { L!.duel = null; R!.duel = null; L!.facing = 1; R!.facing = 1; this.duels.splice(i, 1); this.dirty = true; continue; }
         } else if (!d.still) this.duelFx(d, L!, R!, u);
@@ -823,33 +1012,63 @@ export class Office {
     }
   }
 
-  /** impact point + sparks on every beat; winner flourish burst. Particles only (no per-frame allocation). All opaque-or-under-entities. */
+  /**
+   * One-shot effects of the choreography (see duelScript): dust / muzzle flash at the launch, impact burst + damage pop + trauma at the
+   * hit, K.O. text, the winner flourish. Particles are flagged `under` (they fade, so never over a character). No per-frame allocation.
+   */
   private duelFx(d: Duel, L: Employee, R: Employee, u: number) {
     if (this.reducedMotion) return;
-    const mx = (L.x + R.x) / 2, my = (L.y + R.y) / 2 - 12;
-    d.ix = mx; d.iy = my;
-    if (d.kind === "orb") d.ix = mx + Math.sin(u * 2.6) * 1.5;
-    else if (d.kind !== "sword" && d.kind !== "arrows") {
-      const def = d.agg === 0 ? R : L;
-      d.ix = def.x + def.facing * (d.kind === "arrow_magic" ? 25 : 13); d.iy = def.y - 13;
-    }
-    if (!d.flourished && u >= DUEL_FLOURISH) {
-      d.flourished = true;
-      d.winner = this.duelWinner(L, R, d.failer); // decided now, so a failure that arrived after the clash still counts
-      const w = d.winner === 0 ? L : R;
-      this.ring(w.x, w.y - CH_H - 4, 8, GOLD_COLS, 22, 0.7, true);
-      this.pop(w.x, w.y - CH_H - 10, "WIN!", "#ffe14a", false, true, 1.1);
+    if (!d.decided && u >= DUEL_FINAL_AT) { d.decided = true; d.winner = this.duelWinner(L, R, d.failer); } // decided now, so a failure that arrived during the fight still counts
+    const s0 = duelScript(d, 0, u, FX0), s1 = duelScript(d, 1, u, FX1);
+    if (s0.ex !== d.beat) { d.beat = s0.ex; d.fxm &= 8; } // bit 8 (K.O. shown) survives the beat change
+    if (s0.ex < 0) return;
+    if (s0.ex === 5) {
+      if (!d.flourished) {
+        d.flourished = true;
+        const w = d.winner === 0 ? L : R;
+        this.ring(w.x, w.y - CH_H - 4, 8, GOLD_COLS, 22, 0.7, true);
+        this.pop(w.x, w.y - CH_H - 12, "WIN!", "#ffe14a", false, true, 1.1);
+        if (!(d.fxm & 8)) { // a long frame jumped over the final exchange: still show the K.O.
+          d.fxm |= 8;
+          const lo = d.winner === 0 ? R : L, so = duelScript(d, d.winner === 0 ? 1 : 0, u, FX1);
+          this.ring(lo.x + so.dx, lo.y - CH_H - 6, 8, GOLD_COLS, 24, 0.6, true);
+          this.pop(lo.x + so.dx, lo.y - CH_H - 12, "K.O.!", "#ffffff", true, false, 1.2);
+        }
+      }
       return;
     }
-    if (u < DUEL_INTRO || u >= DUEL_FLOURISH) return;
-    const b = Math.floor((u - DUEL_INTRO) / DUEL_BEAT);
-    if (b === d.beat) return;
-    d.beat = b;
-    const sparkCols = d.kind === "orb" || d.kind === "magic_sword"
-      ? ((d.kind === "orb" ? L : (d.agg === 0 ? L : R)).look.cls === "cleric" ? HOLY_COLS : MAGIC_COLS)
-      : d.kind === "sword" ? SPARK_COLS : ARROW_COLS;
-    this.burst(d.ix, d.iy, 7, sparkCols, 55, 60, 0.35, 1, true);
-    if (b % 3 === 0) this.addTrauma(0.05);
+    const A = s0.atk === 0 ? L : s0.atk === 1 ? R : null, dirA = s0.atk === 1 ? -1 : 1;
+    const aStyle = s0.atk === 0 ? d.styleL : d.styleR;
+    if (!(d.fxm & 1) && s0.stage >= 2) { // launch
+      d.fxm |= 1;
+      if (!A) { this.burst(L.x + 6, L.y - 1, 3, DUST_COLS, 30, 40, 0.3, 1, true); this.burst(R.x - 6, R.y - 1, 3, DUST_COLS, 30, 40, 0.3, 1, true); }
+      else if (s0.act === 1) this.burst(A.x - dirA * 6, A.y - 1, 4, DUST_COLS, 34, 40, 0.3, 1, true);
+      else this.burst(A.x + dirA * 11, A.y - 15, 4, aStyle === "magic" ? (A.look.cls === "cleric" ? HOLY_COLS : MAGIC_COLS) : ARROW_COLS, 40, 0, 0.25, 1, true);
+    }
+    if (!(d.fxm & 2) && s0.stage >= 3) { // impact
+      d.fxm |= 2;
+      const c = duelContact(L, R, s0, POINT_SCRATCH);
+      d.ix = c.x; d.iy = c.y;
+      if (!A) {
+        this.pop(c.x, c.y - 16, "CLANG!", "#ffe14a", true, true, 0.9);
+        this.burst(c.x, c.y, 12, SPARK_COLS, 70, 60, 0.4, 1, true);
+        this.ring(c.x, c.y, 8, CLASH_COLS, 30, 0.35, true);
+        this.addTrauma(0.2);
+      } else {
+        const D = s0.atk === 0 ? R : L, big = s0.big;
+        const cols = aStyle === "sword" ? SPARK_COLS : aStyle === "magic" ? (A.look.cls === "cleric" ? HOLY_COLS : MAGIC_COLS) : ARROW_COLS;
+        this.burst(c.x, c.y, big ? 16 : 8, cols, big ? 85 : 60, 60, 0.4, 1, true);
+        this.pop(D.x, D.y - CH_H - 12, big ? "CRIT!" : "-1", big ? "#ff4a4a" : "#ffb347", big, big, big ? 1.1 : 0.7);
+        this.addTrauma(big ? 0.55 : 0.12);
+      }
+    }
+    if (s0.big && !(d.fxm & 4) && s0.q >= DUEL_IMPACT_FINAL + DUEL_STOP_FINAL + 0.3) { // knocked out
+      d.fxm |= 12;
+      const lo = d.winner === 0 ? R : L, so = d.winner === 0 ? s1 : s0;
+      this.ring(lo.x + so.dx, lo.y - CH_H - 6, 8, GOLD_COLS, 24, 0.6, true);
+      this.pop(lo.x + so.dx, lo.y - CH_H - 12, "K.O.!", "#ffffff", true, false, 1.2);
+      this.addTrauma(0.2);
+    }
   }
 
   /** sparks on the contested flag while a clash is live (the flag is knocked over) */
@@ -861,7 +1080,7 @@ export class Office {
     this.terrFxAt = 0.8;
     let n = 0;
     for (const r of this.conflictRows()) {
-      if (r.level !== "clash" || n >= 4) continue;
+      if (r.level !== "clash" || n >= 4 || this.settled.has(conflictKey(r))) continue;
       const a = this.employees.get(r.sids[0]), b = this.employees.get(r.sids[1]);
       if (!a || !b || a.deskIdx < 0 || b.deskIdx < 0 || this.isHidden(a) || this.isHidden(b)) continue;
       const m = duelMidOfDesks(a.deskIdx, b.deskIdx, this.tmpPt);

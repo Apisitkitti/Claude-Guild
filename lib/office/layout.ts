@@ -129,9 +129,12 @@ export function duelMid(a: Pt, b: Pt, out: Pt = { x: 0, y: 0 }): Pt {
 /** duelMid for two battle spots, allocation-free. */
 export function duelMidOfDesks(da: number, db: number, out: Pt): Pt {
   const ax = SPOT_COLS[da % 4], ay = SPOT_ROWS[(da / 4) | 0], bx = SPOT_COLS[db % 4], by = SPOT_ROWS[(db / 4) | 0];
-  out.x = Math.round((ax + bx) / 2); out.y = Math.round((ay + by) / 2) + (Math.abs(ay - by) < 10 ? 14 : 0);
+  // clamped so the fighters (+ the K.O. knock-back and a half sprite) never leave the playfield (same-column pairs sit at the edges)
+  out.x = Math.max(HALL_W + DUEL_EDGE, Math.min(W - DUEL_EDGE, Math.round((ax + bx) / 2))); out.y = Math.round((ay + by) / 2) + (Math.abs(ay - by) < 10 ? 14 : 0);
   return out;
 }
-/** Half the gap between two duellists (centre to the meeting point). Sprites are 16 wide, so the open gap is 2*(DUEL_HALF-8) = 28px,
- * enough for a 3px lunge + effects that never touch either sprite box. */
-export const DUEL_HALF = 22;
+/** Half the gap between two duellists (centre to the meeting point). Sprites are 16 wide, so the open gap is 2*(DUEL_HALF-8) = 40px:
+ * room for a ~32px melee dash (sprites stay >= 8px apart at contact), the blade lock and projectiles in flight. */
+export const DUEL_HALF = 28;
+/** meeting point to the farthest a fighter can end up sideways: DUEL_HALF + K.O. knock-back (engine DUEL_KNOCK_KO = 12) + half a sprite (8) */
+export const DUEL_EDGE = DUEL_HALF + 12 + 8;

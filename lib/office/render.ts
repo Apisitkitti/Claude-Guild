@@ -1,4 +1,4 @@
-import { DUEL_FLOURISH, DUEL_INTRO, DUEL_BEAT, MAX_HEARTS, type Duel, type Employee, type Office } from "./engine";
+import { DUEL_FLOURISH, DUEL_IMPACT, DUEL_IMPACT_FINAL, DUEL_PIPS, DUEL_STOP, DUEL_STOP_FINAL, duelContact, duelScript, MAX_HEARTS, type Duel, type DuelScript, type Employee, type Office } from "./engine";
 import {
   BACK_WALL_H, BAR, BRIDGE_X, CH_H, CH_W, COUNTER_BOX, DESK_COUNT, DUNGEON, GATE_OPEN, H, HALL_W, HEARTH,
   NPC_POS, ROAD_Y, TORCHES, W, WALL_X0, duelMidOfDesks, plotRect, spotOf, squirePoint, campSquirePoint, standSlot, CAMP_MAX,
@@ -700,6 +700,7 @@ function placeLinkIcon(o: Office, l: TLink, topFeetY: number) {
 function territoryLinks(o: Office): number {
   linkN = 0;
   for (const r of o.conflictRows()) { // cached in the engine; only rebuilt when territory/roster changes
+    if (r.level === "clash" && o.isSettled(r)) continue; // fought out: the arena between the plots is cleared
     let first: Employee | null = null;
     for (let k = 0; k < r.sids.length; k++) {
       const e = o.employees.get(r.sids[k]);
@@ -784,30 +785,21 @@ function drawMidFlag(c: Ctx, o: Office, l: TLink, a: Employee, b: Employee, t: n
 }
 
 // ---- territory duels ----
-const DP = { pose: "idle" as Pose, frame: 0, dx: 0 };
-/** Fills DP for an adventurer in the fight phase of a (non-still) duel; false = use the normal pose. */
+const DP = { pose: "idle" as Pose, frame: 0, dx: 0, dy: 0 };
+// (built here, not via the engine: render <-> engine import each other, so no engine call may run at module load)
+const mkScript = (): DuelScript => ({ dx: 0, dy: 0, pose: "idle", frame: 0, hp: 0, ex: -1, q: 0, atk: -1, act: 0, stage: 0, fly: -1, big: false, ko: false, hit: false, stop: false });
+const SA = mkScript(), SB = mkScript(), S0 = mkScript(), S1 = mkScript();
+const CPT = { x: 0, y: 0 };
+/** Fills DP for an adventurer in the fight phase of a (non-still) duel from the shared script; false = use the normal pose. */
+/** the fight offset of this adventurer (0 outside a walking duel), written to DP.dx / DP.dy */
+function duelOffsetInto(e: Employee, t: number) {
+  if (!(e.duel && duelPoseInto(e, e.duel, ts(e, t)))) { DP.dx = 0; DP.dy = 0; }
+}
 function duelPoseInto(e: Employee, d: Duel, t: number): boolean {
-  DP.dx = 0;
+  DP.dx = 0; DP.dy = 0;
   if (d.phase !== "fight" || d.still) return false;
-  const u = t - d.t0, side = d.l === e.id ? 0 : 1, dir = side === 0 ? 1 : -1;
-  if (u >= DUEL_FLOURISH) {
-    if (side === d.winner) { DP.pose = "cheer"; DP.frame = Math.floor(t * 5) % 2; }
-    else { DP.pose = "hurt"; DP.frame = Math.floor(t * 8) % 2; DP.dx = -3 * dir; }
-    return true;
-  }
-  if (u < DUEL_INTRO) { DP.pose = "idle"; DP.frame = Math.floor(t * 4) % 2; return true; }
-  const b = Math.floor((u - DUEL_INTRO) / DUEL_BEAT), ph = ((u - DUEL_INTRO) % DUEL_BEAT) / DUEL_BEAT;
-  const style = side === 0 ? d.styleL : d.styleR;
-  const mixed = d.kind === "magic_sword" || d.kind === "arrow_sword" || d.kind === "arrow_magic";
-  const defender = mixed && side !== d.agg;
-  if (style === "sword") {
-    DP.pose = "attack";
-    if (defender) { DP.frame = 0; DP.dx = 0; }
-    else if ((b + side) % 2 === 0) { DP.frame = 1; DP.dx = (ph < 0.5 ? 3 : 2) * dir; }
-    else { DP.frame = 0; DP.dx = -1 * dir; }
-  } else if (style === "magic") {
-    DP.pose = "cast"; DP.frame = defender ? 0 : Math.floor(t * 8) % 2;
-  } else { DP.pose = "attack"; DP.frame = ph < 0.25 ? 1 : 0; DP.dx = ph < 0.25 ? -1 * dir : 0; }
+  const s = duelScript(d, d.l === e.id ? 0 : 1, t - d.t0, SA);
+  DP.pose = s.pose; DP.frame = s.frame; DP.dx = s.dx; DP.dy = s.dy;
   return true;
 }
 
@@ -819,21 +811,10 @@ function pxLine(c: Ctx, x0: number, y0: number, x1: number, y1: number, col: str
     c.fillRect(Math.round(x0 + (x1 - x0) * u - th / 2), Math.round(y0 + (y1 - y0) * u - th / 2 + w), th, th);
   }
 }
-function beam(c: Ctx, x0: number, y0: number, x1: number, y1: number, col: string, t: number) {
-  pxLine(c, x0, y0, x1, y1, INK, 5, 1.5, t);
-  pxLine(c, x0, y0, x1, y1, col, 3, 1.5, t);
-  pxLine(c, x0, y0, x1, y1, "#ffffff", 1, 1.5, t);
-}
 function blade(c: Ctx, hx: number, hy: number, tx: number, ty: number) {
   pxLine(c, hx, hy, tx, ty, INK, 3);
   pxLine(c, hx, hy, tx, ty, "#d8dde8", 1);
   rect(c, GOLD, Math.round(hx) - 1, Math.round(hy) - 1, 3, 3);
-}
-function star(c: Ctx, x: number, y: number, r: number, col: string) {
-  rect(c, "#ffffff", x - r, y, r * 2 + 1, 1); rect(c, "#ffffff", x, y - r, 1, r * 2 + 1);
-  rect(c, col, x - 1, y - 1, 3, 3); rect(c, "#ffffff", x, y, 1, 1);
-  rect(c, col, x - r + 1, y - r + 1, 1, 1); rect(c, col, x + r - 1, y - r + 1, 1, 1);
-  rect(c, col, x - r + 1, y + r - 1, 1, 1); rect(c, col, x + r - 1, y + r - 1, 1, 1);
 }
 function arrowPx(c: Ctx, x: number, y: number, dir: number) {
   const x0 = Math.round(x), y0 = Math.round(y);
@@ -841,6 +822,18 @@ function arrowPx(c: Ctx, x: number, y: number, dir: number) {
   rect(c, "#c69c6d", x0 - 3, y0, 6, 1);
   rect(c, "#d8dde8", dir > 0 ? x0 + 3 : x0 - 4, y0, 2, 1);
   rect(c, "#ffffff", dir > 0 ? x0 - 4 : x0 + 3, y0 - 1, 1, 3);
+}
+/** a hit on a monster, by class: warrior/rogue slash, ranger looses an arrow that flies in, mage/cleric a spell burst. p = 0..1 progress */
+function hitFx(c: Ctx, e: Employee, mx: number, my: number, t: number, rate: number, p: number) {
+  const cls = e.look.cls;
+  if (cls === "ranger") {
+    const sx = e.x + 11, sy = e.y - 14, k = Math.min(1, p / 0.6);
+    if (k < 1) arrowPx(c, sx + (mx - 4 - sx) * k, sy + (my - 10 - sy) * k, 1);
+    else { arrowPx(c, mx - 4, my - 10, 1); blitC(c, "spark" + (Math.floor(t * rate) % 2), mx - 2, my - 10); }
+  } else if (cls === "mage" || cls === "cleric") {
+    blitC(c, "magic" + (Math.floor(t * rate) % 2), mx - 5, my - 10);
+    blitC(c, "spark" + (Math.floor(t * rate + 1) % 2), mx - 1, my - 12);
+  } else blitC(c, "slash" + (Math.floor(t * rate) % 2), mx - 3, my - 9);
 }
 const magicCol = (e: Employee) => (e.look.cls === "cleric" ? "#ffe27a" : "#b07bff");
 function crown(c: Ctx, x: number, y: number, t: number) {
@@ -875,26 +868,56 @@ function pxDisc(c: Ctx, cx: number, cy: number, r: number, cl: string, cr: strin
     rect(c, cr, cx, cy + dy, w + 1, 1);
   }
 }
-/** integer-aligned pixel ring, 1px thick (alpha 1) */
-function pxRing(c: Ctx, cx: number, cy: number, r: number, col: string) {
-  for (let dy = -r; dy <= r; dy++) {
-    const wo = Math.floor(Math.sqrt(r * r - dy * dy) + 0.5);
-    const wi = Math.abs(dy) <= r - 1 ? Math.floor(Math.sqrt((r - 1) * (r - 1) - dy * dy) + 0.5) : -1;
-    if (wi < 0) rect(c, col, cx - wo, cy + dy, wo * 2 + 1, 1);
-    else { const ww = Math.max(1, wo - wi); rect(c, col, cx - wo, cy + dy, ww, 1); rect(c, col, cx + wo - ww + 1, cy + dy, ww, 1); }
+/** big opaque impact star (alpha 1) */
+function impactStar(c: Ctx, x: number, y: number, r: number, col: string) {
+  const dd = Math.round(r * 0.7);
+  pxLine(c, x - r, y, x + r, y, INK, 5); pxLine(c, x, y - r, x, y + r, INK, 5);
+  pxLine(c, x - dd, y - dd, x + dd, y + dd, INK, 3); pxLine(c, x - dd, y + dd, x + dd, y - dd, INK, 3);
+  pxLine(c, x - r + 1, y, x + r - 1, y, col, 3); pxLine(c, x, y - r + 1, x, y + r - 1, col, 3);
+  pxLine(c, x - dd, y - dd, x + dd, y + dd, col, 1); pxLine(c, x - dd, y + dd, x + dd, y - dd, col, 1);
+  pxLine(c, x - r + 2, y, x + r - 2, y, "#ffffff", 1); pxLine(c, x, y - r + 2, x, y + r - 2, "#ffffff", 1);
+  rect(c, "#ffffff", x - 1, y - 1, 3, 3);
+}
+/** the duel HP bar above a head: INK frame, DUEL_PIPS pips (alpha 1), 2px clear of the sprite box */
+function drawHpBar(c: Ctx, x: number, y: number, hp: number) {
+  const bx = Math.round(x) - 8, by = Math.round(y) - CH_H - 7;
+  rect(c, INK, bx, by, 16, 5);
+  for (let i = 0; i < DUEL_PIPS; i++) {
+    const on = i < hp;
+    rect(c, on ? "#e8534a" : "#2b2233", bx + 1 + i * 5, by + 1, 4, 3);
+    if (on) rect(c, "#ff9a8a", bx + 1 + i * 5, by + 1, 4, 1);
+  }
+}
+function starDot(c: Ctx, x: number, y: number) {
+  rect(c, INK, x - 2, y - 1, 5, 3); rect(c, INK, x - 1, y - 2, 3, 5);
+  rect(c, "#ffe14a", x - 1, y, 3, 1); rect(c, "#ffe14a", x, y - 1, 1, 3); rect(c, "#ffffff", x, y, 1, 1);
+}
+const dirtEdge = "#4f3a22", dirtFill = "#8b6b44", dirtLite = "#9c7b52";
+/** ground pass (before entities): the dirt arena under a walking duel, opaque */
+function drawArenas(c: Ctx, o: Office) {
+  for (const d of o.duels) {
+    if (d.phase !== "fight" || d.still) continue;
+    const L = o.employees.get(d.l), R = o.employees.get(d.r);
+    if (!L || !R || o.isHidden(L) || o.isHidden(R)) continue;
+    const cx = Math.round((L.x + R.x) / 2), cy = Math.round((L.y + R.y) / 2) + 1, rx = Math.round(Math.abs(R.x - L.x) / 2) + 14, ry = 11;
+    for (let dy = -ry; dy <= ry; dy++) {
+      const w = Math.floor(rx * Math.sqrt(1 - (dy * dy) / (ry * ry)) + 0.5);
+      rect(c, dirtEdge, cx - w, cy + dy, w * 2 + 1, 1);
+      if (Math.abs(dy) < ry) { const wi = Math.max(0, w - 2); rect(c, dirtFill, cx - wi, cy + dy, wi * 2 + 1, 1); }
+    }
+    for (let k = 0; k < 14; k++) rect(c, dirtLite, cx - rx + 8 + ((k * 37) % (rx * 2 - 16)), cy - ry + 3 + ((k * 53) % (ry * 2 - 5)), 2, 1);
   }
 }
 
-/** hand height of a duellist */
-const handY = (e: Employee) => e.y - 15;
-/** hands sit this far from the body centre: beyond a sprite box (8) plus the max lunge (3), so nothing ever overlaps a sprite */
-const HAND = 13;
-
 /**
- * All duel effects are opaque pixels (alpha 1) drawn after the entity pass. They live strictly inside the gap between the two
- * sprite boxes (DUEL_HALF leaves 28px; every effect starts HAND px from a body centre and stays within +-10px of the meeting point).
- * Anything that fades is a particle drawn BEFORE the entity pass instead.
+ * Everything here reads the same script as the poses (duelScript) so effects land on the DRAWN bodies. All of it is opaque (alpha 1)
+ * and drawn after the entity pass; the only fading effects are `under` particles (see the engine). Pips and KO stars sit above the heads.
  */
+function koStars(c: Ctx, e: Employee, s: DuelScript, t: number) {
+  if (!s.ko) return;
+  const sx = Math.round(e.x + s.dx), sy = Math.round(e.y + s.dy - CH_H - 14);
+  for (let k = 0; k < 3; k++) { const a = t * 6 + k * 2.094; starDot(c, sx + Math.round(Math.cos(a) * 7), sy + Math.round(Math.sin(a) * 2.5)); }
+}
 function drawDuels(c: Ctx, o: Office, t: number) {
   for (const d of o.duels) {
     if (d.phase !== "fight") continue;
@@ -904,62 +927,53 @@ function drawDuels(c: Ctx, o: Office, t: number) {
     const top = Math.min(L.y, R.y) - CH_H - 14;
     if (d.still || u < 1.8) drawVs(c, L, R, (L.x + R.x) / 2, top);
     if (d.still) continue;
-    if (u >= DUEL_FLOURISH) { const w = d.winner === 0 ? L : R; crown(c, w.x, w.y - CH_H - 7, t); continue; }
-    if (u < DUEL_INTRO) continue;
-    const b = Math.floor((u - DUEL_INTRO) / DUEL_BEAT), ph = ((u - DUEL_INTRO) % DUEL_BEAT) / DUEL_BEAT;
-    const ix = Math.round(d.ix), iy = Math.round(d.iy), flash = ph < 0.2;
-    const lh = L.x + HAND, rh = R.x - HAND;
-    switch (d.kind) {
-      case "sword": {
-        blade(c, lh, L.y - 13, ix + (ix - lh) * 0.3, iy - 3 + (b & 1) * 4);
-        blade(c, rh, R.y - 13, ix + (ix - rh) * 0.3, iy - 3 + ((b + 1) & 1) * 4);
-        if (flash) star(c, ix, iy, 4, "#ffe14a");
-        break;
+    if (u >= DUEL_FLOURISH) {
+      const w = d.winner === 0 ? L : R, lo = d.winner === 0 ? R : L, ls = duelScript(d, d.winner === 0 ? 1 : 0, u, SB);
+      crown(c, w.x, w.y - CH_H - 7, t);
+      if (ls.ko) {
+        const sx = Math.round(lo.x + ls.dx), sy = Math.round(lo.y + ls.dy - CH_H - 14);
+        for (let k = 0; k < 3; k++) { const a = t * 6 + k * 2.094; starDot(c, sx + Math.round(Math.cos(a) * 7), sy + Math.round(Math.sin(a) * 2.5)); }
       }
-      case "orb": {
-        const cl = magicCol(L), cr = magicCol(R);
-        beam(c, lh, handY(L), ix - 2, iy, cl, t);
-        beam(c, rh, handY(R), ix + 2, iy, cr, t);
-        const r = 4 + (flash ? 1 : 0) + (Math.floor(t * 12) & 1);
-        pxDisc(c, ix, iy, r + 1, INK, INK);
-        pxDisc(c, ix, iy, r, cl, cr);
-        rect(c, "#ffffff", ix - 2, iy - 2, 4, 4);
-        const q = Math.floor(t * 18);
-        for (let k = 0; k < 4; k++) { // crackle: deterministic per-frame lightning ticks
-          const a = ((q * 7 + k * 5) % 12) * (Math.PI / 6);
-          pxLine(c, ix + Math.cos(a) * (r + 1), iy + Math.sin(a) * (r + 1), ix + Math.cos(a) * (r + 3), iy + Math.sin(a) * (r + 3), "#ffffff", 1);
-        }
-        break;
+      continue;
+    }
+    const s0 = duelScript(d, 0, u, S0), s1 = duelScript(d, 1, u, S1);
+    drawHpBar(c, L.x + s0.dx, L.y, s0.hp);
+    drawHpBar(c, R.x + s1.dx, R.y, s1.hp);
+    if (s0.ex < 0) continue;
+    koStars(c, L, s0, t); koStars(c, R, s1, t); // KO stars (final blow, before the flourish)
+    const imp = s0.big ? DUEL_IMPACT_FINAL : DUEL_IMPACT, stopLen = s0.big ? DUEL_STOP_FINAL : DUEL_STOP;
+    const ct = duelContact(L, R, s0, CPT), cx = Math.round(ct.x), cy = Math.round(ct.y);
+    const since = s0.q - imp; // seconds since the impact
+    if (s0.atk < 0) { // blade lock: both blades cross at the contact point
+      if (s0.stage >= 2 && since < 0.3) {
+        blade(c, L.x + s0.dx + 9, L.y - 15, cx + 3, cy - 4);
+        blade(c, R.x + s1.dx - 9, R.y - 15, cx - 3, cy - 4);
       }
-      case "arrows": {
-        const p = Math.min(1, ph / 0.7);
-        if (p < 1) {
-          arrowPx(c, lh + (ix + 4 - lh) * p, L.y - 14, 1);
-          arrowPx(c, rh + (ix - 4 - rh) * p, R.y - 14, -1);
-        } else star(c, ix, iy, 3, "#ffd94a");
-        break;
+      if (since >= 0 && since < 0.3) impactStar(c, cx, cy - 2, since < stopLen ? 9 : since < 0.2 ? 7 : 5, "#ffe14a");
+      continue;
+    }
+    const A = s0.atk === 0 ? L : R, sa = s0.atk === 0 ? s0 : s1, dirA = s0.atk === 0 ? 1 : -1;
+    const style = s0.atk === 0 ? d.styleL : d.styleR;
+    const hx = A.x + sa.dx + dirA * 10, hy = A.y - 15;
+    if (s0.act === 1) {
+      if (s0.stage === 2) for (let k = 0; k < 3; k++) rect(c, "#ffffff", Math.round(A.x + sa.dx - dirA * (11 + k * 4)) - (dirA > 0 ? 3 : 0), Math.round(A.y - 8 - k * 5), 4, 1); // speed lines
+      if (since >= 0 && since < 0.2) { // slash across the contact point
+        pxLine(c, cx - dirA * 5, cy - 8, cx + dirA * 3, cy + 7, INK, 4); pxLine(c, cx - dirA * 5, cy - 8, cx + dirA * 3, cy + 7, "#ffffff", 2);
       }
-      default: { // magic_sword / arrow_sword / arrow_magic: one side attacks, the other defends
-        const A = d.agg === 0 ? L : R, D = d.agg === 0 ? R : L, dir = d.agg === 0 ? 1 : -1;
-        const ax = A.x + HAND * dir, ay = handY(A);
-        if (d.kind === "magic_sword") beam(c, ax, ay, ix, iy, magicCol(A), t);
-        else {
-          const p = Math.min(1, ph / 0.7);
-          if (p < 1) arrowPx(c, ax + (ix - ax) * p, ay + (iy - ay) * p, dir);
-          else { const q = (ph - 0.7) / 0.3; arrowPx(c, ix - dir * q * 12, iy - q * 12 + q * q * 16, -dir); } // deflected, tumbling away
-        }
-        if (d.kind === "arrow_magic") { // shield bubble in front of the mage (pixel ring, opaque)
-          const sx = Math.round(D.x - dir * 18), sy = Math.round(D.y - 13);
-          pxRing(c, sx, sy, 8, INK);
-          pxRing(c, sx, sy, 7, flash ? "#ffffff" : "#8fd3ff");
-        } else { // blade raised to block
-          const bx = Math.round(D.x - dir * HAND);
-          pxLine(c, bx, D.y - 8, bx - dir, D.y - 23, INK, 3); pxLine(c, bx, D.y - 8, bx - dir, D.y - 23, "#d8dde8", 1);
-          rect(c, GOLD, bx - 2, D.y - 9, 5, 2);
-        }
-        if (flash || ph > 0.7) star(c, ix, iy, flash ? 4 : 2, "#ffe14a");
-        break;
+    } else if (s0.stage === 2 && sa.fly >= 0) { // projectile in flight, ends on the defender's body
+      const p = sa.fly, ex = ct.x - dirA * (style === "arrow" ? 4 : 3);
+      const px = hx + (ex - hx) * p, py = hy + (ct.y - hy) * p;
+      if (style === "arrow") arrowPx(c, px, py, dirA);
+      else {
+        const r = s0.big ? 4 : 3, col = magicCol(A), px0 = Math.round(px), py0 = Math.round(py);
+        for (let k = 3; k >= 1; k--) rect(c, k === 1 ? "#ffffff" : col, px0 - dirA * k * 3 - 1, py0 - 1, 3, 3);
+        pxDisc(c, px0, py0, r + 1, INK, INK); pxDisc(c, px0, py0, r, col, col);
+        rect(c, "#ffffff", px0 - 1, py0 - 1, 3, 3);
       }
+    }
+    if (since >= 0 && since < stopLen + (s0.big ? 0.3 : 0.14)) {
+      const r = (s0.big ? 8 : 5) - (since > stopLen ? 2 : 0);
+      impactStar(c, cx, cy, r, s0.big ? "#ff4a4a" : style === "magic" ? magicCol(A) : "#ffe14a");
     }
   }
 }
@@ -1127,10 +1141,10 @@ function drawSquire(c: Ctx, e: Employee, it: Employee["interns"] extends Map<str
 }
 
 // ---------- adventurers ----------
-let duelDxNow = 0;
+let duelDxNow = 0, duelDyNow = 0;
 function poseFor(e: Employee, t: number): { pose: Pose; frame: number } {
-  duelDxNow = 0;
-  if (e.duel && duelPoseInto(e, e.duel, t)) { duelDxNow = DP.dx; return { pose: DP.pose, frame: DP.frame }; }
+  duelDxNow = 0; duelDyNow = 0;
+  if (e.duel && duelPoseInto(e, e.duel, t)) { duelDxNow = DP.dx; duelDyNow = DP.dy; return { pose: DP.pose, frame: DP.frame }; }
   switch (e.state) {
     case "DUEL": return e.path.length ? { pose: "walk", frame: Math.floor(t * 8) % 4 } : { pose: "idle", frame: Math.floor(t * 4) % 2 };
     case "ENTERING": case "LEAVING": case "TO_COFFEE": case "FROM_COFFEE":
@@ -1156,7 +1170,7 @@ function poseFor(e: Employee, t: number): { pose: Pose; frame: number } {
 function drawAdventurer(c: Ctx, e: Employee, t: number) {
   const { pose, frame } = poseFor(e, t);
   const spr = charSprite(e.look, pose, frame);
-  shadow(c, e.x, e.y, 11);
+  shadow(c, e.x + duelDxNow, e.y, 11);
   const hurt = e.state === "SEATED" && e.hurtUntil > t;
   if (hurt) { // red flash behind the (opaque) sprite
     c.globalAlpha = 0.18 + 0.22 * Math.abs(Math.sin(t * 16));
@@ -1171,7 +1185,7 @@ function drawAdventurer(c: Ctx, e: Employee, t: number) {
   if (fighting && e.lungeUntil > t) dx = 3;
   if (hurt) dx = -2;
   if (duelDxNow) dx = duelDxNow;
-  const px = Math.round(e.x - CH_W / 2 + dx), py = Math.round(e.y - CH_H + bob);
+  const px = Math.round(e.x - CH_W / 2 + dx), py = Math.round(e.y - CH_H + bob + duelDyNow);
   const red = e.redUntil > t && e.state === "SEATED";
   const put = (img: HTMLCanvasElement, a: number) => {
     c.globalAlpha = a;
@@ -1269,9 +1283,7 @@ function drawFx(c: Ctx, e: Employee, t: number, o: Office) {
   manaBar(c, e, t, o);
   if (e.duel && e.duel.phase === "fight" && !e.duel.still) return; // the duel replaces the usual monster fight effects
   if (e.deskIdx >= 0 && e.hearts === 0 && !e.resting) blitC(c, "sweat" + (Math.floor(t * 3) % 2), e.x - 9, e.y - 22);
-  if (e.slashUntil > t && e.monPos && !e.monDead) {
-    blitC(c, "slash" + (Math.floor(t * 20) % 2), e.monPos.x - 3 + (e.boss ? 4 : 0), e.monPos.y - 9);
-  }
+  if (e.slashUntil > t && e.monPos && !e.monDead) hitFx(c, e, e.monPos.x + (e.boss ? 4 : 0), e.monPos.y, t, 20, 1);
 
   const mon = e.monPos && !e.monDead ? e.monPos : null;
   const mx = mon ? mon.x : e.x + 22;
@@ -1289,7 +1301,7 @@ function drawFx(c: Ctx, e: Employee, t: number, o: Office) {
       } else blitC(c, "magic" + (Math.floor(t * 8) % 2), e.x + 11, e.y - 16);
       break;
     case "bash":
-      if (fight && (t * 2.5) % 1 < 0.4) blitC(c, "slash" + (Math.floor(t * 12) % 2), mx - 3, my - 9);
+      if (fight && (t * 2.5) % 1 < 0.4) hitFx(c, e, mx, my, t, 12, ((t * 2.5) % 1) / 0.4);
       if (t - e.actSince > 4) blitC(c, "sweat" + (Math.floor(t * 3) % 2), e.x - 9, e.y - 22 + (Math.floor(t * 3) % 2) * 2);
       break;
     case "reading":
@@ -1365,11 +1377,11 @@ function internTagLine(e: Employee): string {
   return parts.join("  ");
 }
 
-function drawTag(c: Ctx, e: Employee, topY: number) {
+function drawTag(c: Ctx, e: Employee, topY: number, dx = 0) {
   const text = `${e.project} ${e.tag}`;
   c.font = TAG_FONT;
   const w = Math.ceil(c.measureText(text).width) + 7, h = 9;
-  const bx = Math.max(1, Math.min(W - w - 1, e.x - w / 2));
+  const bx = Math.max(1, Math.min(W - w - 1, e.x + dx - w / 2));
   const by = Math.max(1, topY - h);
   c.fillStyle = "rgba(0,0,0,0.3)"; roundRect(c, bx, by + 1, w, h, 2.5); c.fill();
   c.fillStyle = "#23253a"; roundRect(c, bx, by, w, h, 2.5); c.fill();
@@ -1380,7 +1392,7 @@ function drawTag(c: Ctx, e: Employee, topY: number) {
   if (sub) {
     const st = sub.length > 44 ? sub.slice(0, 43) + "…" : sub;
     const w2 = Math.ceil(c.measureText(st).width) + 7;
-    const bx2 = Math.max(1, Math.min(W - w2 - 1, e.x - w2 / 2)), by2 = Math.max(1, by - h - 1);
+    const bx2 = Math.max(1, Math.min(W - w2 - 1, e.x + dx - w2 / 2)), by2 = Math.max(1, by - h - 1);
     c.fillStyle = "#23253a"; roundRect(c, bx2, by2, w2, h, 2.5); c.fill();
     c.strokeStyle = "rgba(244,227,193,0.35)"; c.lineWidth = 0.5; roundRect(c, bx2 + 0.25, by2 + 0.25, w2 - 0.5, h - 0.5, 2.3); c.stroke();
     c.fillStyle = "#bfe3ff"; c.fillText(st, bx2 + 3.5, by2 + h / 2 + 0.3);
@@ -1475,6 +1487,7 @@ export function drawScene(c: Ctx, o: Office) {
   // territory layer: all of it (lines, flags, swords) is drawn BEFORE the entity pass, fully opaque where it overlaps
   // a character's footprint, so nothing translucent ever sits on top of a character
   const nLinks = territoryLinks(o);
+  drawArenas(c, o); // ground first: the knocked-over flag and plots stay visible on top
   drawPlots(c, o);
   drawContested(c, o, nLinks, t);
   drawLinks(c, nLinks, t, o);
@@ -1537,17 +1550,19 @@ export function drawScene(c: Ctx, o: Office) {
     }
     if (o.selectedId === e.id) {
       const bounce = Math.floor(o.realTime * 4) % 2;
-      const ax = Math.round(e.x), ay = Math.round(e.y - 28 - (bubbleOf(e, t) || e.act === "handup" ? 16 : 0) - bounce);
+      duelOffsetInto(e, t);
+      const ax = Math.round(e.x + DP.dx), ay = Math.round(e.y + DP.dy - 28 - (bubbleOf(e, t) || e.act === "handup" ? 16 : 0) - bounce);
       rect(c, "#f2c14e", ax - 3, ay - 3, 7, 1); rect(c, "#f2c14e", ax - 2, ay - 2, 5, 1);
       rect(c, "#f2c14e", ax - 1, ay - 1, 3, 1); rect(c, "#f2c14e", ax, ay, 1, 1);
     }
   }
   const hv = o.hoverId ? o.employees.get(o.hoverId) : undefined;
   if (hv) {
+    duelOffsetInto(hv, t);
     c.globalAlpha = 0.9;
-    rect(c, "#f2c14e", Math.round(hv.x - CH_W / 2) - 1, Math.round(hv.y - CH_H) - 1, CH_W + 2, 1);
+    rect(c, "#f2c14e", Math.round(hv.x + DP.dx - CH_W / 2) - 1, Math.round(hv.y + DP.dy - CH_H) - 1, CH_W + 2, 1);
     c.globalAlpha = 1;
-    drawTag(c, hv, hv.y - CH_H - 3 - (bubbleOf(hv, t) || (hv.state === "SEATED" && hv.act === "handup") ? 17 : 0));
+    drawTag(c, hv, hv.y + DP.dy - CH_H - 3 - (bubbleOf(hv, t) || (hv.state === "SEATED" && hv.act === "handup") ? 17 : 0), DP.dx);
   }
   c.restore(); // end of shaken scene; screen-space overlays below
   drawAlertVignette(c, o);
