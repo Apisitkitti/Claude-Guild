@@ -167,3 +167,43 @@ describe("store waiting flag", () => {
     expect(m.snapshot().sessions[0].waiting).toBe(true);
   });
 });
+
+describe("store territory", () => {
+  const territories = () => sent.filter((c) => c.startsWith("event: territory")).map((c) => JSON.parse(c.split("data: ")[1]));
+  const edit = (sid: string, file: string, name = "PreToolUse") =>
+    m.addEvent({ session_id: sid, hook_event_name: name, tool_name: "Edit", cwd: "/p", tool_input: { file_path: file } });
+
+  it("broadcasts territory only when it changes", () => {
+    ev("t1", "SessionStart");
+    expect(territories()).toHaveLength(0);
+    edit("t1", "/p/a.ts");
+    expect(territories()).toHaveLength(1);
+    expect(territories()[0]).toEqual({ claims: [{ sid: "t1", files: ["a.ts"] }], conflicts: [] });
+    edit("t1", "/p/a.ts"); // same state
+    ev("t1", "PostToolUse", { tool_name: "Read" });
+    expect(territories()).toHaveLength(1);
+    edit("t2", "/p/a.ts");
+    expect(territories()).toHaveLength(2);
+    expect(territories()[1].conflicts).toMatchObject([{ file: "a.ts", sids: ["t1", "t2"], level: "overlap" }]);
+  });
+
+  it("includes territory in the snapshot and releases on SessionEnd", () => {
+    expect(m.snapshot().territory).toEqual({ claims: [], conflicts: [] });
+    ev("t1", "SessionStart");
+    edit("t1", "/p/a.ts");
+    expect(m.snapshot().territory.claims).toEqual([{ sid: "t1", files: ["a.ts"] }]);
+    ev("t1", "SessionEnd");
+    expect(m.snapshot().territory.claims).toEqual([]);
+    expect(territories().at(-1)).toEqual({ claims: [], conflicts: [] });
+    const n = territories().length;
+    edit("t1", "/p/b.ts"); // late event after SessionEnd must not re-claim
+    expect(territories()).toHaveLength(n);
+  });
+
+  it("sweep timer expires old claims and broadcasts", async () => {
+    edit("t1", "/p/a.ts");
+    expect(territories()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(11 * 60 * 1000);
+    expect(territories().at(-1)).toEqual({ claims: [], conflicts: [] });
+  });
+});

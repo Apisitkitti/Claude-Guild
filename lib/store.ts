@@ -1,4 +1,5 @@
 import { readContext, type ContextUsage } from "@/lib/transcript";
+import { TerritoryTracker } from "@/lib/territory";
 
 // In-memory event + session store shared by route handlers.
 // Kept on globalThis so it survives dev hot-reloads and is shared across route modules.
@@ -43,16 +44,17 @@ type Store = {
   ctxTimers: Map<string, ReturnType<typeof setTimeout>>; // per-session debounce for transcript reads
   ctxSeq: Map<string, number>; // per-session sequence; in-flight reads with a stale seq are dropped
   ctxInflight: number;
+  territory: TerritoryTracker;
 };
 
-const STORE_VERSION = 6; // bump when Store shape changes so dev HMR rebuilds it
+const STORE_VERSION = 7; // bump when Store shape changes so dev HMR rebuilds it
 
 const g = globalThis as typeof globalThis & { __claudeOffice?: Store & { version?: number } };
 
 type Timers = { ping: ReturnType<typeof setInterval>; sweep: ReturnType<typeof setInterval> };
 
 function createStore(): Store & { version: number; timers: Timers } {
-  const store = { events: [], sessions: new Map(), ended: new Map(), clients: new Set(), ctxTimers: new Map(), ctxSeq: new Map(), ctxInflight: 0, startedAt: Date.now(), version: STORE_VERSION } as unknown as Store & {
+  const store = { events: [], sessions: new Map(), ended: new Map(), clients: new Set(), ctxTimers: new Map(), ctxSeq: new Map(), ctxInflight: 0, territory: new TerritoryTracker(), startedAt: Date.now(), version: STORE_VERSION } as unknown as Store & {
     version: number;
     timers: Timers;
   };
@@ -62,6 +64,7 @@ function createStore(): Store & { version: number; timers: Timers } {
     for (const [id, s] of store.sessions) if (s.lastSeen < cutoff) dropSession(id);
     const tombCutoff = Date.now() - TOMBSTONE_MS;
     for (const [id, at] of store.ended) if (at < tombCutoff) store.ended.delete(id);
+    if (store.territory.sweep(Date.now())) broadcastTerritory(store);
   }, 30_000);
   ping.unref?.();
   sweep.unref?.();
@@ -95,7 +98,12 @@ function broadcastRaw(s: Store, chunk: string) {
   }
 }
 
+function broadcastTerritory(s: Store) {
+  broadcastRaw(s, `event: territory\ndata: ${JSON.stringify(s.territory.snapshot())}\n\n`);
+}
+
 function dropSession(id: string) {
+  if (store.territory.dropSession(id, Date.now())) broadcastTerritory(store);
   store.sessions.delete(id);
   const t = store.ctxTimers.get(id);
   if (t) clearTimeout(t);
@@ -249,6 +257,13 @@ export function addEvent(raw: Record<string, unknown>) {
   const evt = { ...clean, receivedAt: Date.now() } as HookEvent;
   store.events.push(evt);
   if (store.events.length > MAX_EVENTS) store.events.splice(0, store.events.length - MAX_EVENTS);
+  // Late events after SessionEnd must not re-claim files (checked before updateSessions touches `ended`).
+  const lateAfterEnd = !!evt.session_id && store.ended.has(evt.session_id) && evt.hook_event_name !== "SessionStart";
+  if (!lateAfterEnd) {
+    try {
+      if (store.territory.onEvent(evt, evt.receivedAt)) broadcastTerritory(store);
+    } catch {}
+  }
   updateSessions(evt);
   logEvent(evt);
   broadcastRaw(store, `data: ${JSON.stringify(evt)}\n\n`);
@@ -261,6 +276,7 @@ export function snapshot() {
   return {
     sessions: [...store.sessions.values()].map((s) => ({ ...s, interns: [...s.interns] })),
     events: store.events.slice(-SNAPSHOT_EVENTS),
+    territory: store.territory.snapshot(),
   };
 }
 

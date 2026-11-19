@@ -665,6 +665,93 @@ function drawPopups(c: Ctx, o: Office) {
   c.globalAlpha = 1;
 }
 
+// ---- territory: claim flags, conflict lines and swords (all drawn as separate UI; never over/through characters' colours) ----
+interface TLink { ax: number; ay: number; bx: number; by: number; level: "overlap" | "clash" }
+const linkPool: TLink[] = [];
+let linkN = 0;
+/** fills the shared pool; returns the live count */
+function territoryLinks(o: Office): number {
+  linkN = 0;
+  for (const r of o.conflictRows()) { // cached in the engine; only rebuilt when territory/roster changes
+    let first: Employee | null = null;
+    for (let k = 0; k < r.sids.length; k++) {
+      const e = o.employees.get(r.sids[k]);
+      if (!e || o.isHidden(e) || e.state === "LEAVING" || e.x < 0 || e.x > W || e.y < 0 || e.y > H) continue;
+      if (!first) { first = e; continue; }
+      const l = linkPool[linkN] ?? (linkPool[linkN] = { ax: 0, ay: 0, bx: 0, by: 0, level: "overlap" });
+      l.ax = first.x; l.ay = first.y - 9; l.bx = e.x; l.by = e.y - 9; l.level = r.level;
+      linkN++;
+    }
+  }
+  return linkN;
+}
+
+function drawClaimFlags(c: Ctx, o: Office, t: number) {
+  for (const e of o.employees.values()) {
+    if (o.isHidden(e) || e.deskIdx < 0 || e.state === "LEAVING") continue;
+    const n = o.claimsOf(e.id);
+    if (n <= 0) continue;
+    const s = spotOf(e.deskIdx);
+    const fx = Math.round(s.x - 29), fy = Math.round(s.y + 3);
+    const wave = o.reducedMotion ? 0 : Math.round(Math.sin(t * 3 + e.order));
+    shadow(c, fx, fy, 3);
+    rect(c, INK, fx, fy - 15, 2, 15);          // pole
+    rect(c, "#8a6a3a", fx, fy - 14, 1, 14);
+    rect(c, INK, fx + 2, fy - 15, 9, 8);       // cloth outline
+    rect(c, e.look.shirt, fx + 2, fy - 14, 8, 6 + wave);
+    rect(c, "rgba(255,255,255,0.35)", fx + 2, fy - 14, 8, 1);
+    c.font = '800 6px ui-sans-serif, system-ui, sans-serif'; c.textAlign = "left"; c.textBaseline = "middle";
+    outlined(c, String(n), fx + 12, fy - 10, CREAM);
+  }
+}
+
+function drawLinks(c: Ctx, n: number, t: number, o: Office) {
+  if (!n) return;
+  c.save();
+  c.lineCap = "butt";
+  for (let i = 0; i < n; i++) {
+    const l = linkPool[i];
+    const col = l.level === "clash" ? "#ff4a4a" : "#ffd94a";
+    c.setLineDash([3, 2]);
+    c.lineDashOffset = o.reducedMotion ? 0 : -(t * (l.level === "clash" ? 10 : 5));
+    c.strokeStyle = INK; c.lineWidth = 2.6;
+    c.beginPath(); c.moveTo(l.ax, l.ay); c.lineTo(l.bx, l.by); c.stroke();
+    c.strokeStyle = col; c.lineWidth = 1.2;
+    c.beginPath(); c.moveTo(l.ax, l.ay); c.lineTo(l.bx, l.by); c.stroke();
+  }
+  c.setLineDash([]);
+  c.restore();
+}
+
+const SWORD_BACKDROP = "#1a1c2c"; // fully opaque: nothing translucent in the territory layer
+function drawSwords(c: Ctx, x: number, y: number, col: string, k: number) {
+  c.save();
+  c.translate(Math.round(x), Math.round(y)); c.scale(k, k);
+  c.fillStyle = SWORD_BACKDROP;
+  c.beginPath(); c.arc(0, 0, 6, 0, Math.PI * 2); c.fill();
+  c.lineCap = "round";
+  for (let pass = 0; pass < 2; pass++) {
+    c.strokeStyle = pass === 0 ? INK : col; c.lineWidth = pass === 0 ? 2.4 : 1.2;
+    c.beginPath(); c.moveTo(-4, -4); c.lineTo(4, 4); c.moveTo(4, -4); c.lineTo(-4, 4); c.stroke();
+    if (pass === 1) { c.strokeStyle = CREAM; c.lineWidth = 1; c.beginPath(); c.moveTo(-2.4, 1.4); c.lineTo(-0.6, 3.2); c.moveTo(2.4, 1.4); c.lineTo(0.6, 3.2); c.stroke(); }
+  }
+  c.restore();
+}
+
+function drawLinkIcons(c: Ctx, n: number, t: number, o: Office) {
+  for (let i = 0; i < n; i++) {
+    const l = linkPool[i];
+    const mx = (l.ax + l.bx) / 2, my = (l.ay + l.by) / 2;
+    if (l.level === "clash") {
+      const ph = o.reducedMotion ? 0 : Math.sin(t * 5);
+      drawSwords(c, mx, my, "#ff5a5a", 1 + 0.1 * ph);
+      if (!o.reducedMotion && Math.sin(t * 2.2) > 0.7) { // gentle glint
+        rect(c, "#ffffff", mx + 3, my - 6, 1, 3); rect(c, "#ffffff", mx + 2, my - 5, 3, 1);
+      }
+    } else drawSwords(c, mx, my, "#ffd94a", 0.85);
+  }
+}
+
 function drawBannerQ(c: Ctx, o: Office) {
   const b = o.banners[0];
   if (!b) return;
@@ -1094,6 +1181,12 @@ export function drawScene(c: Ctx, o: Office) {
     }
   }
   drawRain(c, o);
+  // territory layer: all of it (lines, flags, swords) is drawn BEFORE the entity pass, fully opaque where it overlaps
+  // a character's footprint, so nothing translucent ever sits on top of a character
+  const nLinks = territoryLinks(o);
+  drawLinks(c, nLinks, t, o);
+  drawLinkIcons(c, nLinks, t, o);
+  drawClaimFlags(c, o, t);
 
   const ents: { y: number; fn: () => void }[] = [];
   for (const e of o.employees.values()) {

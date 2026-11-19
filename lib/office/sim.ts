@@ -52,6 +52,35 @@ export class Simulator {
     this.addSession();
     this.addSession();
     this.nextAdd = o.clock + rand(8, 20);
+    this.spawn(this.territory());
+  }
+
+  /** demo-only: now and then two adventurers touch the same fake file; nothing is persisted */
+  private *territory(): Gen {
+    yield rand(35, 50);
+    for (;;) {
+      const live = [...this.o.employees.values()].filter((e) => e.state === "SEATED" && this.active.has(e.id));
+      if (live.length >= 2) {
+        const [a, b] = [...live].sort(() => Math.random() - 0.5).slice(0, 2);
+        const file = pick(FILES[this.active.get(a.id) ?? ""] ?? FILES.portfolio);
+        const claims = [
+          { sid: a.id, files: Array.from({ length: randInt(1, 3) }, (_, i) => (i === 0 ? file : `src/fake${i}.ts`)) },
+          { sid: b.id, files: [file] },
+        ];
+        const msg = (level: "overlap" | "clash") => ({ claims, conflicts: [{ file, sids: [a.id, b.id], level, since: Date.now() }] });
+        this.o.setTerritory(msg("overlap"));
+        const total = rand(20, 30);
+        let spent = 0;
+        if (Math.random() < 0.6) {
+          const w = rand(4, 8);
+          yield w; spent = w;
+          this.o.setTerritory(msg("clash"));
+        }
+        yield Math.max(1, total - spent);
+        this.o.setTerritory({ claims: [], conflicts: [] });
+      }
+      yield rand(60, 90);
+    }
   }
 
   private spawn(gen: Gen) { this.runners.push({ gen, wake: this.o.clock }); }

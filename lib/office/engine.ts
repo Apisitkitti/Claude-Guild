@@ -24,7 +24,15 @@ export interface CtxMsg { used: number | null; limit: number | null; limitGuesse
 export interface Ctx { used: number; limit: number; guessed: boolean }
 export interface GuildFilter { query: string; hideStray: boolean }
 
+export interface TerritoryConflict { file: string; sids: string[]; level: "overlap" | "clash"; since: number }
+const DISMISS_TTL_MS = 10 * 60 * 1000;
+export interface TerritoryMsg { claims: { sid: string; files: string[] }[]; conflicts: TerritoryConflict[] }
+/** a live (non-dismissed) conflict between >= 2 sessions the client knows */
+export interface ConflictRow { key: string; file: string; sids: string[]; names: string[]; level: "overlap" | "clash"; since: number }
+export const conflictKey = (c: { file: string; level: string }): string => `${c.file}|${c.level}`;
+
 export interface SnapshotMsg {
+  territory?: TerritoryMsg;
   sessions?: { session_id: string; cwd?: string; interns?: string[]; context?: CtxMsg | null; waiting?: boolean }[];
   events?: HookEvt[];
 }
@@ -163,6 +171,10 @@ export interface RosterRow {
   look: Look; act: RosterAct;
   level?: number; xp?: number; xpNext?: number; gold?: number; kills?: number; hp?: number; hpMax?: number;
   ctxUsed?: number; ctxLimit?: number; ctxGuessed?: boolean;
+  /** files this session currently holds (territory claims) */
+  claims?: number;
+  /** strongest live, non-dismissed conflict this session is part of */
+  conflict?: "overlap" | "clash";
 }
 export interface OfficeView {
   roster: RosterRow[];
@@ -176,8 +188,10 @@ export interface OfficeView {
   hiddenIds?: string[];
   /** everyone waiting on the user, unfiltered */
   waiting?: WaitingRow[];
+  /** live territory conflicts (non-dismissed), unfiltered like `waiting` */
+  conflicts?: ConflictRow[];
 }
-export const EMPTY_VIEW: OfficeView = { roster: [], log: [], hoverId: null, selectedId: null, hiddenCount: 0, hiddenIds: [], waiting: [] };
+export const EMPTY_VIEW: OfficeView = { roster: [], log: [], hoverId: null, selectedId: null, hiddenCount: 0, hiddenIds: [], waiting: [], conflicts: [] };
 
 declare global {
   interface Window { officeEvent?: (evt: HookEvt) => void }
@@ -255,6 +269,16 @@ export class Office {
   private sim: { update(): void; addSession(): void } | null = null;
   /** context-window usage per session id; survives leave/re-enter, dropped on reset (null) */
   private ctxMap = new Map<string, Ctx>();
+  /** territory (server state, full replacement). Dismissals are per conflictKey; never persisted. */
+  private claimN = new Map<string, number>();
+  private conflicts: TerritoryConflict[] = [];
+  /** key -> Infinity while the conflict is live, else the time its dismissal expires (kept briefly so clash->overlap flaps stay dismissed) */
+  private dismissed = new Map<string, number>();
+  private pendingClash = new Map<string, TerritoryConflict>();
+  private rowsCache: ConflictRow[] | null = null;
+  private seenClash = new Set<string>();
+  private terrVer = 0;
+  private bumpTerr() { this.terrVer++; this.rowsCache = null; }
   private filter: GuildFilter = { query: "", hideStray: false };
   /** isHidden cache; invalidated by bumping hidVer (filter/events/snapshot) or when the act changes */
   private hidVer = 0;
@@ -469,6 +493,7 @@ export class Office {
     this.ended.clear();
     this.endedAgents.clear();
     this.ctxMap.clear();
+    this.claimN.clear(); this.conflicts = []; this.dismissed.clear(); this.seenClash.clear(); this.pendingClash.clear(); this.bumpTerr();
     for (const p of this.particles) p.on = false;
     this.popups = []; this.banners = []; this.trauma = 0; this.flash = 0;
     this.dirty = true;
@@ -492,6 +517,101 @@ export class Office {
     return c ? Math.max(0, Math.min(1, c.used / c.limit)) : null;
   }
   ctxOf(id: string): Ctx | null { return this.ctxMap.get(id) ?? null; }
+
+  /**
+   * Replace territory state (claims + conflicts). New clashes (key not seen before) raise a banner/log/light shake
+   * unless `quiet` (snapshot on (re)connect). Malformed input is ignored field by field.
+   */
+  setTerritory(msg: TerritoryMsg | null | undefined, quiet = false) {
+    const claims = new Map<string, number>();
+    const conflicts: TerritoryConflict[] = [];
+    if (msg && typeof msg === "object") {
+      for (const c of (Array.isArray(msg.claims) ? msg.claims : []).slice(0, 300)) {
+        if (c && typeof c.sid === "string" && Array.isArray(c.files) && c.files.length > 0) claims.set(c.sid, c.files.length);
+      }
+      for (const c of (Array.isArray(msg.conflicts) ? msg.conflicts : []).slice(0, 100)) {
+        if (!c || typeof c.file !== "string" || !Array.isArray(c.sids) || (c.level !== "overlap" && c.level !== "clash")) continue;
+        const sids = c.sids.filter((x): x is string => typeof x === "string" && !!x).slice(0, 8);
+        if (sids.length < 2) continue;
+        conflicts.push({ file: c.file, sids, level: c.level, since: Number(c.since) || 0 });
+      }
+    }
+    this.claimN = claims;
+    this.conflicts = conflicts;
+    const keys = new Set(conflicts.map(conflictKey));
+    const now = Date.now();
+    for (const [k, exp] of [...this.dismissed]) {
+      if (keys.has(k)) this.dismissed.set(k, Infinity);
+      else if (exp === Infinity) this.dismissed.set(k, now + DISMISS_TTL_MS);
+      else if (exp < now) this.dismissed.delete(k);
+    }
+    const nextSeen = new Set<string>();
+    this.pendingClash.clear();
+    const fresh: TerritoryConflict[] = [];
+    for (const c of conflicts) {
+      if (c.level !== "clash") continue;
+      const k = conflictKey(c);
+      if (this.seenClash.has(k) || quiet) { nextSeen.add(k); continue; }
+      if (!this.clashEligible(c)) { this.pendingClash.set(k, c); continue; } // not eligible yet: alert when sessions arrive
+      nextSeen.add(k);
+      fresh.push(c);
+    }
+    this.seenClash = nextSeen;
+    for (const c of fresh.slice(0, 3)) this.alertClash(c);
+    this.bumpTerr();
+    this.hidVer++;
+    this.dirty = true;
+  }
+
+  private clashEligible(c: TerritoryConflict): boolean { return c.sids.filter((x) => this.employees.has(x)).length >= 2; }
+  /** fire clash alerts that were waiting for their sessions to become known */
+  private recheckPending() {
+    if (!this.pendingClash.size) return;
+    let n = 0;
+    for (const [k, c] of [...this.pendingClash]) {
+      if (!this.clashEligible(c)) continue;
+      this.pendingClash.delete(k);
+      this.seenClash.add(k);
+      if (n++ < 3) this.alertClash(c);
+    }
+  }
+
+  private alertClash(c: TerritoryConflict) {
+    const known = c.sids.map((x) => this.employees.get(x)).filter((e): e is Employee => !!e);
+    this.addBanner("quest", `⚔️ ${trunc(c.file, 30)}`);
+    if (!this.reducedMotion) this.addTrauma(0.35);
+    const a = known[0];
+    this.log.unshift({
+      id: this.logSeq++, sid: a.id, color: a.look.shirt, bad: true,
+      text: `${a.tag} · ${a.project} · ชนกัน ${c.file} vs ${known.slice(1).map((e) => e.tag).join(", ")}`,
+      time: Date.now(), tag: a.tag, project: a.project, intern: false, internLabel: "", kind: "Clash",
+      detail: `${c.file} vs ${known.slice(1).map((e) => e.tag).join(", ")}`,
+    });
+    if (this.log.length > 100) this.log.length = 100;
+  }
+
+  /** live, non-dismissed conflicts between >= 2 sessions this client knows (unfiltered by the session filter) */
+  conflictRows(): ConflictRow[] {
+    if (this.rowsCache) return this.rowsCache;
+    const out: ConflictRow[] = [];
+    for (const c of this.conflicts) {
+      const key = conflictKey(c);
+      if (this.dismissed.has(key)) continue;
+      const emps = c.sids.map((x) => this.employees.get(x)).filter((e): e is Employee => !!e);
+      if (emps.length < 2) continue;
+      out.push({ key, file: c.file, sids: emps.map((e) => e.id), names: emps.map((e) => `${e.tag} ${e.project}`), level: c.level, since: c.since });
+    }
+    return (this.rowsCache = out);
+  }
+  /** non-dismissed clashes (tab title) */
+  clashCount(): number { let n = 0; for (const r of this.conflictRows()) if (r.level === "clash") n++; return n; }
+  claimsOf(id: string): number { return this.claimN.get(id) ?? 0; }
+  dismissConflict(key: string) {
+    if (this.dismissed.get(key) === Infinity) return;
+    this.dismissed.set(key, Infinity);
+    if (this.dismissed.size > 200) this.dismissed.delete(this.dismissed.keys().next().value as string);
+    this.bumpTerr(); this.dirty = true;
+  }
 
   setFilter(f: Partial<GuildFilter>) {
     const n = { query: (f.query ?? this.filter.query).trim(), hideStray: f.hideStray ?? this.filter.hideStray };
@@ -537,7 +657,7 @@ export class Office {
 
   private signature(): string {
     let s = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
-    s += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}`;
+    s += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}`;
     for (const e of this.employees.values()) {
       if (this.isHidden(e)) { s += `;h${e.id}${this.isWaiting(e) ? "w" + this.statusOf(e) : ""}`; continue; }
       const cf = this.ctxFrac(e.id);
@@ -567,18 +687,24 @@ export class Office {
     for (const e of this.employees.values()) {
       if (this.isWaiting(e)) waiting.push({ id: e.id, tag: e.tag, project: e.project, status: this.statusOf(e), hidden: this.isHidden(e) });
     }
+    const conflicts = this.conflictRows();
+    const confOf = new Map<string, "overlap" | "clash">();
+    for (const c of conflicts) for (const id of c.sids) if (c.level === "clash" || !confOf.has(id)) confOf.set(id, c.level);
     const roster = [...this.employees.values()]
       .filter((e) => { if (this.isHidden(e)) { hiddenCount++; hiddenIds.push(e.id); return false; } return true; })
       .sort((a, b) => a.order - b.order)
       .map((e) => {
         const cx = this.ctxMap.get(e.id);
+        const cl = this.claimN.get(e.id), cf = confOf.get(e.id);
         return {
         ...(cx ? { ctxUsed: cx.used, ctxLimit: cx.limit, ctxGuessed: cx.guessed } : {}),
+        ...(cl ? { claims: cl } : {}),
+        ...(cf ? { conflict: cf } : {}),
         id: e.id, tag: e.tag, project: e.project, color: e.look.shirt, status: this.statusOf(e),
         interns: e.interns.size, internList: [...e.interns.values()].map(internRow), desk: e.deskIdx, look: e.look, act: this.rosterAct(e),
         level: e.lv, xp: e.xp, xpNext: xpNeed(e.lv), gold: e.gold, kills: e.kills, hp: e.hearts, hpMax: MAX_HEARTS,
       };});
-    return { roster, log: this.log.slice(), hoverId: this.hoverId, selectedId: this.selectedId, treasury: this.treasury, hiddenCount, hiddenIds, waiting };
+    return { roster, log: this.log.slice(), hoverId: this.hoverId, selectedId: this.selectedId, treasury: this.treasury, hiddenCount, hiddenIds, waiting, conflicts };
   }
 
   private rosterAct(e: Employee): RosterAct {
@@ -800,7 +926,7 @@ export class Office {
       case "LEAVING":
         if (this.move(e, dt)) {
           if (e.returning) this.reenter(e);
-          else { this.employees.delete(e.id); this.dirty = true; }
+          else { this.employees.delete(e.id); this.bumpTerr(); this.dirty = true; }
         }
         break;
       case "STRETCH":
@@ -960,6 +1086,8 @@ export class Office {
     if (!seated) e.path = routeIn(desk, slot).slice(1);
     else if (desk >= 0) this.spawnMonster(e, true);
     this.employees.set(id, e);
+    this.bumpTerr(); // conflict rows depend on who is present
+    this.recheckPending();
     this.dirty = true;
     return e;
   }
@@ -993,6 +1121,7 @@ export class Office {
     }
     for (const e of [...this.employees.values()]) if (!ids.has(e.id)) { e.returning = false; this.leave(e); }
     if (!this.log.length) for (const ev of [...(snap.events ?? [])]) this.pushLog(ev);
+    if (snap.territory !== undefined) this.setTerritory(snap.territory, true);
     this.hidVer++;
     this.dirty = true;
   }

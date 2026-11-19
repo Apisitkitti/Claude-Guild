@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { EMPTY_VIEW, Office, type InternRow, type OfficeView, type RosterAct, type RosterRow, type WaitingRow } from "@/lib/office/engine";
+import { EMPTY_VIEW, Office, type InternRow, type OfficeView, type RosterAct, type RosterRow, type WaitingRow, type ConflictRow } from "@/lib/office/engine";
 import { charSprite } from "@/lib/office/sprites";
 import { CLASS_LABEL, type Look } from "@/lib/office/palette";
 import { connectLive } from "@/lib/office/live";
@@ -34,7 +34,7 @@ const EVT_ICON: Record<string, string> = {
   Read: "📖", Grep: "🔎", Glob: "🔎", LS: "📂", Edit: "✏️", Write: "✏️", MultiEdit: "✏️", NotebookEdit: "✏️",
   Bash: "💻", WebFetch: "🌐", WebSearch: "🌐", TodoWrite: "📝", TaskCreate: "📝", TaskUpdate: "📝",
   Agent: "🤖", Task: "🤖", Workflow: "🤖", SubagentStart: "🛡️", SubagentStop: "🛡️",
-  Notification: "🔔", PermissionRequest: "❗", SessionStart: "📜", SessionEnd: "🏰", PreCompact: "🗜️", UserPromptSubmit: "💬", Stop: "⏹️",
+  Notification: "🔔", Clash: "⚔️", PermissionRequest: "❗", SessionStart: "📜", SessionEnd: "🏰", PreCompact: "🗜️", UserPromptSubmit: "💬", Stop: "⏹️",
 };
 const iconFor = (kind: string) => EVT_ICON[kind] ?? (kind.startsWith("mcp__") ? "🔌" : "•");
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -121,6 +121,27 @@ function InternList({ list }: { list: InternRow[] }) {
         );
       })}
     </ul>
+  );
+}
+
+function ConflictItem({ c, onSelect, onDismiss }: { c: ConflictRow; onSelect: (id: string) => void; onDismiss: () => void }) {
+  const clash = c.level === "clash";
+  return (
+    <li className={`conflict ${clash ? "clash" : "overlap"}`}>
+      <div className="chead">
+        <span className="cfile" title={c.file}>{c.file}</span>
+        <button type="button" className="cdismiss" onClick={onDismiss} aria-label={`ปิดการแจ้งเตือน ${c.file}`} title="ปิดการแจ้งเตือนนี้">✕</button>
+      </div>
+      <div className="cwho">
+        {c.names.map((n, i) => (
+          <span key={c.sids[i]}>
+            {i > 0 && <span className="vs"> vs </span>}
+            <button type="button" className="cname" onClick={() => onSelect(c.sids[i])}>{n}</button>
+          </span>
+        ))}
+      </div>
+      <span className={`clevel ${clash ? "clash" : "overlap"}`}>{clash ? "🔴 ชนกัน!" : "🟡 แตะไฟล์เดียวกัน"}</span>
+    </li>
   );
 }
 
@@ -241,10 +262,36 @@ export default function OfficeApp() {
   const waiting = useMemo(() => (mode === "live" ? view.waiting ?? [] : []), [view.waiting, mode]);
   const waitingN = waiting.length;
   const hiddenSet = useMemo(() => new Set(view.hiddenIds ?? []), [view.hiddenIds]);
+  const conflicts = useMemo(() => view.conflicts ?? [], [view.conflicts]);
+  const clashes = useMemo(() => (mode === "live" ? conflicts.filter((c) => c.level === "clash") : []), [conflicts, mode]);
+  const clashN = clashes.length;
   useEffect(() => {
     if (baseTitle.current === null) return;
-    document.title = waitingN > 0 ? `❗(${waitingN}) Claude Guild ⚔️` : baseTitle.current;
-  }, [waitingN]);
+    const parts = [waitingN > 0 ? `❗(${waitingN})` : "", clashN > 0 ? `⚔️(${clashN})` : ""].filter(Boolean);
+    document.title = parts.length ? `${parts.join(" ")} Claude Guild` : baseTitle.current;
+  }, [waitingN, clashN]);
+  // null until the first live snapshot has been applied (baseline); reset whenever the data source changes
+  const prevClash = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (mode !== "live") { prevClash.current = null; return; }
+    const prev = prevClash.current;
+    if (prev === null) return; // no baseline yet: pre-existing clashes never notify
+    const cur = new Set(clashes.map((c) => c.key));
+    prevClash.current = cur;
+    for (const k of [...lastNotified.current.keys()]) if (k.startsWith("clash|") && !cur.has(k.slice(6))) lastNotified.current.delete(k);
+    const fresh = clashes.filter((c) => !prev.has(c.key));
+    if (!fresh.length || !notifyOnRef.current || typeof Notification === "undefined" || !document.hidden) return;
+    const now = Date.now();
+    for (const c of fresh.slice(0, 2)) {
+      const last = lastNotified.current.get("clash|" + c.key);
+      if (last !== undefined && now - last < 30000) continue;
+      lastNotified.current.set("clash|" + c.key, now);
+      try {
+        const n = new Notification(`⚔️ ชนกัน! ${c.file}`, { body: c.names.join(" vs "), tag: `guild-clash-${c.key}` });
+        n.onclick = () => { window.focus(); officeRef.current?.select(c.sids[0]); n.close(); };
+      } catch {}
+    }
+  }, [clashes, mode]);
   useEffect(() => {
     const cur = new Set<string>();
     const fresh: WaitingRow[] = [];
@@ -253,7 +300,7 @@ export default function OfficeApp() {
       if (!prevWaiting.current.has(r.id)) fresh.push(r);
     }
     prevWaiting.current = cur;
-    for (const id of [...lastNotified.current.keys()]) if (!view.roster.some((r) => r.id === id) && !(view.hiddenIds ?? []).includes(id)) lastNotified.current.delete(id);
+    for (const id of [...lastNotified.current.keys()]) if (!id.startsWith("clash|") && !view.roster.some((r) => r.id === id) && !(view.hiddenIds ?? []).includes(id)) lastNotified.current.delete(id);
     if (!fresh.length || !notifyOnRef.current || typeof Notification === "undefined") return;
     if (!document.hidden && document.hasFocus()) return;
     const now = Date.now();
@@ -336,6 +383,7 @@ export default function OfficeApp() {
     const o = officeRef.current;
     if (!o || !mounted) return;
     o.clear();
+    prevClash.current = null;
     if (mode === "demo") {
       o.setSpeed(speedRef.current);
       o.attachSim(new Simulator(o));
@@ -345,8 +393,13 @@ export default function OfficeApp() {
     let opened = false;
     let errored = false;
     const live = connectLive({
-      onSnapshot: (s) => o.loadSnapshot(s),
+      onSnapshot: (s) => {
+        o.loadSnapshot(s);
+        // baseline for clash notifications: whatever the first snapshot already contains
+        if (prevClash.current === null) prevClash.current = new Set(o.conflictRows().filter((c) => c.level === "clash").map((c) => c.key));
+      },
       onEvent: (e) => o.event(e),
+      onTerritory: (m) => o.setTerritory(m),
       onContext: (m) => { if (m && typeof m.session_id === "string") o.setContext(m.session_id, m.used, m.limit, !!m.limitGuessed); },
       onStatus: (s) => {
         if (s === "open") { opened = true; setConn("connected"); } else { errored = true; setConn(opened ? "reconnecting" : "connecting"); }
@@ -361,7 +414,7 @@ export default function OfficeApp() {
     // fall back on error after 3s; if the first request is still pending, wait longer (dev compile)
     const t1 = setTimeout(() => { if (errored) fallback(); }, 3000);
     const t2 = setTimeout(fallback, 8000);
-    return () => { clearTimeout(t1); clearTimeout(t2); live.close(); };
+    return () => { clearTimeout(t1); clearTimeout(t2); live.close(); prevClash.current = null; };
   }, [mode, mounted]);
 
   // Crisp backing store: scale * devicePixelRatio device px per logical px
@@ -532,6 +585,13 @@ export default function OfficeApp() {
                   </button>
                   <Stats p={p} />
                   <Mana p={p} />
+                  {(isNum(r.claims) || r.conflict) && (
+                    <div className="terr">
+                      {isNum(r.claims) && <span className="tb claims" title={`ถือครอง ${r.claims} ไฟล์`}>🏳 {r.claims}</span>}
+                      {r.conflict === "clash" && <span className="tb clash" role="img" aria-label="ชนกัน" title="ชนกัน!">⚔️</span>}
+                      {r.conflict === "overlap" && <span className="tb overlap" role="img" aria-label="แตะไฟล์เดียวกัน" title="แตะไฟล์เดียวกัน">⚔</span>}
+                    </div>
+                  )}
                   {r.interns > 0 && (
                     <button
                       className="itoggle"
@@ -548,6 +608,18 @@ export default function OfficeApp() {
               );
             })}
           </ul>
+          <h2>
+            <button className="sec" onClick={() => toggleSec("terr")} aria-expanded={!secHidden.terr} aria-controls="sec-terr">
+              {secHidden.terr ? "▸" : "▾"} ดินแดน <small>({conflicts.length})</small>
+            </button>
+          </h2>
+          <div className="terrsec" id="sec-terr" hidden={!!secHidden.terr}>
+            <ul className="conflicts">
+              {conflicts.length === 0 && <li className="empty">ยังไม่มีศึก</li>}
+              {conflicts.map((c) => <ConflictItem key={c.key} c={c} onSelect={(id) => officeRef.current?.select(id)} onDismiss={() => officeRef.current?.dismissConflict(c.key)} />)}
+            </ul>
+            <p className="terrnote">ตรวจเฉพาะ Edit/Write — คำสั่ง Bash ที่เขียนไฟล์ยังไม่นับ · เตือนได้ แต่ขวางไม่ได้</p>
+          </div>
           <h2>
             <button className="sec" onClick={() => toggleSec("log")} aria-expanded={!secHidden.log} aria-controls="sec-log">
               {secHidden.log ? "▸" : "▾"} บันทึกเควส
