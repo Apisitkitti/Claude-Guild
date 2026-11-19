@@ -111,3 +111,27 @@ export const TORCHES: Pt[] = [{ x: 42, y: 30 }, { x: 73, y: 30 }, { x: 122, y: 9
 export const HEARTH = { x: 47, y: 14, w: 22, h: 38 };
 export const DUNGEON = { x: 342, y: 50 };
 export const BRIDGE_X = 340;
+
+// ---- territory: land plots + duels ----
+export interface Rect { x: number; y: number; w: number; h: number }
+const PLOT_W = [44, 50, 56], PLOT_H = [26, 32, 36];
+/** Claimed-land patch around a battle spot. Grows with the number of held files (1-2 small, 3-5 medium, 6+ large). Pass `out` to avoid allocating. */
+export function plotRect(desk: number, claims: number, out: Rect = { x: 0, y: 0, w: 0, h: 0 }): Rect {
+  const big = claims >= 6 ? 2 : claims >= 3 ? 1 : 0;
+  out.x = SPOT_COLS[desk % 4] - 22; out.y = SPOT_ROWS[(desk / 4) | 0] - 14; out.w = PLOT_W[big]; out.h = PLOT_H[big];
+  return out;
+}
+/** Where two adventurers meet to duel (the contested flag stands here). Sideways rows duel just below the monsters. Pass `out` to avoid allocating. */
+export function duelMid(a: Pt, b: Pt, out: Pt = { x: 0, y: 0 }): Pt {
+  out.x = Math.round((a.x + b.x) / 2); out.y = Math.round((a.y + b.y) / 2) + (Math.abs(a.y - b.y) < 10 ? 14 : 0);
+  return out;
+}
+/** duelMid for two battle spots, allocation-free. */
+export function duelMidOfDesks(da: number, db: number, out: Pt): Pt {
+  const ax = SPOT_COLS[da % 4], ay = SPOT_ROWS[(da / 4) | 0], bx = SPOT_COLS[db % 4], by = SPOT_ROWS[(db / 4) | 0];
+  out.x = Math.round((ax + bx) / 2); out.y = Math.round((ay + by) / 2) + (Math.abs(ay - by) < 10 ? 14 : 0);
+  return out;
+}
+/** Half the gap between two duellists (centre to the meeting point). Sprites are 16 wide, so the open gap is 2*(DUEL_HALF-8) = 28px,
+ * enough for a 3px lunge + effects that never touch either sprite box. */
+export const DUEL_HALF = 22;

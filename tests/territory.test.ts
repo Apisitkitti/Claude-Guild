@@ -125,9 +125,22 @@ describe("TerritoryTracker conflicts", () => {
     t.onEvent(ev("a", "PreToolUse", "/proj/a.ts"), T0);
     t.onEvent(ev("b", "PreToolUse", "/proj/a.ts"), T0 + 1000);
     expect(t.onEvent(ev("b", "PostToolUseFailure", "/proj/a.ts"), T0 + 5000)).toBe(true);
-    expect(t.snapshot().conflicts).toEqual([{ file: "a.ts", sids: ["a", "b"], level: "clash", since: T0 + 5000 }]);
+    expect(t.snapshot().conflicts).toEqual([{ file: "a.ts", sids: ["a", "b"], level: "clash", since: T0 + 5000, failer: "b" }]);
     // repeated failure: nothing changes, since preserved
     expect(t.onEvent(ev("b", "PostToolUseFailure", "/proj/a.ts"), T0 + 9000)).toBe(false);
+  });
+
+  it("clash carries the failing sid, and the message is stable across repeats", () => {
+    const t = new TerritoryTracker();
+    t.onEvent(ev("a", "PreToolUse", "/proj/a.ts"), T0);
+    t.onEvent(ev("b", "PreToolUse", "/proj/a.ts"), T0 + 1000);
+    // overlap first: no failer
+    expect(t.snapshot().conflicts[0]).not.toHaveProperty("failer");
+    t.onEvent(ev("b", "PostToolUseFailure", "/proj/a.ts"), T0 + 5000);
+    const c = t.snapshot().conflicts[0];
+    expect(c.failer).toBe("b");
+    expect(t.sweep(T0 + 6000)).toBe(false);
+    expect(t.snapshot().conflicts[0]).toEqual(c);
   });
 
   it("clashes when the other session released but touched within 2 minutes", () => {

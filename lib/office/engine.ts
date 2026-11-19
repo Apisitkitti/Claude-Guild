@@ -1,6 +1,6 @@
 import { BOSS_KINDS, lookFor, MONSTER_KINDS, type BossKind, type Look, type MonsterKind } from "./palette";
 import {
-  DESK_COUNT, H, HALL_W, W, CH_H, CH_W, DOOR, HEARTH, monsterSpot, routeIn, routeLeave, routePromote, routeToTavern, seatPoint, type Pt,
+  DESK_COUNT, DUEL_HALF, H, HALL_W, W, CH_H, CH_W, DOOR, HEARTH, duelMidOfDesks, monsterSpot, routeIn, routeLeave, routePromote, routeToTavern, seatPoint, type Pt,
 } from "./layout";
 import { drawScene } from "./render";
 
@@ -24,7 +24,7 @@ export interface CtxMsg { used: number | null; limit: number | null; limitGuesse
 export interface Ctx { used: number; limit: number; guessed: boolean }
 export interface GuildFilter { query: string; hideStray: boolean }
 
-export interface TerritoryConflict { file: string; sids: string[]; level: "overlap" | "clash"; since: number }
+export interface TerritoryConflict { file: string; sids: string[]; level: "overlap" | "clash"; since: number; failer?: string }
 const DISMISS_TTL_MS = 10 * 60 * 1000;
 export interface TerritoryMsg { claims: { sid: string; files: string[] }[]; conflicts: TerritoryConflict[] }
 /** a live (non-dismissed) conflict between >= 2 sessions the client knows */
@@ -38,7 +38,55 @@ export interface SnapshotMsg {
 }
 
 export type Act = "thinking" | "reading" | "typing" | "bash" | "phone" | "mcp" | "sticky" | "handup";
-export type EState = "ENTERING" | "SEATED" | "STRETCH" | "TO_COFFEE" | "DRINK" | "FROM_COFFEE" | "LEAVING";
+export type EState = "ENTERING" | "SEATED" | "STRETCH" | "TO_COFFEE" | "DRINK" | "FROM_COFFEE" | "LEAVING" | "DUEL";
+
+// ---- territory duels ----
+export type DuelStyle = "sword" | "magic" | "arrow";
+/** which fight this is, from the two styles: sword/sword, magic/magic (orb), arrow/arrow, or one side attacking a defender */
+export type DuelKind = "sword" | "orb" | "arrows" | "magic_sword" | "arrow_sword" | "arrow_magic";
+export interface Duel {
+  /** left / right fighter ids (left = smaller x) */
+  l: string; r: string;
+  kind: DuelKind;
+  styleL: DuelStyle; styleR: DuelStyle;
+  /** attacking side for the mixed kinds (0 = left, 1 = right) */
+  agg: 0 | 1;
+  /** walk to a meeting point (true) or fight from their spots (false) */
+  walk: boolean;
+  /** reduced motion: only a static VS badge + emotes */
+  still: boolean;
+  phase: "go" | "fight" | "back";
+  start: number;
+  /** clock when the fight began */
+  t0: number;
+  /** 0 = left fighter holds the file and wins, 1 = right (re-decided at the flourish) */
+  winner: 0 | 1;
+  /** sid whose edit failed, from the server (loser), if known */
+  failer: string | null;
+  /** current impact point (beam end / orb / clang) for the renderer */
+  ix: number; iy: number;
+  beat: number;
+  flourished: boolean;
+}
+export const DUEL_FIGHT = 4.4;
+export const DUEL_INTRO = 0.8;
+export const DUEL_FLOURISH = 3.4;
+export const DUEL_BEAT = 0.5;
+const DUEL_COOLDOWN = 60;
+const GLARE_COOLDOWN = 60;
+/** two adventurers closer than this share a spot: no duel */
+const DUEL_MIN_DIST = 12;
+const pairKey = (a: string, b: string): string => (a < b ? a + "|" + b : b + "|" + a);
+const DUEL_MAX = 2;
+const DUEL_WALK_MAX = 130;
+const DUEL_RANGE_MAX = 200;
+const SPARK_COLS = ["#ffffff", "#ffe14a", "#ffffff", "#ffb347"];
+const MAGIC_COLS = ["#ffffff", "#b07bff", "#8fd3ff", "#ffffff"];
+const HOLY_COLS = ["#ffffff", "#ffe27a", "#fff6c0", "#ffd24a"];
+const ARROW_COLS = ["#ffffff", "#c69c6d", "#d8dde8", "#ffe14a"];
+const CLASH_COLS = ["#ff4a4a", "#ffd94a", "#ffffff"];
+const GOLD_COLS = ["#ffe14a", "#ffffff", "#f2c14e"];
+const styleOf = (cls: string): DuelStyle => (cls === "mage" || cls === "cleric" ? "magic" : cls === "ranger" ? "arrow" : "sword");
 
 export interface Intern {
   id: string; label: string; born: number; act: "idle" | "typing" | "reading" | "handup";
@@ -125,6 +173,10 @@ export interface Employee {
   lvlAt: number;
   lvlTo: number;
   dustAcc: number;
+  /** active territory duel this adventurer is part of */
+  duel: Duel | null;
+  /** a Stop arrived mid-duel: go to the tavern once back at the spot */
+  coffeeAfter: boolean;
   /** a live/snapshot SessionStart was seen for this session */
   sawStart: boolean;
   /** events observed for this session (snapshot events included) */
@@ -136,6 +188,8 @@ export interface Employee {
 export interface Particle {
   on: boolean; x: number; y: number; vx: number; vy: number; g: number; age: number; life: number;
   col: string; size: number; spr: string | null;
+  /** drawn BEFORE the entity pass (duel effects: they may fade, so they must never sit over a character) */
+  under: boolean;
 }
 export interface Popup { x: number; y: number; text: string; col: string; big: boolean; born: number; dur: number; star: boolean }
 export interface Banner { kind: "quest" | "boss"; text: string; start: number; dur: number }
@@ -277,6 +331,18 @@ export class Office {
   private pendingClash = new Map<string, TerritoryConflict>();
   private rowsCache: ConflictRow[] | null = null;
   private seenClash = new Set<string>();
+  private seenOverlap = new Set<string>();
+  /** live duels (<= DUEL_MAX), read by the renderer */
+  readonly duels: Duel[] = [];
+  private duelAt = new Map<string, number>();
+  /** flag-tug animations after a new overlap */
+  private tugs: { a: string; b: string; until: number }[] = [];
+  /** clock time of the last failed edit tool per session (the failing side loses a duel) */
+  private editFailAt = new Map<string, number>();
+  private glareAt = new Map<string, number>();
+  private pruneAt = 0;
+  private tmpPt: Pt = { x: 0, y: 0 };
+  private terrFxAt = 0;
   private terrVer = 0;
   private bumpTerr() { this.terrVer++; this.rowsCache = null; }
   private filter: GuildFilter = { query: "", hideStray: false };
@@ -286,7 +352,7 @@ export class Office {
 
   // ---- effects (render reads these) ----
   readonly particles: Particle[] = Array.from({ length: MAX_PARTICLES }, () => ({
-    on: false, x: 0, y: 0, vx: 0, vy: 0, g: 0, age: 0, life: 1, col: "#fff", size: 1, spr: null,
+    on: false, x: 0, y: 0, vx: 0, vy: 0, g: 0, age: 0, life: 1, col: "#fff", size: 1, spr: null, under: false,
   }));
   private pIdx = 0;
   popups: Popup[] = [];
@@ -493,7 +559,8 @@ export class Office {
     this.ended.clear();
     this.endedAgents.clear();
     this.ctxMap.clear();
-    this.claimN.clear(); this.conflicts = []; this.dismissed.clear(); this.seenClash.clear(); this.pendingClash.clear(); this.bumpTerr();
+    this.claimN.clear(); this.conflicts = []; this.dismissed.clear(); this.seenClash.clear(); this.seenOverlap.clear(); this.pendingClash.clear(); this.bumpTerr();
+    this.duels.length = 0; this.duelAt.clear(); this.glareAt.clear(); this.tugs.length = 0; this.editFailAt.clear();
     for (const p of this.particles) p.on = false;
     this.popups = []; this.banners = []; this.trauma = 0; this.flash = 0;
     this.dirty = true;
@@ -533,7 +600,8 @@ export class Office {
         if (!c || typeof c.file !== "string" || !Array.isArray(c.sids) || (c.level !== "overlap" && c.level !== "clash")) continue;
         const sids = c.sids.filter((x): x is string => typeof x === "string" && !!x).slice(0, 8);
         if (sids.length < 2) continue;
-        conflicts.push({ file: c.file, sids, level: c.level, since: Number(c.since) || 0 });
+        const failer = typeof c.failer === "string" && sids.includes(c.failer) ? c.failer : undefined;
+        conflicts.push(failer ? { file: c.file, sids, level: c.level, since: Number(c.since) || 0, failer } : { file: c.file, sids, level: c.level, since: Number(c.since) || 0 });
       }
     }
     this.claimN = claims;
@@ -546,10 +614,17 @@ export class Office {
       else if (exp < now) this.dismissed.delete(k);
     }
     const nextSeen = new Set<string>();
+    const nextOverlap = new Set<string>();
     this.pendingClash.clear();
     const fresh: TerritoryConflict[] = [];
+    const freshOv: TerritoryConflict[] = [];
     for (const c of conflicts) {
-      if (c.level !== "clash") continue;
+      if (c.level === "overlap") {
+        const k = conflictKey(c);
+        nextOverlap.add(k);
+        if (!quiet && !this.seenOverlap.has(k) && this.clashEligible(c)) freshOv.push(c);
+        continue;
+      }
       const k = conflictKey(c);
       if (this.seenClash.has(k) || quiet) { nextSeen.add(k); continue; }
       if (!this.clashEligible(c)) { this.pendingClash.set(k, c); continue; } // not eligible yet: alert when sessions arrive
@@ -557,10 +632,226 @@ export class Office {
       fresh.push(c);
     }
     this.seenClash = nextSeen;
-    for (const c of fresh.slice(0, 3)) this.alertClash(c);
+    this.seenOverlap = nextOverlap;
+    for (const c of fresh.slice(0, 3)) { this.alertClash(c); this.startDuel(c); }
+    for (const c of freshOv.slice(0, 3)) this.glare(c);
     this.bumpTerr();
     this.hidVer++;
     this.dirty = true;
+  }
+
+  // ---------- territory duels ----------
+  /** can this adventurer start/join a duel right now */
+  private duelReady(e: Employee | undefined): e is Employee {
+    return !!e && e.state === "SEATED" && !e.duel && !this.isHidden(e) && !this.isWaiting(e) && e.x >= 0 && e.x <= W && e.y >= 0 && e.y <= H;
+  }
+
+  /**
+   * Who holds the file and wins (0 = left, 1 = right). The server names the session whose edit failed (`failer`) and that one loses.
+   * Without it: the one whose edit failed recently loses (client-seen failures); else more claims; else a stable hash.
+   */
+  private duelWinner(l: Employee, r: Employee, failer: string | null): 0 | 1 {
+    if (failer === l.id) return 1;
+    if (failer === r.id) return 0;
+    const fl = this.editFailAt.get(l.id) ?? -Infinity, fr = this.editFailAt.get(r.id) ?? -Infinity;
+    const recent = (f: number) => this.clock - f < 120;
+    if (recent(fl) !== recent(fr)) return recent(fl) ? 1 : 0;
+    if (recent(fl) && recent(fr) && fl !== fr) return fl > fr ? 1 : 0;
+    const cl = this.claimsOf(l.id), cr = this.claimsOf(r.id);
+    if (cl !== cr) return cl > cr ? 0 : 1;
+    return h32(l.id) <= h32(r.id) ? 0 : 1;
+  }
+
+  /** a NEW clash: the two adventurers duel for ~4.4s (walking to the flag when both sit at battle spots). */
+  private startDuel(c: TerritoryConflict) {
+    if (this.duels.length >= DUEL_MAX) return;
+    const ids = [...new Set(c.sids)];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = this.employees.get(ids[i]), b = this.employees.get(ids[j]);
+        if (a === b || !this.duelReady(a) || !this.duelReady(b)) continue;
+        const key = pairKey(a.id, b.id);
+        const last = this.duelAt.get(key);
+        if (last !== undefined && this.clock - last < DUEL_COOLDOWN) continue;
+        if (this.beginDuel(a, b, c.failer ?? null)) { this.duelAt.set(key, this.clock); return; }
+      }
+    }
+  }
+
+  private beginDuel(a: Employee, b: Employee, failer: string | null): boolean {
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    if (dist < DUEL_MIN_DIST) return false; // stacked on the same camp slot: nothing to draw between them
+    const bothSpots = a.deskIdx >= 0 && b.deskIdx >= 0;
+    const walk = !this.reducedMotion && bothSpots && dist <= DUEL_WALK_MAX;
+    if (!walk && dist > DUEL_RANGE_MAX) return false;
+    // in-place duels (camp / far apart / reduced motion) are "still": a VS badge + emotes, no effects between the sprites
+    const still = !walk;
+    const [L, R] = a.x < b.x || (a.x === b.x && a.y <= b.y) ? [a, b] : [b, a];
+    const sl = styleOf(L.look.cls), sr = styleOf(R.look.cls);
+    let kind: DuelKind, agg: 0 | 1 = 0;
+    if (sl === sr) kind = sl === "sword" ? "sword" : sl === "magic" ? "orb" : "arrows";
+    else if (sl === "arrow" || sr === "arrow") {
+      const other = sl === "arrow" ? sr : sl;
+      kind = other === "sword" ? "arrow_sword" : "arrow_magic";
+      agg = sl === "arrow" ? 0 : 1;
+    } else { kind = "magic_sword"; agg = sl === "magic" ? 0 : 1; }
+    const d: Duel = {
+      l: L.id, r: R.id, kind, styleL: sl, styleR: sr, agg, walk, still, phase: walk ? "go" : "fight",
+      start: this.clock, t0: walk ? -1 : this.clock, winner: this.duelWinner(L, R, failer), failer,
+      ix: (L.x + R.x) / 2, iy: (L.y + R.y) / 2 - 12, beat: -1, flourished: false,
+    };
+    this.duels.push(d);
+    L.duel = d; R.duel = d;
+    if (walk) {
+      const m = duelMidOfDesks(L.deskIdx, R.deskIdx, this.tmpPt);
+      this.startWalk(L, m.x - DUEL_HALF, m.y);
+      this.startWalk(R, m.x + DUEL_HALF, m.y);
+    } else {
+      if (!L.bubble) L.tempBubble = { e: "💢", until: this.clock + 2.5 };
+      if (!R.bubble) R.tempBubble = { e: "💢", until: this.clock + 2.5 };
+    }
+    this.dirty = true;
+    return true;
+  }
+  private startWalk(e: Employee, x: number, y: number) {
+    e.state = "DUEL"; e.stateSince = this.clock; e.path = [{ x, y }]; e.trail = []; e.holdUntil = 0; e.tempBubble = null;
+  }
+
+  /** a NEW overlap: both glare (💢) and the flag between them gets tugged (at most once per pair per cooldown) */
+  private glare(c: TerritoryConflict) {
+    const emps = c.sids.map((x) => this.employees.get(x)).filter((e): e is Employee => !!e && e.state !== "LEAVING");
+    if (emps.length < 2) return;
+    const [a, b] = emps;
+    const key = pairKey(a.id, b.id);
+    const last = Math.max(this.glareAt.get(key) ?? -Infinity, this.duelAt.get(key) ?? -Infinity);
+    if (this.clock - last < GLARE_COOLDOWN) return;
+    this.glareAt.set(key, this.clock);
+    if (a.state === "SEATED" && !a.bubble && a.act !== "handup") a.tempBubble = { e: "💢", until: this.clock + 2 };
+    if (b.state === "SEATED" && !b.bubble && b.act !== "handup") b.tempBubble = { e: "💢", until: this.clock + 2 };
+    this.tugs.push({ a: a.id, b: b.id, until: this.clock + 2.4 });
+    if (this.tugs.length > 6) this.tugs.shift();
+  }
+  /** end time of the flag tug between two sessions (0 when none) */
+  tugUntil(a: string, b: string): number {
+    for (const t of this.tugs) if ((t.a === a && t.b === b) || (t.a === b && t.b === a)) return t.until;
+    return 0;
+  }
+
+  /** fight over for this adventurer: back to the spot (walking duel) or just release */
+  private sendHome(e: Employee | undefined, d: Duel) {
+    if (!e || e.duel !== d) return;
+    if (e.state === "DUEL") {
+      const s = seatPoint(e.deskIdx, e.slot);
+      e.path = [{ x: s.x, y: s.y }]; e.trail = []; e.holdUntil = 0;
+    } else { e.duel = null; e.facing = 1; }
+  }
+  /** one adventurer of a duel in its "back" phase; true while still walking home */
+  private backStep(e: Employee | undefined, d: Duel): boolean {
+    if (!e || e.duel !== d) return false;
+    if (e.state !== "DUEL") { e.duel = null; return false; }
+    if (e.path.length) return true;
+    e.duel = null; this.sit(e);
+    return false;
+  }
+
+  private updateDuels() {
+    if (this.clock - this.pruneAt > 15) this.pruneMaps();
+    for (let i = this.duels.length - 1; i >= 0; i--) {
+      const d = this.duels[i];
+      const L = this.employees.get(d.l), R = this.employees.get(d.r);
+      const lOk = !!L && L.duel === d, rOk = !!R && R.duel === d;
+      const okState = (e: Employee) => e.state === (d.walk ? "DUEL" : "SEATED");
+      // stand both down: someone left / drank / got hidden by the filter / needs the user (❗ must show), or reduced motion switched on mid-walk
+      const stop = d.phase !== "back" && (!lOk || !rOk || !okState(L!) || !okState(R!)
+        || this.isHidden(L) || this.isHidden(R) || this.isWaiting(L!) || this.isWaiting(R!) || (this.reducedMotion && !d.still));
+      if (stop) {
+        if (d.walk) { d.phase = "back"; this.sendHome(L, d); this.sendHome(R, d); }
+        else {
+          if (L && L.duel === d) { L.duel = null; L.facing = 1; }
+          if (R && R.duel === d) { R.duel = null; R.facing = 1; }
+          this.duels.splice(i, 1); this.dirty = true; continue;
+        }
+      }
+      if ((d.phase as Duel["phase"]) === "go") {
+        if (!L!.path.length && !R!.path.length) {
+          d.phase = "fight"; d.t0 = this.clock;
+          if (!this.reducedMotion) this.burst((L!.x + R!.x) / 2, L!.y - 10, 6, GOLD_COLS, 40, 40, 0.4, 1, true);
+        }
+      }
+      if ((d.phase as Duel["phase"]) === "fight") {
+        const u = this.clock - d.t0;
+        L!.facing = 1; R!.facing = -1;
+        if (u >= DUEL_FIGHT) {
+          if (d.walk) { d.phase = "back"; this.sendHome(L, d); this.sendHome(R, d); }
+          else { L!.duel = null; R!.duel = null; L!.facing = 1; R!.facing = 1; this.duels.splice(i, 1); this.dirty = true; continue; }
+        } else if (!d.still) this.duelFx(d, L!, R!, u);
+      }
+      if ((d.phase as Duel["phase"]) === "back") {
+        let live = 0;
+        if (this.backStep(L, d)) live++;
+        if (this.backStep(R, d)) live++;
+        if (!live) { this.duels.splice(i, 1); this.dirty = true; }
+      }
+    }
+  }
+
+  /** impact point + sparks on every beat; winner flourish burst. Particles only (no per-frame allocation). All opaque-or-under-entities. */
+  private duelFx(d: Duel, L: Employee, R: Employee, u: number) {
+    if (this.reducedMotion) return;
+    const mx = (L.x + R.x) / 2, my = (L.y + R.y) / 2 - 12;
+    d.ix = mx; d.iy = my;
+    if (d.kind === "orb") d.ix = mx + Math.sin(u * 2.6) * 1.5;
+    else if (d.kind !== "sword" && d.kind !== "arrows") {
+      const def = d.agg === 0 ? R : L;
+      d.ix = def.x + def.facing * (d.kind === "arrow_magic" ? 25 : 13); d.iy = def.y - 13;
+    }
+    if (!d.flourished && u >= DUEL_FLOURISH) {
+      d.flourished = true;
+      d.winner = this.duelWinner(L, R, d.failer); // decided now, so a failure that arrived after the clash still counts
+      const w = d.winner === 0 ? L : R;
+      this.ring(w.x, w.y - CH_H - 4, 8, GOLD_COLS, 22, 0.7, true);
+      this.pop(w.x, w.y - CH_H - 10, "WIN!", "#ffe14a", false, true, 1.1);
+      return;
+    }
+    if (u < DUEL_INTRO || u >= DUEL_FLOURISH) return;
+    const b = Math.floor((u - DUEL_INTRO) / DUEL_BEAT);
+    if (b === d.beat) return;
+    d.beat = b;
+    const sparkCols = d.kind === "orb" || d.kind === "magic_sword"
+      ? ((d.kind === "orb" ? L : (d.agg === 0 ? L : R)).look.cls === "cleric" ? HOLY_COLS : MAGIC_COLS)
+      : d.kind === "sword" ? SPARK_COLS : ARROW_COLS;
+    this.burst(d.ix, d.iy, 7, sparkCols, 55, 60, 0.35, 1, true);
+    if (b % 3 === 0) this.addTrauma(0.05);
+  }
+
+  /** sparks on the contested flag while a clash is live (the flag is knocked over) */
+  private updateTerritoryFx(dt: number) {
+    for (let i = this.tugs.length - 1; i >= 0; i--) if (this.tugs[i].until < this.clock) this.tugs.splice(i, 1);
+    if (this.reducedMotion || !this.conflicts.length) return;
+    this.terrFxAt -= dt;
+    if (this.terrFxAt > 0) return;
+    this.terrFxAt = 0.8;
+    let n = 0;
+    for (const r of this.conflictRows()) {
+      if (r.level !== "clash" || n >= 4) continue;
+      const a = this.employees.get(r.sids[0]), b = this.employees.get(r.sids[1]);
+      if (!a || !b || a.deskIdx < 0 || b.deskIdx < 0 || this.isHidden(a) || this.isHidden(b)) continue;
+      const m = duelMidOfDesks(a.deskIdx, b.deskIdx, this.tmpPt);
+      this.burst(m.x, m.y - 4, 3, CLASH_COLS, 26, 60, 0.4, 1, true);
+      n++;
+    }
+  }
+
+  /** drop duel/glare/failure bookkeeping that can no longer matter */
+  private pruneMaps() {
+    this.pruneAt = this.clock;
+    for (const [k, t] of this.duelAt) if (this.clock - t > DUEL_COOLDOWN) this.duelAt.delete(k);
+    for (const [k, t] of this.glareAt) if (this.clock - t > GLARE_COOLDOWN) this.glareAt.delete(k);
+    for (const [k, t] of this.editFailAt) if (this.clock - t > 120) this.editFailAt.delete(k);
+  }
+  private forgetFighter(id: string) {
+    this.editFailAt.delete(id);
+    for (const m of [this.duelAt, this.glareAt]) for (const k of m.keys()) if (k.startsWith(id + "|") || k.endsWith("|" + id)) m.delete(k);
   }
 
   private clashEligible(c: TerritoryConflict): boolean { return c.sids.filter((x) => this.employees.has(x)).length >= 2; }
@@ -572,7 +863,7 @@ export class Office {
       if (!this.clashEligible(c)) continue;
       this.pendingClash.delete(k);
       this.seenClash.add(k);
-      if (n++ < 3) this.alertClash(c);
+      if (n++ < 3) { this.alertClash(c); this.startDuel(c); }
     }
   }
 
@@ -726,6 +1017,7 @@ export class Office {
       case "TO_COFFEE": return "กลับไปโรงเตี๊ยม 🍺";
       case "FROM_COFFEE": return "ออกไปลุยต่อ 🗡️";
       case "DRINK": return "ดื่มเอลพักเหนื่อย 🍺";
+      case "DUEL": return "ดวลแย่งดินแดน ⚔️";
     }
     if (e.hurtUntil > this.clock) return "โดนโจมตี 💥";
     if (e.boss && e.act !== "handup") return "สู้บอส 👹";
@@ -783,33 +1075,35 @@ export class Office {
     this.updateAmbient(rawDt);
     this.sim?.update();
     this.promoteOverflow();
+    this.updateDuels();
+    this.updateTerritoryFx(dt);
     for (const e of [...this.employees.values()]) this.updateEmployee(e, dt);
   }
 
   // ---------- effects ----------
   addTrauma(v: number) { this.trauma = Math.min(1, this.trauma + v); }
 
-  private emitP(x: number, y: number, vx: number, vy: number, g: number, life: number, col: string, size = 1, spr: string | null = null) {
+  private emitP(x: number, y: number, vx: number, vy: number, g: number, life: number, col: string, size = 1, spr: string | null = null, under = false) {
     let p = this.particles[this.pIdx];
     for (let i = 0; i < MAX_PARTICLES; i++) {
       const q = this.particles[(this.pIdx + i) % MAX_PARTICLES];
       if (!q.on) { p = q; this.pIdx = (this.pIdx + i + 1) % MAX_PARTICLES; break; }
       if (i === MAX_PARTICLES - 1) this.pIdx = (this.pIdx + 1) % MAX_PARTICLES; // pool full: recycle the next slot
     }
-    p.on = true; p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.g = g; p.age = 0; p.life = life; p.col = col; p.size = size; p.spr = spr;
+    p.on = true; p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.g = g; p.age = 0; p.life = life; p.col = col; p.size = size; p.spr = spr; p.under = under;
   }
 
-  private burst(x: number, y: number, n: number, cols: string[], speed: number, g = 90, life = 0.5, size = 1) {
+  private burst(x: number, y: number, n: number, cols: string[], speed: number, g = 90, life = 0.5, size = 1, under = false) {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2, v = speed * rand(0.5, 1);
-      this.emitP(x, y, Math.cos(a) * v, Math.sin(a) * v - speed * 0.4, g, life * rand(0.7, 1.1), cols[i % cols.length], size);
+      this.emitP(x, y, Math.cos(a) * v, Math.sin(a) * v - speed * 0.4, g, life * rand(0.7, 1.1), cols[i % cols.length], size, null, under);
     }
   }
 
-  private ring(x: number, y: number, n: number, cols: string[], speed: number, life: number) {
+  private ring(x: number, y: number, n: number, cols: string[], speed: number, life: number, under = false) {
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
-      this.emitP(x, y, Math.cos(a) * speed, Math.sin(a) * speed * 0.7, 0, life, cols[i % cols.length], i % 3 === 0 ? 2 : 1);
+      this.emitP(x, y, Math.cos(a) * speed, Math.sin(a) * speed * 0.7, 0, life, cols[i % cols.length], i % 3 === 0 ? 2 : 1, null, under);
     }
   }
 
@@ -907,6 +1201,8 @@ export class Office {
   }
 
   private updateEmployee(e: Employee, dt: number) {
+    // a duel is not a stall: in-flight tools must not age into a boss while the adventurer is busy dueling
+    if (e.duel && e.pending.size) for (const [k, t0] of e.pending) e.pending.set(k, t0 + dt);
     // idle timeout is ~10 real minutes: the sim clock is speed-scaled, and waiting on a permission prompt is not idle.
     if (e.state !== "LEAVING" && e.act !== "handup" && e.pending.size === 0 && this.clock - e.lastEventAt > 600 * Math.max(1, this.speed)) this.leave(e);
     switch (e.state) {
@@ -915,6 +1211,9 @@ export class Office {
         break;
       case "FROM_COFFEE":
         if (this.move(e, dt)) this.sit(e);
+        break;
+      case "DUEL":
+        if (e.path.length) this.move(e, dt); // updateDuels() owns the phase changes
         break;
       case "TO_COFFEE":
         if (this.move(e, dt)) {
@@ -926,7 +1225,7 @@ export class Office {
       case "LEAVING":
         if (this.move(e, dt)) {
           if (e.returning) this.reenter(e);
-          else { this.employees.delete(e.id); this.bumpTerr(); this.dirty = true; }
+          else { this.employees.delete(e.id); this.forgetFighter(e.id); this.bumpTerr(); this.dirty = true; }
         }
         break;
       case "STRETCH":
@@ -979,10 +1278,15 @@ export class Office {
       if (e.state !== "SEATED") { e.queue = q.slice(i); break; }
       this.applyEvent(e, q[i], i === q.length - 1);
     }
+    if (e.coffeeAfter) { // a Stop arrived while dueling: take the break now
+      e.coffeeAfter = false;
+      if (e.state === "SEATED") { e.state = "STRETCH"; e.stateSince = this.clock; }
+    }
   }
 
   private leave(e: Employee) {
     if (e.state === "LEAVING") return;
+    e.duel = null; e.coffeeAfter = false; // updateDuels() sends the opponent home
     const path: Pt[] = routeLeave(e.x, e.y);
     e.state = "LEAVING";
     e.returning = false;
@@ -1079,7 +1383,7 @@ export class Office {
       monHp: 3, monHpMax: 3, boss: null, bossAt: -1, lv: 1, xp: 0, gold: 0, kills: 0, hearts: MAX_HEARTS,
       pending: new Map(), toolCalls: 0, qKills: 0, qGold: 0, resting: false,
       windupUntil: 0, hsUntil: 0, hsAt: 0, lungeUntil: 0, flashUntil: 0, monLungeUntil: 0, monKnockUntil: 0, redUntil: 0, slashUntil: 0,
-      lvlAt: -99, lvlTo: 1, dustAcc: 0, sawStart: false, evCount: 0, known: false,
+      lvlAt: -99, lvlTo: 1, dustAcc: 0, duel: null, coffeeAfter: false, sawStart: false, evCount: 0, known: false,
     };
     const sv = this.demo ? undefined : this.progress[id];
     if (sv) { e.lv = sv.lv; e.xp = sv.xp; e.gold = sv.gold; e.kills = sv.kills; }
@@ -1202,6 +1506,7 @@ export class Office {
     if (evt.cwd && (fresh || e.project === "unknown")) { e.cwd = evt.cwd; e.project = projectOf(evt.cwd); }
     this.pushLog(evt);
     e.lastEventAt = this.clock;
+    if (name === "PostToolUseFailure" && EDIT_TOOLS.has(str(evt.tool_name))) this.editFailAt.set(sid, this.clock);
     if (e.state === "LEAVING") { e.returning = true; return; }
 
     const agentId = str(evt.agent_id);
@@ -1211,6 +1516,10 @@ export class Office {
     switch (e.state) {
       case "SEATED": this.applyEvent(e, evt); break;
       case "STRETCH": e.state = "SEATED"; this.applyEvent(e, evt); break;
+      case "DUEL": // never queued: apply state-only (no coffee walk), the adventurer keeps dueling; updateDuels() aborts on a ❗
+        this.applyEvent(e, evt, false);
+        e.coffeeAfter = name === "Stop";
+        break;
       case "TO_COFFEE":
       case "DRINK":
         e.state = "FROM_COFFEE";

@@ -1,7 +1,7 @@
-import { MAX_HEARTS, type Employee, type Office } from "./engine";
+import { DUEL_FLOURISH, DUEL_INTRO, DUEL_BEAT, MAX_HEARTS, type Duel, type Employee, type Office } from "./engine";
 import {
   BACK_WALL_H, BAR, BRIDGE_X, CH_H, CH_W, COUNTER_BOX, DESK_COUNT, DUNGEON, GATE_OPEN, H, HALL_W, HEARTH,
-  NPC_POS, ROAD_Y, TORCHES, W, WALL_X0, spotOf, squirePoint, campSquirePoint, standSlot, CAMP_MAX,
+  NPC_POS, ROAD_Y, TORCHES, W, WALL_X0, duelMidOfDesks, plotRect, spotOf, squirePoint, campSquirePoint, standSlot, CAMP_MAX,
 } from "./layout";
 import { lookFor } from "./palette";
 import { bossSprite, butterflySprite, charSprite, internSprite, monsterSprite, prop, type Pose } from "./sprites";
@@ -640,9 +640,10 @@ function outlined(c: Ctx, text: string, x: number, y: number, fill: string) {
   c.fillStyle = fill; c.fillText(text, x, y);
 }
 
-function drawParticles(c: Ctx, o: Office) {
+/** `under`: the duel/territory particles, drawn before the entity pass (they fade, so they must never sit over a character) */
+function drawParticles(c: Ctx, o: Office, under: boolean) {
   for (const p of o.particles) {
-    if (!p.on) continue;
+    if (!p.on || p.under !== under) continue;
     const u = p.age / p.life;
     c.globalAlpha = u > 0.65 ? Math.max(0, (1 - u) / 0.35) : 1;
     if (p.spr) blitC(c, p.spr, p.x, p.y);
@@ -666,7 +667,7 @@ function drawPopups(c: Ctx, o: Office) {
 }
 
 // ---- territory: claim flags, conflict lines and swords (all drawn as separate UI; never over/through characters' colours) ----
-interface TLink { ax: number; ay: number; bx: number; by: number; ix: number; iy: number; level: "overlap" | "clash" }
+interface TLink { ax: number; ay: number; bx: number; by: number; ix: number; iy: number; level: "overlap" | "clash"; ea: Employee | null; eb: Employee | null }
 const linkPool: TLink[] = [];
 let linkN = 0;
 // badge sits above the heads: head top (CH_H) + tallest overhead bubble (17) + gap (6) + badge radius (7)
@@ -704,13 +705,263 @@ function territoryLinks(o: Office): number {
       const e = o.employees.get(r.sids[k]);
       if (!e || o.isHidden(e) || e.state === "LEAVING" || e.x < 0 || e.x > W || e.y < 0 || e.y > H) continue;
       if (!first) { first = e; continue; }
-      const l = linkPool[linkN] ?? (linkPool[linkN] = { ax: 0, ay: 0, bx: 0, by: 0, ix: 0, iy: 0, level: "overlap" });
-      l.ax = first.x; l.ay = first.y - 9; l.bx = e.x; l.by = e.y - 9; l.level = r.level;
+      const l = linkPool[linkN] ?? (linkPool[linkN] = { ax: 0, ay: 0, bx: 0, by: 0, ix: 0, iy: 0, level: "overlap", ea: null, eb: null });
+      l.ax = first.x; l.ay = first.y - 9; l.bx = e.x; l.by = e.y - 9; l.level = r.level; l.ea = first; l.eb = e;
       placeLinkIcon(o, l, Math.min(first.y, e.y));
       linkN++;
     }
   }
   return linkN;
+}
+
+// ---- territory: land plots, contested strip + flag ----
+const ROPE = "#d9c38a";
+/** claimed land: tinted ground + rope fence with stakes in the owner's colour. Drawn on the ground layer, before entities. */
+const RA = { x: 0, y: 0, w: 0, h: 0 }, RB = { x: 0, y: 0, w: 0, h: 0 }, MID = { x: 0, y: 0 };
+function drawPlots(c: Ctx, o: Office) {
+  for (const e of o.employees.values()) {
+    if (o.isHidden(e) || e.deskIdx < 0 || e.state === "LEAVING") continue;
+    const n = o.claimsOf(e.id);
+    if (n <= 0) continue;
+    const r = plotRect(e.deskIdx, n, RA), col = e.look.shirt;
+    c.globalAlpha = 0.2; rect(c, col, r.x, r.y, r.w, r.h);
+    c.globalAlpha = 0.14; // tilled-soil ticks
+    for (let yy = r.y + 4, row = 0; yy < r.y + r.h - 2; yy += 6, row++) for (let xx = r.x + 4 + (row & 1) * 4; xx < r.x + r.w - 2; xx += 8) rect(c, "#ffffff", xx, yy, 2, 1);
+    c.globalAlpha = 1;
+    rect(c, ROPE, r.x, r.y, r.w, 1); rect(c, ROPE, r.x, r.y + r.h, r.w + 1, 1);
+    rect(c, ROPE, r.x, r.y, 1, r.h); rect(c, ROPE, r.x + r.w, r.y, 1, r.h);
+    for (let x = r.x; x <= r.x + r.w; x += 8) { stake(c, x, r.y, col); stake(c, x, r.y + r.h, col); }
+    for (let y = r.y + 8; y < r.y + r.h - 3; y += 8) { stake(c, r.x, y, col); stake(c, r.x + r.w, y, col); }
+    stake(c, r.x + r.w, r.y, col); stake(c, r.x + r.w, r.y + r.h, col);
+  }
+}
+function stake(c: Ctx, x: number, y: number, col: string) {
+  rect(c, INK, x - 1, y - 3, 3, 5);
+  rect(c, col, x, y - 2, 1, 3);
+}
+function inRect(px: number, py: number, r: { x: number; y: number; w: number; h: number }, m: number): boolean {
+  return px > r.x + m && px < r.x + r.w - m && py > r.y + m && py < r.y + r.h - m;
+}
+/** between two linked plots: a checker of both owners' colours that swaps slowly (static under reduced motion), with the flag on it */
+function drawContested(c: Ctx, o: Office, n: number, t: number) {
+  const still = o.reducedMotion;
+  for (let i = 0; i < n; i++) {
+    const l = linkPool[i], a = l.ea, b = l.eb;
+    if (!a || !b || a.deskIdx < 0 || b.deskIdx < 0 || a.state === "LEAVING" || b.state === "LEAVING") continue;
+    const ra = plotRect(a.deskIdx, Math.max(1, o.claimsOf(a.id)), RA), rb = plotRect(b.deskIdx, Math.max(1, o.claimsOf(b.id)), RB);
+    const ax = ra.x + ra.w / 2, ay = ra.y + ra.h / 2, bx = rb.x + rb.w / 2, by = rb.y + rb.h / 2;
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
+    const steps = Math.ceil(len / 4), nx = -dy / len, ny = dx / len;
+    const flip = still ? 0 : Math.floor(t * (l.level === "clash" ? 3 : 1.4)) & 1;
+    for (let k = 0; k <= steps; k++) {
+      if (Math.abs(k - steps / 2) > 6) continue;
+      const px = ax + (dx * k) / steps, py = ay + (dy * k) / steps;
+      if (inRect(px, py, ra, 4) || inRect(px, py, rb, 4)) continue;
+      for (let j = -3; j <= 3; j++) {
+        const tx = Math.floor((px + nx * j * 4) / 4), ty = Math.floor((py + ny * j * 4) / 4);
+        rect(c, ((tx + ty + flip) & 1) === 0 ? a.look.shirt : b.look.shirt, tx * 4, ty * 4, 4, 4);
+      }
+    }
+    if (a.deskIdx >= 0 && b.deskIdx >= 0) drawMidFlag(c, o, l, a, b, t);
+  }
+}
+function drawMidFlag(c: Ctx, o: Office, l: TLink, a: Employee, b: Employee, t: number) {
+  const m = duelMidOfDesks(a.deskIdx, b.deskIdx, MID);
+  const x = m.x, y = m.y;
+  shadow(c, x, y, 6);
+  const tug = !o.reducedMotion && o.tugUntil(a.id, b.id) > o.clock;
+  if (l.level === "clash") { // knocked over: stub, snapped pole on the ground, two torn scraps
+    rect(c, INK, x - 1, y - 6, 3, 6); rect(c, "#8a6a3a", x, y - 5, 1, 5);
+    rect(c, INK, x + 2, y - 3, 11, 4); rect(c, "#8a6a3a", x + 3, y - 2, 9, 2);
+    rect(c, INK, x - 9, y - 1, 7, 4); rect(c, a.look.shirt, x - 8, y, 5, 2);
+    rect(c, INK, x + 9, y, 7, 4); rect(c, b.look.shirt, x + 10, y + 1, 5, 2);
+    return;
+  }
+  const sway = o.reducedMotion ? 0 : Math.round(Math.sin(t * (tug ? 14 : 2.4)) * (tug ? 5 : 2));
+  rect(c, INK, x - 1, y - 17, 3, 17); rect(c, "#8a6a3a", x, y - 16, 1, 16);
+  rect(c, INK, x + sway, y - 17, 12, 8);
+  rect(c, a.look.shirt, x + 1 + sway, y - 16, 5, 6); rect(c, b.look.shirt, x + 6 + sway, y - 16, 5, 6);
+}
+
+// ---- territory duels ----
+const DP = { pose: "idle" as Pose, frame: 0, dx: 0 };
+/** Fills DP for an adventurer in the fight phase of a (non-still) duel; false = use the normal pose. */
+function duelPoseInto(e: Employee, d: Duel, t: number): boolean {
+  DP.dx = 0;
+  if (d.phase !== "fight" || d.still) return false;
+  const u = t - d.t0, side = d.l === e.id ? 0 : 1, dir = side === 0 ? 1 : -1;
+  if (u >= DUEL_FLOURISH) {
+    if (side === d.winner) { DP.pose = "cheer"; DP.frame = Math.floor(t * 5) % 2; }
+    else { DP.pose = "hurt"; DP.frame = Math.floor(t * 8) % 2; DP.dx = -3 * dir; }
+    return true;
+  }
+  if (u < DUEL_INTRO) { DP.pose = "idle"; DP.frame = Math.floor(t * 4) % 2; return true; }
+  const b = Math.floor((u - DUEL_INTRO) / DUEL_BEAT), ph = ((u - DUEL_INTRO) % DUEL_BEAT) / DUEL_BEAT;
+  const style = side === 0 ? d.styleL : d.styleR;
+  const mixed = d.kind === "magic_sword" || d.kind === "arrow_sword" || d.kind === "arrow_magic";
+  const defender = mixed && side !== d.agg;
+  if (style === "sword") {
+    DP.pose = "attack";
+    if (defender) { DP.frame = 0; DP.dx = 0; }
+    else if ((b + side) % 2 === 0) { DP.frame = 1; DP.dx = (ph < 0.5 ? 3 : 2) * dir; }
+    else { DP.frame = 0; DP.dx = -1 * dir; }
+  } else if (style === "magic") {
+    DP.pose = "cast"; DP.frame = defender ? 0 : Math.floor(t * 8) % 2;
+  } else { DP.pose = "attack"; DP.frame = ph < 0.25 ? 1 : 0; DP.dx = ph < 0.25 ? -1 * dir : 0; }
+  return true;
+}
+
+function pxLine(c: Ctx, x0: number, y0: number, x1: number, y1: number, col: string, th: number, wig = 0, t = 0) {
+  const n = Math.max(1, Math.round(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
+  c.fillStyle = col;
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, w = wig ? Math.round(Math.sin(i * 0.7 + t * 30) * wig * Math.sin(u * Math.PI)) : 0;
+    c.fillRect(Math.round(x0 + (x1 - x0) * u - th / 2), Math.round(y0 + (y1 - y0) * u - th / 2 + w), th, th);
+  }
+}
+function beam(c: Ctx, x0: number, y0: number, x1: number, y1: number, col: string, t: number) {
+  pxLine(c, x0, y0, x1, y1, INK, 5, 1.5, t);
+  pxLine(c, x0, y0, x1, y1, col, 3, 1.5, t);
+  pxLine(c, x0, y0, x1, y1, "#ffffff", 1, 1.5, t);
+}
+function blade(c: Ctx, hx: number, hy: number, tx: number, ty: number) {
+  pxLine(c, hx, hy, tx, ty, INK, 3);
+  pxLine(c, hx, hy, tx, ty, "#d8dde8", 1);
+  rect(c, GOLD, Math.round(hx) - 1, Math.round(hy) - 1, 3, 3);
+}
+function star(c: Ctx, x: number, y: number, r: number, col: string) {
+  rect(c, "#ffffff", x - r, y, r * 2 + 1, 1); rect(c, "#ffffff", x, y - r, 1, r * 2 + 1);
+  rect(c, col, x - 1, y - 1, 3, 3); rect(c, "#ffffff", x, y, 1, 1);
+  rect(c, col, x - r + 1, y - r + 1, 1, 1); rect(c, col, x + r - 1, y - r + 1, 1, 1);
+  rect(c, col, x - r + 1, y + r - 1, 1, 1); rect(c, col, x + r - 1, y + r - 1, 1, 1);
+}
+function arrowPx(c: Ctx, x: number, y: number, dir: number) {
+  const x0 = Math.round(x), y0 = Math.round(y);
+  rect(c, INK, x0 - 4, y0 - 1, 9, 3);
+  rect(c, "#c69c6d", x0 - 3, y0, 6, 1);
+  rect(c, "#d8dde8", dir > 0 ? x0 + 3 : x0 - 4, y0, 2, 1);
+  rect(c, "#ffffff", dir > 0 ? x0 - 4 : x0 + 3, y0 - 1, 1, 3);
+}
+const magicCol = (e: Employee) => (e.look.cls === "cleric" ? "#ffe27a" : "#b07bff");
+function crown(c: Ctx, x: number, y: number, t: number) {
+  const cx = Math.round(x), cy = Math.round(y - Math.abs(Math.sin(t * 5)) * 1.5);
+  rect(c, INK, cx - 4, cy - 1, 9, 6);
+  rect(c, "#f2c14e", cx - 3, cy + 1, 7, 3);
+  rect(c, "#f2c14e", cx - 3, cy, 1, 1); rect(c, "#f2c14e", cx, cy - 1, 1, 2); rect(c, "#f2c14e", cx + 3, cy, 1, 1);
+  rect(c, "#d95763", cx, cy + 2, 1, 1); rect(c, "#fff6c0", cx - 3, cy + 1, 7, 1);
+}
+function drawVs(c: Ctx, L: Employee, R: Employee, x: number, y: number) {
+  c.font = '800 6px ui-sans-serif, system-ui, sans-serif';
+  c.textBaseline = "middle"; c.textAlign = "right";
+  const wl = Math.ceil(c.measureText(L.tag).width), wr = Math.ceil(c.measureText(R.tag).width);
+  const w = wl + wr + 22, h = 10;
+  const bx = Math.max(2, Math.min(W - w - 2, Math.round(x - w / 2))), by = Math.round(y - h / 2);
+  rect(c, INK, bx - 1, by - 1, w + 2, h + 2);
+  rect(c, "#ecd9a2", bx, by, w, h); rect(c, "#f6e8bf", bx, by, w, 2);
+  rect(c, L.look.shirt, bx, by, 2, h); rect(c, R.look.shirt, bx + w - 2, by, 2, h);
+  c.fillStyle = "#3b2418";
+  c.fillText(L.tag, bx + 3 + wl, by + h / 2 + 0.5);
+  c.textAlign = "center"; c.fillStyle = "#b8232f";
+  c.fillText("VS", bx + w / 2, by + h / 2 + 0.5);
+  c.textAlign = "left"; c.fillStyle = "#3b2418";
+  c.fillText(R.tag, bx + w - 3 - wr, by + h / 2 + 0.5);
+}
+
+/** integer-aligned pixel disc, left half `cl`, right half `cr` (alpha 1) */
+function pxDisc(c: Ctx, cx: number, cy: number, r: number, cl: string, cr: string) {
+  for (let dy = -r; dy <= r; dy++) {
+    const w = Math.floor(Math.sqrt(r * r - dy * dy) + 0.5);
+    rect(c, cl, cx - w, cy + dy, w, 1);
+    rect(c, cr, cx, cy + dy, w + 1, 1);
+  }
+}
+/** integer-aligned pixel ring, 1px thick (alpha 1) */
+function pxRing(c: Ctx, cx: number, cy: number, r: number, col: string) {
+  for (let dy = -r; dy <= r; dy++) {
+    const wo = Math.floor(Math.sqrt(r * r - dy * dy) + 0.5);
+    const wi = Math.abs(dy) <= r - 1 ? Math.floor(Math.sqrt((r - 1) * (r - 1) - dy * dy) + 0.5) : -1;
+    if (wi < 0) rect(c, col, cx - wo, cy + dy, wo * 2 + 1, 1);
+    else { const ww = Math.max(1, wo - wi); rect(c, col, cx - wo, cy + dy, ww, 1); rect(c, col, cx + wo - ww + 1, cy + dy, ww, 1); }
+  }
+}
+
+/** hand height of a duellist */
+const handY = (e: Employee) => e.y - 15;
+/** hands sit this far from the body centre: beyond a sprite box (8) plus the max lunge (3), so nothing ever overlaps a sprite */
+const HAND = 13;
+
+/**
+ * All duel effects are opaque pixels (alpha 1) drawn after the entity pass. They live strictly inside the gap between the two
+ * sprite boxes (DUEL_HALF leaves 28px; every effect starts HAND px from a body centre and stays within +-10px of the meeting point).
+ * Anything that fades is a particle drawn BEFORE the entity pass instead.
+ */
+function drawDuels(c: Ctx, o: Office, t: number) {
+  for (const d of o.duels) {
+    if (d.phase !== "fight") continue;
+    const L = o.employees.get(d.l), R = o.employees.get(d.r);
+    if (!L || !R || o.isHidden(L) || o.isHidden(R)) continue;
+    const u = t - d.t0;
+    const top = Math.min(L.y, R.y) - CH_H - 14;
+    if (d.still || u < 1.8) drawVs(c, L, R, (L.x + R.x) / 2, top);
+    if (d.still) continue;
+    if (u >= DUEL_FLOURISH) { const w = d.winner === 0 ? L : R; crown(c, w.x, w.y - CH_H - 7, t); continue; }
+    if (u < DUEL_INTRO) continue;
+    const b = Math.floor((u - DUEL_INTRO) / DUEL_BEAT), ph = ((u - DUEL_INTRO) % DUEL_BEAT) / DUEL_BEAT;
+    const ix = Math.round(d.ix), iy = Math.round(d.iy), flash = ph < 0.2;
+    const lh = L.x + HAND, rh = R.x - HAND;
+    switch (d.kind) {
+      case "sword": {
+        blade(c, lh, L.y - 13, ix + (ix - lh) * 0.3, iy - 3 + (b & 1) * 4);
+        blade(c, rh, R.y - 13, ix + (ix - rh) * 0.3, iy - 3 + ((b + 1) & 1) * 4);
+        if (flash) star(c, ix, iy, 4, "#ffe14a");
+        break;
+      }
+      case "orb": {
+        const cl = magicCol(L), cr = magicCol(R);
+        beam(c, lh, handY(L), ix - 2, iy, cl, t);
+        beam(c, rh, handY(R), ix + 2, iy, cr, t);
+        const r = 4 + (flash ? 1 : 0) + (Math.floor(t * 12) & 1);
+        pxDisc(c, ix, iy, r + 1, INK, INK);
+        pxDisc(c, ix, iy, r, cl, cr);
+        rect(c, "#ffffff", ix - 2, iy - 2, 4, 4);
+        const q = Math.floor(t * 18);
+        for (let k = 0; k < 4; k++) { // crackle: deterministic per-frame lightning ticks
+          const a = ((q * 7 + k * 5) % 12) * (Math.PI / 6);
+          pxLine(c, ix + Math.cos(a) * (r + 1), iy + Math.sin(a) * (r + 1), ix + Math.cos(a) * (r + 3), iy + Math.sin(a) * (r + 3), "#ffffff", 1);
+        }
+        break;
+      }
+      case "arrows": {
+        const p = Math.min(1, ph / 0.7);
+        if (p < 1) {
+          arrowPx(c, lh + (ix + 4 - lh) * p, L.y - 14, 1);
+          arrowPx(c, rh + (ix - 4 - rh) * p, R.y - 14, -1);
+        } else star(c, ix, iy, 3, "#ffd94a");
+        break;
+      }
+      default: { // magic_sword / arrow_sword / arrow_magic: one side attacks, the other defends
+        const A = d.agg === 0 ? L : R, D = d.agg === 0 ? R : L, dir = d.agg === 0 ? 1 : -1;
+        const ax = A.x + HAND * dir, ay = handY(A);
+        if (d.kind === "magic_sword") beam(c, ax, ay, ix, iy, magicCol(A), t);
+        else {
+          const p = Math.min(1, ph / 0.7);
+          if (p < 1) arrowPx(c, ax + (ix - ax) * p, ay + (iy - ay) * p, dir);
+          else { const q = (ph - 0.7) / 0.3; arrowPx(c, ix - dir * q * 12, iy - q * 12 + q * q * 16, -dir); } // deflected, tumbling away
+        }
+        if (d.kind === "arrow_magic") { // shield bubble in front of the mage (pixel ring, opaque)
+          const sx = Math.round(D.x - dir * 18), sy = Math.round(D.y - 13);
+          pxRing(c, sx, sy, 8, INK);
+          pxRing(c, sx, sy, 7, flash ? "#ffffff" : "#8fd3ff");
+        } else { // blade raised to block
+          const bx = Math.round(D.x - dir * HAND);
+          pxLine(c, bx, D.y - 8, bx - dir, D.y - 23, INK, 3); pxLine(c, bx, D.y - 8, bx - dir, D.y - 23, "#d8dde8", 1);
+          rect(c, GOLD, bx - 2, D.y - 9, 5, 2);
+        }
+        if (flash || ph > 0.7) star(c, ix, iy, flash ? 4 : 2, "#ffe14a");
+        break;
+      }
+    }
+  }
 }
 
 function drawClaimFlags(c: Ctx, o: Office, t: number) {
@@ -876,8 +1127,12 @@ function drawSquire(c: Ctx, e: Employee, it: Employee["interns"] extends Map<str
 }
 
 // ---------- adventurers ----------
+let duelDxNow = 0;
 function poseFor(e: Employee, t: number): { pose: Pose; frame: number } {
+  duelDxNow = 0;
+  if (e.duel && duelPoseInto(e, e.duel, t)) { duelDxNow = DP.dx; return { pose: DP.pose, frame: DP.frame }; }
   switch (e.state) {
+    case "DUEL": return e.path.length ? { pose: "walk", frame: Math.floor(t * 8) % 4 } : { pose: "idle", frame: Math.floor(t * 4) % 2 };
     case "ENTERING": case "LEAVING": case "TO_COFFEE": case "FROM_COFFEE":
       if (e.holdUntil > t) return e.state === "LEAVING" ? { pose: "cheer", frame: Math.floor(t * 4) % 2 } : { pose: "idle", frame: 0 };
       return { pose: "walk", frame: Math.floor(t * 8) % 4 };
@@ -915,6 +1170,7 @@ function drawAdventurer(c: Ctx, e: Employee, t: number) {
   if (fighting && e.windupUntil > t) dx = -2; // anticipation: lean back before the strike
   if (fighting && e.lungeUntil > t) dx = 3;
   if (hurt) dx = -2;
+  if (duelDxNow) dx = duelDxNow;
   const px = Math.round(e.x - CH_W / 2 + dx), py = Math.round(e.y - CH_H + bob);
   const red = e.redUntil > t && e.state === "SEATED";
   const put = (img: HTMLCanvasElement, a: number) => {
@@ -1003,7 +1259,7 @@ function drawFx(c: Ctx, e: Employee, t: number, o: Office) {
   if (e.hasPaper && t - e.paperAt < 1 && e.state === "SEATED") blitC(c, "quest_note", e.x + 9, e.y - 30 - (t - e.paperAt) * 6);
   if (t < e.sparkUntil) blitC(c, "spark" + (Math.floor(t * 12) % 2), e.x + 8, e.y - 28);
   if (e.state !== "SEATED") return;
-  if (e.resting) {
+  if (e.resting && !e.duel) {
     const fx = e.x + 10, fy = e.y + 1;
     blitB(c, "campfire" + (Math.floor(t * 6) % 2), fx, fy);
   }
@@ -1011,6 +1267,7 @@ function drawFx(c: Ctx, e: Employee, t: number, o: Office) {
     for (let k = 0; k < MAX_HEARTS; k++) blitC(c, k < e.hearts ? "heart" : "heart_empty", e.x - 7 + k * 7, e.y + 5);
   }
   manaBar(c, e, t, o);
+  if (e.duel && e.duel.phase === "fight" && !e.duel.still) return; // the duel replaces the usual monster fight effects
   if (e.deskIdx >= 0 && e.hearts === 0 && !e.resting) blitC(c, "sweat" + (Math.floor(t * 3) % 2), e.x - 9, e.y - 22);
   if (e.slashUntil > t && e.monPos && !e.monDead) {
     blitC(c, "slash" + (Math.floor(t * 20) % 2), e.monPos.x - 3 + (e.boss ? 4 : 0), e.monPos.y - 9);
@@ -1218,8 +1475,11 @@ export function drawScene(c: Ctx, o: Office) {
   // territory layer: all of it (lines, flags, swords) is drawn BEFORE the entity pass, fully opaque where it overlaps
   // a character's footprint, so nothing translucent ever sits on top of a character
   const nLinks = territoryLinks(o);
+  drawPlots(c, o);
+  drawContested(c, o, nLinks, t);
   drawLinks(c, nLinks, t, o);
   drawClaimFlags(c, o, t);
+  drawParticles(c, o, true);
 
   const ents: { y: number; fn: () => void }[] = [];
   for (const e of o.employees.values()) {
@@ -1252,8 +1512,9 @@ export function drawScene(c: Ctx, o: Office) {
   }
   ents.sort((a, b) => a.y - b.y);
   for (const en of ents) en.fn();
+  drawDuels(c, o, t);
   drawLinkIcons(c, nLinks, t, o); // after entities: the opaque badge is never hidden
-  drawParticles(c, o);
+  drawParticles(c, o, false);
   drawPopups(c, o);
 
   // bubbles, highlights, tags

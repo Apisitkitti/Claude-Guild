@@ -187,6 +187,20 @@ describe("store territory", () => {
     expect(territories()[1].conflicts).toMatchObject([{ file: "a.ts", sids: ["t1", "t2"], level: "overlap" }]);
   });
 
+  it("broadcasts the clash (with the failing sid) BEFORE the failure event itself reaches clients", () => {
+    ev("t1", "SessionStart");
+    ev("t2", "SessionStart");
+    edit("t1", "/p/a.ts");
+    edit("t2", "/p/a.ts");
+    sent.length = 0;
+    edit("t2", "/p/a.ts", "PostToolUseFailure");
+    const iTerr = sent.findIndex((c) => c.startsWith("event: territory"));
+    const iEvt = sent.findIndex((c) => c.includes("PostToolUseFailure") && !c.startsWith("event: territory"));
+    expect(iTerr).toBeGreaterThanOrEqual(0);
+    expect(iTerr).toBeLessThan(iEvt);
+    expect(JSON.parse(sent[iTerr].split("data: ")[1]).conflicts).toMatchObject([{ level: "clash", failer: "t2" }]);
+  });
+
   it("includes territory in the snapshot and releases on SessionEnd", () => {
     expect(m.snapshot().territory).toEqual({ claims: [], conflicts: [] });
     ev("t1", "SessionStart");

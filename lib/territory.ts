@@ -4,7 +4,8 @@ import path from "node:path";
 // overlaps (>=2 sessions hold the same file) and clashes (an edit failed on a file someone else holds /
 // just touched). Pure + injectable `now` so it is easy to test. Hooks are async: this can warn, not block.
 
-export type TerritoryConflict = { file: string; sids: string[]; level: "overlap" | "clash"; since: number };
+/** `failer` (clash only): sid whose edit failed (the loser of the clash). With several failers, the most recent one. */
+export type TerritoryConflict = { file: string; sids: string[]; level: "overlap" | "clash"; since: number; failer?: string };
 export type TerritoryMsg = { claims: { sid: string; files: string[] }[]; conflicts: TerritoryConflict[] };
 
 export type TerritoryEvent = {
@@ -238,7 +239,9 @@ export class TerritoryTracker {
       const cl = clashByFile.get(file);
       if (cl) {
         const sids = [...new Set([...h, ...cl.flatMap((c) => c.sids)])].sort();
-        conflicts.push({ file: display.get(file)!, sids, level: "clash", since: Math.max(...cl.map((c) => c.since)) });
+        let top = cl[0];
+        for (const c of cl) if (c.since > top.since || (c.since === top.since && c.failer < top.failer)) top = c;
+        conflicts.push({ file: display.get(file)!, sids, level: "clash", since: Math.max(...cl.map((c) => c.since)), failer: top.failer });
       } else if (h.length >= 2) {
         conflicts.push({ file: display.get(file)!, sids: [...h].sort(), level: "overlap", since: this.overlapSince.get(file)! });
       }

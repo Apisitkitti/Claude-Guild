@@ -1,4 +1,4 @@
-import type { HookEvt, Office } from "./engine";
+import type { Employee, HookEvt, Office } from "./engine";
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const randInt = (a: number, b: number) => Math.floor(rand(a, b + 1));
@@ -55,31 +55,49 @@ export class Simulator {
     this.spawn(this.territory());
   }
 
-  /** demo-only: now and then two adventurers touch the same fake file; nothing is persisted */
+  /** how often each class pairing has duelled in this demo (so cycles rotate through sword / magic / arrow matchups) */
+  private pairSeen = new Map<string, number>();
+
+  /** pick the least-seen class pairing among the seated demo adventurers */
+  private pickPair(live: Employee[]): [Employee, Employee] {
+    let best: [Employee, Employee] | null = null, bestN = Infinity;
+    for (let i = 0; i < live.length; i++) {
+      for (let j = i + 1; j < live.length; j++) {
+        const n = (this.pairSeen.get([live[i].look.cls, live[j].look.cls].sort().join("+")) ?? 0) + Math.random() * 0.5;
+        if (n < bestN) { bestN = n; best = [live[i], live[j]]; }
+      }
+    }
+    return best!;
+  }
+
+  /** demo-only: two adventurers touch the same fake file (overlap: glare + flag tug), then a failed edit (clash: duel); nothing is persisted */
   private *territory(): Gen {
-    yield rand(35, 50);
+    yield rand(25, 35);
     for (;;) {
       const live = [...this.o.employees.values()].filter((e) => e.state === "SEATED" && this.active.has(e.id));
       if (live.length >= 2) {
-        const [a, b] = [...live].sort(() => Math.random() - 0.5).slice(0, 2);
-        const file = pick(FILES[this.active.get(a.id) ?? ""] ?? FILES.portfolio);
-        const claims = [
-          { sid: a.id, files: Array.from({ length: randInt(1, 3) }, (_, i) => (i === 0 ? file : `src/fake${i}.ts`)) },
-          { sid: b.id, files: [file] },
-        ];
+        const [a, b] = this.pickPair(live);
+        const key = [a.look.cls, b.look.cls].sort().join("+");
+        this.pairSeen.set(key, (this.pairSeen.get(key) ?? 0) + 1);
+        const project = this.active.get(a.id) ?? "portfolio";
+        const file = pick(FILES[project] ?? FILES.portfolio);
+        const mk = (n: number) => Array.from({ length: n }, (_, i) => (i === 0 ? file : `src/fake${i}.ts`));
+        const claims = [{ sid: a.id, files: mk(randInt(1, 7)) }, { sid: b.id, files: mk(randInt(1, 4)) }];
         const msg = (level: "overlap" | "clash") => ({ claims, conflicts: [{ file, sids: [a.id, b.id], level, since: Date.now() }] });
         this.o.setTerritory(msg("overlap"));
-        const total = rand(20, 30);
+        const total = rand(22, 32);
         let spent = 0;
-        if (Math.random() < 0.6) {
-          const w = rand(4, 8);
+        if (Math.random() < 0.85) {
+          const w = rand(5, 8);
           yield w; spent = w;
+          // b's edit fails on the file a holds: a keeps the land (and wins the duel)
+          this.emit({ session_id: b.id, cwd: b.cwd, hook_event_name: "PostToolUseFailure", tool_name: "Edit", tool_input: { file_path: b.cwd + "/" + file }, error: "File has been modified since read" });
           this.o.setTerritory(msg("clash"));
         }
         yield Math.max(1, total - spent);
         this.o.setTerritory({ claims: [], conflicts: [] });
       }
-      yield rand(60, 90);
+      yield rand(45, 65);
     }
   }
 
