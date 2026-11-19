@@ -73,6 +73,8 @@ export const DUEL_INTRO = 0.8;
 export const DUEL_FLOURISH = 3.4;
 export const DUEL_BEAT = 0.5;
 const DUEL_COOLDOWN = 60;
+/** a clash that could not duel yet (participant still walking in, etc.) keeps trying this long (sim seconds) */
+const DUEL_WAIT = 30;
 const GLARE_COOLDOWN = 60;
 /** two adventurers closer than this share a spot: no duel */
 const DUEL_MIN_DIST = 12;
@@ -335,6 +337,8 @@ export class Office {
   /** live duels (<= DUEL_MAX), read by the renderer */
   readonly duels: Duel[] = [];
   private duelAt = new Map<string, number>();
+  /** live clashes waiting for both fighters to be free (key -> conflict + deadline) */
+  private duelWait = new Map<string, { c: TerritoryConflict; until: number }>();
   /** flag-tug animations after a new overlap */
   private tugs: { a: string; b: string; until: number }[] = [];
   /** clock time of the last failed edit tool per session (the failing side loses a duel) */
@@ -560,7 +564,7 @@ export class Office {
     this.endedAgents.clear();
     this.ctxMap.clear();
     this.claimN.clear(); this.conflicts = []; this.dismissed.clear(); this.seenClash.clear(); this.seenOverlap.clear(); this.pendingClash.clear(); this.bumpTerr();
-    this.duels.length = 0; this.duelAt.clear(); this.glareAt.clear(); this.tugs.length = 0; this.editFailAt.clear();
+    this.duels.length = 0; this.duelAt.clear(); this.duelWait.clear(); this.glareAt.clear(); this.tugs.length = 0; this.editFailAt.clear();
     for (const p of this.particles) p.on = false;
     this.popups = []; this.banners = []; this.trauma = 0; this.flash = 0;
     this.dirty = true;
@@ -662,19 +666,43 @@ export class Office {
     return h32(l.id) <= h32(r.id) ? 0 : 1;
   }
 
-  /** a NEW clash: the two adventurers duel for ~4.4s (walking to the flag when both sit at battle spots). */
+  /**
+   * a NEW clash: the two adventurers duel for ~4.4s (walking to the flag when both sit at battle spots).
+   * When a pair is blocked only by a transient condition (someone still walking in / at the tavern / mid-duel, or both duel slots busy)
+   * the clash waits in `duelWait` and is retried every frame for DUEL_WAIT seconds while it stays live.
+   */
   private startDuel(c: TerritoryConflict) {
-    if (this.duels.length >= DUEL_MAX) return;
+    const r = this.tryDuel(c);
+    const k = conflictKey(c);
+    if (r === "wait") { if (!this.duelWait.has(k)) this.duelWait.set(k, { c, until: this.clock + DUEL_WAIT }); }
+    else this.duelWait.delete(k);
+  }
+  /** "started" | "wait" (retry later) | "none" (nothing to do for this clash) */
+  private tryDuel(c: TerritoryConflict): "started" | "wait" | "none" {
     const ids = [...new Set(c.sids)];
+    let wait = false;
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) {
         const a = this.employees.get(ids[i]), b = this.employees.get(ids[j]);
-        if (a === b || !this.duelReady(a) || !this.duelReady(b)) continue;
+        if (!a || !b || a === b || a.state === "LEAVING" || b.state === "LEAVING") continue;
         const key = pairKey(a.id, b.id);
         const last = this.duelAt.get(key);
-        if (last !== undefined && this.clock - last < DUEL_COOLDOWN) continue;
-        if (this.beginDuel(a, b, c.failer ?? null)) { this.duelAt.set(key, this.clock); return; }
+        if (last !== undefined && this.clock - last < DUEL_COOLDOWN) continue; // per pair, not per person
+        if (!this.duelReady(a) || !this.duelReady(b)) { if (!this.isHidden(a) && !this.isHidden(b) && !this.isWaiting(a) && !this.isWaiting(b)) wait = true; continue; }
+        if (this.duels.length >= DUEL_MAX) { wait = true; continue; }
+        if (this.beginDuel(a, b, c.failer ?? null)) { this.duelAt.set(key, this.clock); return "started"; }
       }
+    }
+    return wait ? "wait" : "none";
+  }
+  /** retry clashes that could not duel yet; drop them once expired or no longer a live clash */
+  private retryDuels() {
+    for (const [k, w] of this.duelWait) {
+      const live = this.conflicts.find((c) => c.level === "clash" && conflictKey(c) === k);
+      if (!live || this.clock > w.until) { this.duelWait.delete(k); continue; }
+      if (this.duels.length >= DUEL_MAX) continue;
+      const r = this.tryDuel(live);
+      if (r === "started" || r === "none") this.duelWait.delete(k);
     }
   }
 
@@ -1075,6 +1103,7 @@ export class Office {
     this.updateAmbient(rawDt);
     this.sim?.update();
     this.promoteOverflow();
+    this.retryDuels();
     this.updateDuels();
     this.updateTerritoryFx(dt);
     for (const e of [...this.employees.values()]) this.updateEmployee(e, dt);

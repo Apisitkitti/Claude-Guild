@@ -133,7 +133,7 @@ describe("territory duel", () => {
     o.reducedMotion = true;
     o.update(0.05);
     expect(o.duels[0].phase).toBe("back");
-    tick(o, 8);
+    tick(o, 20);
     expect(o.duels).toHaveLength(0);
     expect(emp(o, a).state).toBe("SEATED");
     expect(emp(o, b).state).toBe("SEATED");
@@ -224,6 +224,9 @@ describe("territory duel", () => {
     o.setTerritory(msg(a, b, "clash"));
     expect(o.duels).toHaveLength(0);
     expect(emp(o, a).state).toBe("SEATED");
+    o.setTerritory({ claims: [], conflicts: [] }); // the clash ends before b sits down: it never duels afterwards
+    tick(o, 20);
+    expect(o.duels).toHaveLength(0);
     // a drinking adventurer does not duel either
     const c = sid(); seat(o, c);
     emp(o, c).state = "DRINK";
@@ -294,5 +297,74 @@ describe("territory duel", () => {
     expect(p.state).toBe("SEATED");
     tick(o, 6);
     expect(o.duels).toHaveLength(0);
+  });
+});
+
+describe("territory duel: second pair after an older clash", () => {
+  it("a second clash (cleric/ranger) duels while the older clash (mage/cleric) is still re-sent", () => {
+    const o = newOffice();
+    const cwd = "/Users/demo/realm";
+    const other = sid(), mage = sid("m"), cleric = sid("c"), ranger = sid("r");
+    seat(o, other, { cwd });
+    seat(o, mage, { cwd }); seat(o, cleric, { cwd }); seat(o, ranger, { cwd });
+    emp(o, mage).look.cls = "mage"; emp(o, cleric).look.cls = "cleric"; emp(o, ranger).look.cls = "ranger";
+    const tool = (id: string, name: string, file: string, tid: string, extra: Record<string, unknown> = {}) =>
+      ev(id, name, { cwd, tool_name: name === "PostToolUseFailure" ? "Edit" : id === ranger ? "Write" : "Edit", tool_input: { file_path: file }, tool_use_id: tid, ...extra });
+    const f1 = "/Users/demo/realm/src/spells.ts", f2 = "/Users/demo/realm/src/arrows.ts";
+    const c1 = { file: "src/spells.ts", sids: [mage, cleric], level: "clash" as const, since: 1, failer: mage };
+    const claims = [{ sid: mage, files: [f1] }, { sid: cleric, files: [f1, f2] }, { sid: ranger, files: [f2] }];
+
+    o.event(tool(cleric, "PreToolUse", f1, "g1"));
+    o.setTerritory({ claims, conflicts: [{ ...c1, level: "overlap", failer: undefined }] });
+    o.event(tool(mage, "PreToolUse", f1, "m1"));
+    o.setTerritory({ claims, conflicts: [c1] });
+    o.event(tool(mage, "PostToolUseFailure", f1, "m1"));
+    expect(o.duels).toHaveLength(1);
+    tick(o, 20);
+    expect(o.duels).toHaveLength(0);
+    expect(emp(o, cleric).state).toBe("SEATED");
+
+    const ov2 = { file: "src/arrows.ts", sids: [ranger, cleric], level: "overlap" as const, since: 2 };
+    o.event(tool(ranger, "PreToolUse", f2, "a1"));
+    o.setTerritory({ claims, conflicts: [c1, ov2] });
+    o.event(tool(cleric, "PreToolUse", f2, "h2"));
+    const cl2 = { ...ov2, level: "clash" as const, failer: cleric };
+    o.setTerritory({ claims, conflicts: [c1, cl2] });
+    o.event(tool(cleric, "PostToolUseFailure", f2, "h2"));
+    expect(o.duels).toHaveLength(1);
+    expect(emp(o, cleric).state).toBe("DUEL");
+    expect(emp(o, ranger).state).toBe("DUEL");
+    expect(o.duels[0].winner).toBe(emp(o, o.duels[0].l).id === cleric ? 1 : 0);
+  });
+
+  it("a clash while a participant is still walking in duels as soon as both are seated; an older clash re-sent does not retrigger", () => {
+    const o = newOffice();
+    const cwd = "/Users/demo/realm";
+    const other = sid(), mage = sid("m"), cleric = sid("c"), ranger = sid("r");
+    seat(o, other, { cwd }); seat(o, mage, { cwd }); seat(o, cleric, { cwd });
+    const c1 = { file: "src/spells.ts", sids: [mage, cleric], level: "clash" as const, since: 1, failer: mage };
+    const claims = [{ sid: mage, files: ["src/spells.ts"] }, { sid: cleric, files: ["src/spells.ts", "src/arrows.ts"] }];
+    o.setTerritory({ claims, conflicts: [c1] });
+    tick(o, 20);
+    expect(o.duels).toHaveLength(0);
+    // the ranger has only just arrived (still ENTERING) when its clash with the cleric is reported
+    o.event(ev(ranger, "SessionStart", { cwd }));
+    o.event(ev(ranger, "PreToolUse", { cwd, tool_name: "Write", tool_input: { file_path: cwd + "/src/arrows.ts" }, tool_use_id: "a1" }));
+    const c2 = { file: "src/arrows.ts", sids: [cleric, ranger], level: "clash" as const, since: 2, failer: cleric };
+    o.setTerritory({ claims, conflicts: [c2, c1] });
+    o.event(ev(cleric, "PreToolUse", { cwd, tool_name: "Edit", tool_input: { file_path: cwd + "/src/arrows.ts" }, tool_use_id: "h2" }));
+    o.event(ev(cleric, "PostToolUseFailure", { cwd, tool_name: "Edit", tool_input: { file_path: cwd + "/src/arrows.ts" }, tool_use_id: "h2" }));
+    expect(emp(o, ranger).state).toBe("ENTERING");
+    expect(o.duels).toHaveLength(0);
+    for (let i = 0; i < 400 && emp(o, ranger).state !== "SEATED"; i++) { o.setTerritory({ claims, conflicts: [c2, c1] }); tick(o, 0.1); if (o.duels.length) break; }
+    tick(o, 0.2);
+    expect(o.duels).toHaveLength(1);
+    expect([o.duels[0].l, o.duels[0].r].sort()).toEqual([cleric, ranger].sort());
+    expect(emp(o, mage).state).toBe("SEATED"); // the old mage/cleric clash never retriggers
+    tick(o, 20);
+    expect(o.duels).toHaveLength(0);
+    o.setTerritory({ claims, conflicts: [c2, c1] });
+    tick(o, 1);
+    expect(o.duels).toHaveLength(0); // same pair is on cooldown, nobody else re-duels
   });
 });

@@ -47,7 +47,7 @@ type Store = {
   territory: TerritoryTracker;
 };
 
-const STORE_VERSION = 7; // bump when Store shape changes so dev HMR rebuilds it
+const STORE_VERSION = 8; // bump when Store shape changes so dev HMR rebuilds it
 
 const g = globalThis as typeof globalThis & { __claudeOffice?: Store & { version?: number } };
 
