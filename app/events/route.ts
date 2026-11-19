@@ -1,29 +1,12 @@
-import { addEvent, isForeignOrigin } from "@/lib/store";
+import { authorize } from "@/lib/guildAuth";
+import { readLimited } from "@/lib/http";
+import { addEvent, MCP_PREFIX } from "@/lib/store";
 
 const MAX_BODY = 1024 * 1024; // bytes
 
-async function readLimited(req: Request, limit: number): Promise<string | null> {
-  const declared = Number(req.headers.get("content-length"));
-  if (declared > limit) return null;
-  if (!req.body) return "";
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
 export async function POST(req: Request) {
-  if (isForeignOrigin(req)) return new Response("forbidden", { status: 403 });
+  const access = authorize(req);
+  if (!access.ok) return new Response("forbidden", { status: 403 });
   // Requiring application/json forces a CORS preflight for cross-origin browser requests (which we never allow).
   if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return new Response("content-type must be application/json", { status: 415 });
@@ -39,6 +22,8 @@ export async function POST(req: Request) {
   if (!evt || typeof evt !== "object" || Array.isArray(evt)) {
     return new Response("bad json", { status: 400 });
   }
+  // MCP members exist only through the MCP tools: a remote caller must not forge or hijack them via hooks.
+  if (access.remote && String((evt as Record<string, unknown>).session_id ?? "").startsWith(MCP_PREFIX)) return new Response("forbidden", { status: 403 });
   addEvent(evt as Record<string, unknown>);
   return new Response(null, { status: 204 });
 }

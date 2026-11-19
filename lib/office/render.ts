@@ -1356,6 +1356,27 @@ function drawBubble(c: Ctx, x: number, tipY: number, emoji: string) {
   c.fillText(emoji, x, by + h / 2 + 0.5);
 }
 
+/** Opaque speech bubble with wrapped text (guild shout): max 3 lines, never translucent. */
+function drawSpeech(c: Ctx, x: number, tipY: number, text: string) {
+  c.font = '700 7px ui-sans-serif, system-ui, sans-serif'; c.textAlign = "left"; c.textBaseline = "middle";
+  const maxW = 96, lines: string[] = [];
+  let cur = "";
+  for (const word of text.split(" ")) {
+    const t = cur ? cur + " " + word : word;
+    if (cur && c.measureText(t).width > maxW) { lines.push(cur); cur = word; } else cur = t;
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > 3) { lines.length = 3; lines[2] = lines[2].replace(/.{0,2}$/, "") + "…"; }
+  const tw = Math.min(maxW + 2, Math.max(...lines.map((l) => c.measureText(l).width)));
+  const w = Math.round(tw) + 8, h = lines.length * 8 + 4;
+  const bx = Math.max(1, Math.min(W - w - 1, Math.round(x - w / 2))), by = Math.round(tipY - h - 2);
+  rect(c, INK, bx + 1, by, w - 2, h); rect(c, INK, bx, by + 1, w, h - 2);
+  rect(c, "#ffffff", bx + 1, by + 1, w - 2, h - 2);
+  rect(c, INK, Math.round(x) - 1, by + h, 3, 1); rect(c, INK, Math.round(x), by + h + 1, 1, 1);
+  c.fillStyle = INK;
+  lines.forEach((l, i) => c.fillText(l, bx + 4, by + 2 + 4 + i * 8));
+}
+
 /** Big red "!" bubble: the adventurer needs you. */
 function drawAlert(c: Ctx, x: number, tipY: number) {
   const w = 13, h = 15;
@@ -1533,7 +1554,9 @@ export function drawScene(c: Ctx, o: Office) {
   // bubbles, highlights, tags
   for (const e of o.employees.values()) {
     if (o.isHidden(e)) continue;
-    if (e.state === "SEATED" && e.act === "handup" && !e.tempBubble) {
+    if (e.speech && o.realTime < e.speech.until && e.state !== "LEAVING") {
+      drawSpeech(c, e.x, e.y - CH_H - 1, e.speech.text);
+    } else if (e.state === "SEATED" && e.act === "handup" && !e.tempBubble) {
       if (Math.floor(t * 4) % 2 === 0 || o.selectedId === e.id) drawAlert(c, e.x, e.y - CH_H - 1);
     } else {
       const em = bubbleOf(e, t);

@@ -1,5 +1,6 @@
 import { readContext, type ContextUsage } from "@/lib/transcript";
 import { TerritoryTracker } from "@/lib/territory";
+import { authorize } from "@/lib/guildAuth";
 
 // In-memory event + session store shared by route handlers.
 // Kept on globalThis so it survives dev hot-reloads and is shared across route modules.
@@ -34,6 +35,8 @@ const MAX_EVENTS = 200;
 const SNAPSHOT_EVENTS = 50;
 const STALE_MS = 10 * 60 * 1000;
 const TOMBSTONE_MS = 60 * 1000;
+export const MCP_PREFIX = "mcp-";
+export const MCP_STALE_MS = 30 * 60 * 1000;
 
 type Store = {
   events: HookEvent[];
@@ -47,7 +50,7 @@ type Store = {
   territory: TerritoryTracker;
 };
 
-const STORE_VERSION = 8; // bump when Store shape changes so dev HMR rebuilds it
+const STORE_VERSION = 9; // bump when Store shape changes so dev HMR rebuilds it
 
 const g = globalThis as typeof globalThis & { __claudeOffice?: Store & { version?: number } };
 
@@ -61,7 +64,14 @@ function createStore(): Store & { version: number; timers: Timers } {
   const ping = setInterval(() => broadcastRaw(store, ": ping\n\n"), 15_000);
   const sweep = setInterval(() => {
     const cutoff = Date.now() - STALE_MS;
-    for (const [id, s] of store.sessions) if (s.lastSeen < cutoff) dropSession(id);
+    const mcpCutoff = Date.now() - MCP_STALE_MS;
+    const expired: string[] = [];
+    for (const [id, s] of store.sessions) {
+      if (id.startsWith(MCP_PREFIX)) {
+        if (s.lastSeen < mcpCutoff) expired.push(id);
+      } else if (s.lastSeen < cutoff) dropSession(id);
+    }
+    for (const id of expired) addEvent({ session_id: id, hook_event_name: "SessionEnd" }); // tell clients too
     const tombCutoff = Date.now() - TOMBSTONE_MS;
     for (const [id, at] of store.ended) if (at < tombCutoff) store.ended.delete(id);
     if (store.territory.sweep(Date.now())) broadcastTerritory(store);
@@ -272,6 +282,19 @@ export function addEvent(raw: Record<string, unknown>) {
   } catch {}
 }
 
+/** Keep an MCP member alive without emitting an event. */
+export function touchSession(id: string) {
+  const s = store.sessions.get(id);
+  if (s) s.lastSeen = Date.now();
+}
+
+/** Release a session's claims (all, or the given absolute files) and broadcast if the territory changed. */
+export function releaseClaims(sid: string, files?: string[]): boolean {
+  const changed = store.territory.releaseFiles(sid, files, Date.now());
+  if (changed) broadcastTerritory(store);
+  return changed;
+}
+
 export function snapshot() {
   return {
     sessions: [...store.sessions.values()].map((s) => ({ ...s, interns: [...s.interns] })),
@@ -285,22 +308,8 @@ export function subscribe(send: Client) {
   return () => store.clients.delete(send);
 }
 
-// No CORS: the UI is same-origin and hooks use curl. Reject browser requests from other origins
-// (Origin header set by browsers; curl sends none) so random websites can't read or inject events.
-const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-function hostnameOf(host: string | null): string {
-  return (host ?? "").replace(/:\d+$/, "").toLowerCase();
-}
-
+// No CORS: the UI is same-origin and hooks use curl. Access control lives in lib/guildAuth.ts
+// (local = loopback Host without proxy headers; remote needs the guild token; cross-origin browsers rejected).
 export function isForeignOrigin(req: Request): boolean {
-  // Host allowlist blocks DNS-rebinding (evil.example resolving to 127.0.0.1).
-  if (!LOCAL_HOSTNAMES.has(hostnameOf(req.headers.get("host")))) return true;
-  const origin = req.headers.get("origin");
-  if (!origin) return false;
-  try {
-    return new URL(origin).host !== req.headers.get("host");
-  } catch {
-    return true;
-  }
+  return !authorize(req).ok;
 }

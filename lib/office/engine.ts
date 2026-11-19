@@ -290,6 +290,8 @@ export interface Employee {
   stateSince: number;
   bubble: string | null;
   tempBubble: { e: string; until: number } | null;
+  /** guild shout: opaque speech bubble with text, `until` is in realTime seconds */
+  speech: { text: string; until: number } | null;
   note: "idle" | "agent" | null;
   interns: Map<string, Intern>;
   lastEventAt: number;
@@ -1624,7 +1626,7 @@ export class Office {
       id, tag: "#" + id.slice(0, 3), project: projectOf(cwd), cwd: cwd ?? "", look: lookFor(id), order: this.seq++,
       deskIdx: desk, slot, x: seated ? seat.x : DOOR.x, y: seated ? seat.y : DOOR.y, path: [], trail: [],
       state: seated ? "SEATED" : "ENTERING", act: "thinking", actSince: this.clock, stateSince: this.clock,
-      bubble: null, tempBubble: null, note: null, interns: new Map(), lastEventAt: this.clock, queue: [],
+      bubble: null, tempBubble: null, speech: null, note: null, interns: new Map(), lastEventAt: this.clock, queue: [],
       facing: 1, returning: false, hasPaper: false, paperAt: -9, sparkUntil: 0, sticky: false, nextThought: this.clock + rand(4, 8),
       holdUntil: 0, noteAt: -9, lootAt: -9, hurtUntil: 0,
       monKind: "slime", monPos: null, monAppearAt: -1, monDead: false, monDeadAt: -99, monRespawnAt: Infinity, monLoot: false, monN: 0,
@@ -1691,8 +1693,11 @@ export class Office {
     const tool = str(evt.tool_name);
     const detail = toolDetail(evt);
     let bad = false;
+    const shout = name === "Notification" && str(evt.notification_type) === "guild_shout";
+    const shoutName = sid.startsWith("mcp-") ? sid.slice(4) : tag;
     if (name === "PreToolUse") what = `${tool} ${detail}`.trim();
     else if (name === "PostToolUseFailure") { what = `✗ ${tool} ${detail}`.trim(); bad = true; }
+    else if (shout) what = `📣 ${shoutName}: ${str(evt.message)}`;
     else if (name === "Notification") what = `Notification ${str(evt.notification_type)}`.trim();
     else if (name === "PermissionRequest") what = `PermissionRequest ${tool}`.trim();
     else if (name === "SessionEnd") what = `SessionEnd${str(evt.reason) ? " (" + str(evt.reason) + ")" : ""}`;
@@ -1706,11 +1711,12 @@ export class Office {
       : what;
     this.log.unshift({
       id: this.logSeq++, sid, color: lookFor(sid).shirt, bad,
-      text: `${who} · ${project} · ${detailTxt}`,
-      time: Date.now(), tag, project, intern: !!evt.agent_id && name !== "SubagentStart" && name !== "SubagentStop",
+      text: shout ? what : `${who} · ${project} · ${detailTxt}`,
+      time: Date.now(), tag: shout ? shoutName : tag, project, intern: !!evt.agent_id && name !== "SubagentStart" && name !== "SubagentStop",
       internLabel: str(evt.agent_type) || "agent",
-      kind: name === "PreToolUse" || name === "PostToolUseFailure" ? tool || name : name || "event",
+      kind: shout ? "Shout" : name === "PreToolUse" || name === "PostToolUseFailure" ? tool || name : name || "event",
       detail: name === "PreToolUse" || name === "PostToolUseFailure" ? detail
+        : shout ? str(evt.message)
         : name === "Notification" ? str(evt.notification_type)
         : name === "SubagentStart" || name === "SubagentStop" ? str(evt.agent_type)
         : name === "PermissionRequest" ? tool : "",
@@ -1847,7 +1853,8 @@ export class Office {
       case "Notification": {
         const nt = str(evt.notification_type);
         const msg = str(evt.message).toLowerCase();
-        if (HANDUP_NOTIFS.has(nt) || msg.includes("permission")) this.setAct(e, "handup", "❗");
+        if (nt === "guild_shout") { e.speech = { text: str(evt.message).slice(0, 140), until: this.realTime + 5 }; this.dirty = true; }
+        else if (HANDUP_NOTIFS.has(nt) || msg.includes("permission")) this.setAct(e, "handup", "❗");
         else if (nt === "idle_prompt") { this.clearPending(e); this.setAct(e, "thinking", "💤", "idle"); }
         else e.tempBubble = { e: "🔔", until: clock + 2 };
         break;
@@ -2016,7 +2023,7 @@ export class Office {
     }
     else if (name === "PermissionRequest") it.act = "handup";
     else if (name === "Notification") {
-      if (HANDUP_NOTIFS.has(str(evt.notification_type)) || str(evt.message).toLowerCase().includes("permission")) it.act = "handup";
+      if (str(evt.notification_type) !== "guild_shout" && (HANDUP_NOTIFS.has(str(evt.notification_type)) || str(evt.message).toLowerCase().includes("permission"))) it.act = "handup";
     }
   }
 }
