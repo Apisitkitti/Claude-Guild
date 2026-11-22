@@ -14,6 +14,10 @@ export interface DungeonStats {
   longestBossS: number;
   /** total sim seconds adventurers spent with a hand up (permission prompts), finished waits + ongoing ones */
   waitS: number;
+  /** adventurers raiding inside the dungeon right now */
+  raiders: number;
+  /** the raiders the session filter lets through (what the dungeon scene and the gate badge actually show) */
+  raidersShown: number;
   topTools: { tool: string; count: number }[];
 }
 

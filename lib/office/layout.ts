@@ -101,34 +101,17 @@ export const monsterSpot = (i: number): Pt => {
   const spot = spotOf(i);
   return { x: spot.x + MON_DX, y: spot.y };
 };
-/** Camp: 3 rows x 14; beyond that everyone stacks on the last slot (render shows a +N badge). */
-export const CAMP_COLS = 14;
-const CAMP_ROWS = 3;
-export const CAMP_MAX = CAMP_COLS * CAMP_ROWS;
-const CAMP_X0 = 152;
-const CAMP_Y0 = 206;
-const CAMP_DX = 16;
-const CAMP_DY = 12;
-export const standSlot = (slot: number): Pt => {
-  const capped = Math.min(Math.max(0, slot), CAMP_MAX - 1);
-  return { x: CAMP_X0 + CAMP_DX * (capped % CAMP_COLS), y: CAMP_Y0 - CAMP_DY * ((capped / CAMP_COLS) | 0) };
-};
-export const seatPoint = (desk: number, slot: number): Pt => (desk >= 0 ? spotOf(desk) : standSlot(Math.max(0, slot)));
+/** a battle spot, or (overflow, desk -1) the dungeon gate mouth: raiders wait inside, so every slot shares the gate point */
+export const seatPoint = (desk: number, _slot: number): Pt => (desk >= 0 ? spotOf(desk) : { ...GATE_MOUTH });
 const SQUIRE_0_DX = -15;
 const SQUIRE_1_DX = -11;
 const SQUIRE_1_DY = -9;
-const CAMP_SQUIRE_DX = 8;
 /** Squire (intern) standing point: just behind / left of the adventurer. */
 export const squirePoint = (desk: number, index: number): Pt => {
   const spot = spotOf(desk);
   return index === 0
     ? { x: spot.x + SQUIRE_0_DX, y: spot.y + 2 }
     : { x: spot.x + SQUIRE_1_DX, y: spot.y + SQUIRE_1_DY };
-};
-/** Squire point for a camp (overflow) adventurer: tight, beside the adventurer. */
-export const campSquirePoint = (slot: number, index: number): Pt => {
-  const spot = standSlot(slot);
-  return { x: spot.x + (index === 0 ? -CAMP_SQUIRE_DX : CAMP_SQUIRE_DX), y: spot.y + 1 };
 };
 
 const dedupe = (pts: Pt[]): Pt[] => {
@@ -141,11 +124,22 @@ const dedupe = (pts: Pt[]): Pt[] => {
   return out;
 };
 
+/**
+ * Dungeon gate mouth -> over the bridge -> along the river bank -> down the branch road to the hall gate (excludes the
+ * start, ends at GATE_OUT). The boss route in reverse; the raiders' way in and out of the dungeon.
+ */
+export const dungeonToHallGate = (): Pt[] => [
+  { x: BRIDGE_X, y: BRIDGE_TOP_Y },
+  { x: BRIDGE_X, y: RAID_BANK_Y },
+  { x: GATE_OUT.x, y: RAID_BANK_Y },
+  { ...GATE_OUT },
+];
+
 /** seat -> point just outside the gate (first point = seat). */
 const seatToGate = (desk: number, slot: number): Pt[] => {
   const spot = seatPoint(desk, slot);
   if (desk >= 0) return [spot, { x: spot.x, y: ROAD_Y }, { ...GATE_OUT }];
-  return [spot, { x: GATE_OUT.x, y: spot.y }, { ...GATE_OUT }];
+  return [spot, ...dungeonToHallGate()];
 };
 
 /** Full route door -> board (pause) -> gate -> seat (first point = DOOR). */
@@ -162,10 +156,14 @@ export const routeIn = (desk: number, slot: number): Pt[] => {
   ]);
 };
 
-/** camp slot -> battle spot via the branch road (excludes the start). */
-export const routePromote = (x: number, y: number, desk: number): Pt[] => {
+/** dungeon gate mouth -> battle spot: over the bridge, along the bank, then down its own column (upper row) or the branch road (excludes the start). */
+export const routeFromDungeon = (desk: number): Pt[] => {
   const spot = spotOf(desk);
-  return dedupe([{ x, y }, { x: GATE_OUT.x, y }, { ...GATE_OUT }, { x: spot.x, y: ROAD_Y }, spot]).slice(1);
+  const pts: Pt[] = [{ ...GATE_MOUTH }, { x: BRIDGE_X, y: BRIDGE_TOP_Y }, { x: BRIDGE_X, y: RAID_BANK_Y }];
+  if (desk < GRID_COLS) pts.push({ x: spot.x, y: RAID_BANK_Y });
+  else pts.push({ x: GATE_OUT.x, y: RAID_BANK_Y }, { x: GATE_OUT.x, y: ROAD_Y }, { x: spot.x, y: ROAD_Y });
+  pts.push(spot);
+  return dedupe(pts).slice(1);
 };
 
 /** when every feast seat is taken: stand by the quest counter, just off the aisle */
@@ -256,9 +254,15 @@ export const platePoint = (seatIdx: number): Pt => {
 const LOW_ROW_Y = 180; // below this the character is in the lower wilderness
 const UPPER_HALL_MARGIN = 10;
 const HALL_AISLE_X = 100;
+const RAID_ZONE_DX = 6;
 export const routeLeave = (x: number, y: number): Pt[] => {
   const pts: Pt[] = [];
-  if (x >= HALL_W + 1) {
+  if (y <= RAID_BANK_Y && x >= GATE_OUT.x) {
+    // at the dungeon gate, on its bridge or on the river bank: out the way raiders walk (bridge, bank, branch road)
+    if (x >= BRIDGE_X - RAID_ZONE_DX) pts.push(...dungeonToHallGate().slice(y < BRIDGE_TOP_Y ? 0 : 1));
+    else pts.push({ x: GATE_OUT.x, y }, { ...GATE_OUT });
+    pts.push({ ...GATE_IN });
+  } else if (x >= HALL_W + 1) {
     pts.push(y > LOW_ROW_Y ? { x: GATE_OUT.x, y } : { x, y: ROAD_Y });
     pts.push({ ...GATE_OUT }, { ...GATE_IN });
   } else if (x < 0 && y < GATE_Y - UPPER_HALL_MARGIN) {
@@ -298,6 +302,8 @@ export const DUNGEON_HIT: Rect = { x: 318, y: 18, w: 48, h: 36 };
 export const GATE_MOUTH: Pt = { x: DUNGEON.x, y: DUNGEON.y - 1 };
 const BRIDGE_TOP_Y = 53;
 const BRIDGE_END_Y = 74;
+/** raiders walk the river bank on this row (the same one bosses use) */
+const RAID_BANK_Y = 75;
 /** Boss feet walk this row just south of the river: above every adventurer box (they start at y 78, their HP bars at 76). */
 const BOSS_WALK_Y = 75;
 /** Lower-row bosses use the road between the battle rows, a box-height below the upper row's feet. */

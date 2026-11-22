@@ -2,6 +2,7 @@ import { m } from "@/paraglide/messages";
 
 import { bossCenterX, BOSS_H, BOSS_W } from "./bossSprites";
 import { ToolTally, type DungeonStats } from "./dungeon";
+import { dungeonMonsterPoint, dungeonSpotOf } from "./dungeonScene";
 import {
   ALLY_GATE_MOUTH,
   DESK_COUNT,
@@ -22,7 +23,6 @@ import {
   GUILD_MASTER_HOME,
   HEARTH,
   VIEW_W,
-  campSquirePoint,
   duelMidOfDesks,
   guildMasterStand,
   monsterSpot,
@@ -30,7 +30,7 @@ import {
   routeFromAllyGate,
   routeIn,
   routeLeave,
-  routePromote,
+  routeFromDungeon,
   routeToAllyGate,
   routeChefServe,
   routeGuildMaster,
@@ -1026,11 +1026,23 @@ export interface Employee {
   known: boolean;
   /** PreCompact seen: the next context reading is the post-compact one (mana bar flashes when it lands) */
   compactPending: boolean;
+  /** seated overflow adventurer that has arrived inside the dungeon (hidden on the field, drawn in the dungeon scene) */
+  inDungeon: boolean;
+  /** the foe a raider is fighting inside (null unless inDungeon): kind = index into MONSTER_KINDS, hp 0..1, clock times of the last hit / death */
+  raid: RaidFoe | null;
   /** index into FEAST_SEATS used by a break / rest trip (-1 = beside the counter) */
   restSpot: number;
   manaFlashUntil: number;
   /** raising a mug at the feast table until this clock time */
   cheerUntil: number;
+}
+
+/** a raider's current dungeon foe */
+export interface RaidFoe {
+  kind: number;
+  hp: number;
+  hitAt: number;
+  deadAt: number;
 }
 
 /** the guild's cook: stirs at the hearth, carries a plate to the feast table now and then */
@@ -1083,6 +1095,8 @@ export interface Particle {
   spr: string | null;
   /** drawn BEFORE the entity pass (duel effects: they may fade, so they must never sit over a character) */
   under: boolean;
+  /** raider effect: lives in the dungeon scene only (drawn there, skipped on the field) */
+  dungeon: boolean;
 }
 export interface Popup {
   x: number;
@@ -1093,6 +1107,8 @@ export interface Popup {
   born: number;
   dur: number;
   star: boolean;
+  /** raider effect: lives in the dungeon scene only */
+  dungeon: boolean;
 }
 export interface Banner {
   kind: "quest" | "boss";
@@ -1134,6 +1150,8 @@ export const xpNeed = (lv: number): number =>
 const MON_HP: Record<MonsterKind, number> = { slime: 3, bat: 3, mushroom: 4, goblin: 5, skeleton: 6 };
 const HEAVY_TOOLS = new Set(["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const BOSS_AFTER = 30;
+/** seconds a slain dungeon foe lies there before the next one steps up */
+const RAID_RESPAWN_S = 1.2;
 const REST_AFTER = 60;
 const PROGRESS_KEY = "guild.progress.v1";
 const PROGRESS_TTL = PROGRESS_TTL_DAYS * HOURS_PER_DAY * SECONDS_PER_HOUR * MS_PER_SECOND;
@@ -1218,6 +1236,8 @@ export interface OfficeView {
   receipts?: ReceiptRow[];
   /** counters behind the dungeon-gate card */
   dungeon: DungeonStats;
+  /** which view the canvas shows (the UI mirrors it: selecting a raider switches the scene) */
+  scene: "guild" | "dungeon";
 }
 export const EMPTY_DUNGEON: DungeonStats = {
   since: 0,
@@ -1229,6 +1249,8 @@ export const EMPTY_DUNGEON: DungeonStats = {
   bossesAlive: 0,
   longestBossS: 0,
   waitS: 0,
+  raiders: 0,
+  raidersShown: 0,
   topTools: [],
 };
 export const EMPTY_VIEW: OfficeView = {
@@ -1243,6 +1265,7 @@ export const EMPTY_VIEW: OfficeView = {
   attention: [],
   receipts: [],
   dungeon: EMPTY_DUNGEON,
+  scene: "guild",
 };
 
 declare global {
@@ -1387,6 +1410,20 @@ export class Office {
   gateLit = false;
   /** bosses on the field right now (the dungeon gate glows red while > 0) */
   bossAlive = 0;
+  /** which view the canvas shows: the guild grounds or the inside of the dungeon */
+  scene: "guild" | "dungeon" = "guild";
+  setScene(next: "guild" | "dungeon") {
+    if (this.scene === next) return;
+    this.scene = next;
+    this.hoverId = null; // the hovered adventurer is not in the other scene
+    this.dirty = true;
+  }
+  /** adventurers raiding inside the dungeon, in slot order (then arrival order) */
+  dungeonRaiders(): Employee[] {
+    const out: Employee[] = [];
+    for (const emp of this.employees.values()) if (emp.inDungeon) out.push(emp);
+    return out.sort((first, second) => first.slot - second.slot || first.order - second.order);
+  }
   /** squires walking back into the ally gate */
   readonly leavers: Leaver[] = [];
   // ---- the west wing (render reads these) ----
@@ -1458,8 +1495,11 @@ export class Office {
     size: 1,
     spr: null,
     under: false,
+    dungeon: false,
   }));
   private pIdx = 0;
+  /** while true, emitted particles / popups are tagged as dungeon-scene effects (set by raider effect helpers) */
+  private fxDungeon = false;
   popups: Popup[] = [];
   banners: Banner[] = [];
   trauma = 0;
@@ -1867,6 +1907,8 @@ export class Office {
   }
   select(id: string | null) {
     this.selectedId = id;
+    const target = id ? this.employees.get(id) : undefined;
+    if (target && !this.isHidden(target)) this.setScene(target.inDungeon ? "dungeon" : "guild"); // show where they are
     this.selectedUntil = this.realTime + SELECT_HOLD_S;
     this.dirty = true;
   }
@@ -1909,6 +1951,7 @@ export class Office {
     this.allyDoorsUntil = 0;
     this.allyNextAt = 0;
     this.resetWing();
+    this.scene = "guild";
     this.stats = { since: Date.now(), entered: 0, left: 0, monsters: 0, bosses: 0, longestBossS: 0, waitS: 0 };
     this.tools.clear();
     this.statsVer++;
@@ -2127,6 +2170,7 @@ export class Office {
   }
 
   private beginDuel(first: Employee, second: Employee, failer: string | null): boolean {
+    if (first.inDungeon || second.inDungeon) return false; // raiders are inside the dungeon: nothing to draw on the field
     const dist = Math.hypot(first.x - second.x, first.y - second.y);
     if (dist < DUEL_MIN_DIST) return false; // stacked on the same camp slot: nothing to draw between them
     const bothSpots = first.deskIdx >= 0 && second.deskIdx >= 0;
@@ -2717,7 +2761,7 @@ export class Office {
   private signature(): string {
     let sig = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
     sig += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}|R${this.rcptVer}`;
-    sig += `|D${this.statsVer}:${this.bossAlive}`;
+    sig += `|D${this.statsVer}:${this.bossAlive}|S${this.scene}`;
     for (const emp of this.employees.values()) {
       if (this.isHidden(emp)) {
         sig += `;h${emp.id}${this.isWaiting(emp) ? "w" + this.statusOf(emp) : ""}`;
@@ -2814,6 +2858,7 @@ export class Office {
       attention: this.attentionRows(),
       receipts: this.receiptRows(),
       dungeon: this.dungeonStats(),
+      scene: this.scene,
     };
   }
 
@@ -2827,9 +2872,15 @@ export class Office {
   /** counters behind the dungeon-gate card; everything counts since the page opened (or the last Live/Demo switch) */
   dungeonStats(): DungeonStats {
     let live = 0,
-      bossesAlive = 0;
+      bossesAlive = 0,
+      raiders = 0,
+      raidersShown = 0;
     for (const emp of this.employees.values()) {
       if (emp.state !== "LEAVING") live++;
+      if (emp.inDungeon) {
+        raiders++;
+        if (!this.isHidden(emp)) raidersShown++;
+      }
       if (emp.boss) bossesAlive++;
     }
     return {
@@ -2842,6 +2893,8 @@ export class Office {
       bossesAlive,
       longestBossS: this.stats.longestBossS,
       waitS: this.waitTotal(),
+      raiders,
+      raidersShown,
       topTools: this.tools.top(),
     };
   }
@@ -2940,15 +2993,20 @@ export class Office {
   }
 
   // ---------- hit testing ----------
+  /** who is under the pointer in the current scene: field adventurers on the grounds, raiders at their dungeon spots inside */
   hit(lx: number, ly: number): string | null {
-    let best: Employee | null = null;
+    const inside = this.scene === "dungeon";
+    let best: string | null = null,
+      bestY = -Infinity;
     for (const emp of this.employees.values()) {
-      if (this.isHidden(emp)) continue;
-      if (lx >= emp.x - CH_W / 2 && lx <= emp.x + CH_W / 2 && ly >= emp.y - CH_H && ly <= emp.y) {
-        if (!best || emp.y >= best.y) best = emp;
+      if (this.isHidden(emp) || emp.inDungeon !== inside) continue;
+      const pos = inside ? dungeonSpotOf(emp.slot) : emp;
+      if (lx >= pos.x - CH_W / 2 && lx <= pos.x + CH_W / 2 && ly >= pos.y - CH_H && ly <= pos.y && pos.y >= bestY) {
+        best = emp.id;
+        bestY = pos.y;
       }
     }
-    return best ? best.id : null;
+    return best;
   }
 
   testHand() {
@@ -3041,6 +3099,7 @@ export class Office {
     particle.size = size;
     particle.spr = spr;
     particle.under = under;
+    particle.dungeon = this.fxDungeon;
   }
 
   private burst(
@@ -3090,8 +3149,19 @@ export class Office {
     }
   }
 
+  /** run `emit` with raider effects tagged to the dungeon scene (no-op tagging for field adventurers) */
+  private fxFor(emp: Employee, emit: () => void) {
+    const prev = this.fxDungeon;
+    this.fxDungeon = emp.inDungeon;
+    try {
+      emit();
+    } finally {
+      this.fxDungeon = prev;
+    }
+  }
+
   private pop(x: number, y: number, text: string, col: string, big = false, star = false, dur = 0.8) {
-    this.popups.push({ x, y, text, col, big, born: this.clock, dur, star });
+    this.popups.push({ x, y, text, col, big, born: this.clock, dur, star, dungeon: this.fxDungeon });
     if (this.popups.length > MAX_POPUPS) this.popups.splice(0, this.popups.length - MAX_POPUPS);
   }
 
@@ -3351,6 +3421,8 @@ export class Office {
     if (emp.state !== "LEAVING" && emp.deskIdx >= 0 && emp.monDead && emp.monRespawnAt <= this.clock)
       this.spawnMonster(emp);
     if (emp.state !== "SEATED" && emp.tempBubble && this.clock > emp.tempBubble.until) emp.tempBubble = null;
+    this.syncRaid(emp);
+    this.respawnRaid(emp);
   }
 
   private motionApplied = false;
@@ -3411,6 +3483,7 @@ export class Office {
     if (emp.deskIdx >= 0 && !emp.monPos) this.spawnMonster(emp);
     emp.state = "SEATED";
     emp.stateSince = this.clock;
+    this.syncRaid(emp);
     const queue = emp.queue;
     emp.queue = [];
     for (let i = 0; i < queue.length; i++) {
@@ -3470,6 +3543,7 @@ export class Office {
     emp.interns.clear();
     emp.deskIdx = -1;
     emp.slot = -1;
+    this.syncRaid(emp);
     this.dirty = true;
   }
 
@@ -3484,12 +3558,13 @@ export class Office {
     const { desk } = this.pickSeat(waiting.id);
     if (desk < 0) return;
     const emp = waiting;
-    emp.path = routePromote(emp.x, emp.y, desk);
+    emp.path = routeFromDungeon(desk);
     emp.deskIdx = desk;
     emp.slot = -1;
+    this.syncRaid(emp);
     emp.state = "FROM_COFFEE";
     emp.stateSince = this.clock;
-    emp.restSpot = -1; // a camp walk, not a table break
+    emp.restSpot = -1; // a raid walk, not a table break
     emp.trail = [];
     emp.holdUntil = 0;
     emp.monAppearAt = -1;
@@ -3545,6 +3620,65 @@ export class Office {
     emp.resting = false;
     emp.path = routeIn(desk, slot).slice(1);
     this.dirty = true;
+  }
+
+  /** raid state follows the seat: inDungeon only while SEATED in an overflow slot (arrived inside); the foe lives as long as that holds */
+  private syncRaid(emp: Employee) {
+    const inside = emp.state === "SEATED" && emp.deskIdx < 0 && emp.slot >= 0;
+    if (inside === emp.inDungeon) return;
+    emp.inDungeon = inside;
+    if (inside) this.newRaidFoe(emp);
+    else emp.raid = null;
+    this.bumpStats();
+  }
+
+  private newRaidFoe(emp: Employee) {
+    const kinds = MONSTER_KINDS as readonly MonsterKind[];
+    const kind = (h32(emp.id) + emp.monN * MON_KIND_STRIDE) % kinds.length;
+    emp.monN++;
+    emp.raid = { kind, hp: 1, hitAt: -99, deadAt: -99 };
+  }
+
+  /** a dead foe is replaced by a new kind after a short beat */
+  private respawnRaid(emp: Employee) {
+    const foe = emp.raid;
+    if (foe && foe.hp <= 0 && this.clock - foe.deadAt >= RAID_RESPAWN_S) this.newRaidFoe(emp);
+  }
+
+  /** a tool finished inside the dungeon: the same damage rules as a field monster, scaled to the foe's hp */
+  private raidHit(emp: Employee, tool: string) {
+    const foe = emp.raid;
+    if (!foe || foe.hp <= 0) return;
+    let dmg = HEAVY_TOOLS.has(tool) ? 2 : 1;
+    if (Math.random() < CRIT_CHANCE) dmg *= 2;
+    foe.hp = Math.max(0, foe.hp - dmg / MON_HP[MONSTER_KINDS[foe.kind]]);
+    foe.hitAt = this.clock;
+    if (foe.hp > 0) return;
+    foe.deadAt = this.clock;
+    const gold = 1 + Math.floor(Math.random() * GOLD_ROLL_MAX);
+    emp.kills++;
+    emp.gold += gold;
+    emp.qKills++;
+    emp.qGold += gold;
+    this.treasury += gold;
+    this.stats.monsters++;
+    this.bumpStats();
+    const foePos = dungeonMonsterPoint(dungeonSpotOf(emp.slot));
+    this.fxFor(emp, () => {
+      this.pop(foePos.x, foePos.y - GOLD_POP_LIFT, `+${gold}g`, "#f2c14e", false, false, LOOT_POP_DUR);
+      for (let k = 0; k < COIN_COUNT; k++)
+        this.emitP(
+          foePos.x + rand(-COIN_SPREAD_X, COIN_SPREAD_X),
+          foePos.y - COIN_LIFT,
+          rand(-COIN_VX, COIN_VX),
+          rand(-COIN_VY_MAX, -COIN_VY_MIN),
+          COIN_GRAVITY,
+          COIN_LIFE,
+          "#f2c14e",
+          1,
+          "coin",
+        );
+    });
   }
 
   private spawnMonster(emp: Employee, instant = false) {
@@ -3649,6 +3783,8 @@ export class Office {
       evCount: 0,
       known: false,
       compactPending: false,
+      inDungeon: false,
+      raid: null,
       restSpot: -1,
       manaFlashUntil: 0,
       cheerUntil: 0,
@@ -3662,6 +3798,7 @@ export class Office {
     }
     if (!seated) emp.path = routeIn(desk, slot).slice(1);
     else if (desk >= 0) this.spawnMonster(emp, true);
+    this.syncRaid(emp);
     this.employees.set(id, emp);
     if (!seated) this.stats.entered++; // sessions found already seated in a snapshot were in the guild before
     this.bumpStats();
@@ -4068,6 +4205,7 @@ export class Office {
     }
     const mp = emp.monPos;
     const xp = 1 + Math.floor(Math.random() * XP_ROLL_MAX);
+    if (emp.inDungeon) this.raidHit(emp, tool);
     if (mp && emp.deskIdx >= 0 && !emp.monDead && clock - emp.monAppearAt > MON_HITTABLE_AFTER_S) {
       const crit = Math.random() < CRIT_CHANCE;
       let dmg = HEAVY_TOOLS.has(tool) ? 2 : 1;
@@ -4142,15 +4280,18 @@ export class Office {
     if (up) {
       emp.lvlAt = this.clock;
       emp.lvlTo = emp.lv;
-      this.ring(
-        emp.x,
-        emp.y - FX_LEVELUP_RING.lift,
-        FX_LEVELUP_RING.n,
-        ["#f2c14e", "#ffffff", "#8ee8ff"],
-        FX_LEVELUP_RING.speed,
-        FX_LEVELUP_RING.life,
+      const at = emp.inDungeon ? dungeonSpotOf(emp.slot) : emp;
+      this.fxFor(emp, () =>
+        this.ring(
+          at.x,
+          at.y - FX_LEVELUP_RING.lift,
+          FX_LEVELUP_RING.n,
+          ["#f2c14e", "#ffffff", "#8ee8ff"],
+          FX_LEVELUP_RING.speed,
+          FX_LEVELUP_RING.life,
+        ),
       );
-      this.flash = 0.3;
+      if (!emp.inDungeon) this.flash = 0.3; // a raider's level-up happens out of sight: no full-screen flash
     }
     this.touch(emp);
   }
@@ -4159,9 +4300,12 @@ export class Office {
     emp.hearts = Math.max(0, emp.hearts - 1);
     emp.hurtUntil = this.clock + HURT_S;
     emp.redUntil = this.clock + RED_S;
-    this.pop(emp.x - HURT_POP_DX, emp.y - HURT_POP_LIFT, "-1", "#ff5a5a", false, false, HURT_POP_DUR);
-    this.burst(emp.x, emp.y - FX_HURT_BURST.lift, FX_HURT_BURST.n, ["#ff5a5a", "#ff9a9a"], FX_HURT_BURST.speed);
-    this.addTrauma(TRAUMA_HURT);
+    const at = emp.inDungeon ? dungeonSpotOf(emp.slot) : emp;
+    this.fxFor(emp, () => {
+      this.pop(at.x - HURT_POP_DX, at.y - HURT_POP_LIFT, "-1", "#ff5a5a", false, false, HURT_POP_DUR);
+      this.burst(at.x, at.y - FX_HURT_BURST.lift, FX_HURT_BURST.n, ["#ff5a5a", "#ff9a9a"], FX_HURT_BURST.speed);
+    });
+    if (!emp.inDungeon) this.addTrauma(TRAUMA_HURT);
   }
 
   private onFail(emp: Employee) {
@@ -4728,12 +4872,12 @@ export class Office {
   // ---------- interns (squires) ----------
   /** where squire number `slot` of this adventurer stands */
   private squireSpot(emp: Employee, slot: number): Pt {
-    return emp.deskIdx >= 0 ? squirePoint(emp.deskIdx, slot) : campSquirePoint(emp.slot, slot);
+    return squirePoint(Math.max(0, emp.deskIdx), slot);
   }
 
   /** squires that were standing out walk back into the ally gate (they never pile up: capped, the rest just vanish) */
   private sendSquiresHome(emp: Employee) {
-    if (this.reducedMotion || this.isHidden(emp) || (emp.deskIdx < 0 && emp.slot < 0)) return;
+    if (this.reducedMotion || this.isHidden(emp) || emp.deskIdx < 0) return; // raiders have no squires out
     let slot = 0;
     for (const intern of emp.interns.values()) {
       if (slot++ >= SQUIRE_SLOTS) break;
@@ -4781,7 +4925,7 @@ export class Office {
   private updateSquires(dt: number) {
     let walking = this.leavers.length;
     for (const emp of this.employees.values()) {
-      if (emp.state === "LEAVING" || (emp.deskIdx < 0 && emp.slot < 0)) continue;
+      if (emp.state === "LEAVING" || emp.deskIdx < 0) continue; // raiders keep their squires inside the ally gate
       const calm = this.reducedMotion || this.isHidden(emp); // no walk, no gate effects
       let slot = 0;
       for (const intern of emp.interns.values()) {

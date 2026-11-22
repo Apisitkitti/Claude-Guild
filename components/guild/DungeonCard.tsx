@@ -15,12 +15,15 @@ export const DungeonCard = ({
   officeRef,
   top,
   onClose,
+  onEnter,
 }: {
   stats: DungeonStats;
   officeRef: OfficeRef;
   /** px from the top of the stage: just under the gate */
   top: number;
   onClose: () => void;
+  /** switch the canvas to the dungeon interior (the parent mirrors the scene and closes the card) */
+  onEnter: () => void;
 }) => {
   const closeRef = useRef<HTMLButtonElement>(null);
   // the waiting total keeps growing between view updates: while the card is open, re-read it once a second
@@ -50,6 +53,10 @@ export const DungeonCard = ({
         <div className="drow">
           <dt>{m.dungeon_sessions()}</dt>
           <dd>{m.dungeon_sessions_value({ entered: stats.entered, left: stats.left })}</dd>
+        </div>
+        <div className="drow">
+          <dt>{m.dungeon_raiders()}</dt>
+          <dd>{stats.raiders}</dd>
         </div>
         <div className="drow">
           <dt>{m.dungeon_live()}</dt>
@@ -88,6 +95,9 @@ export const DungeonCard = ({
       ) : (
         <p className="dnone">{m.dungeon_tools_empty()}</p>
       )}
+      <button type="button" className="denter" onClick={onEnter}>
+        {m.dungeon_enter()}
+      </button>
       <p className="dnote">{m.dungeon_since({ time: hms(stats.since) })}</p>
     </section>
   );

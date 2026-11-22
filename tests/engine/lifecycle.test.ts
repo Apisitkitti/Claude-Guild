@@ -288,13 +288,13 @@ describe("overflow beyond 8 desks", () => {
     expect(emp(office, ids[8]).state).toBe("SEATED");
   });
 
-  it("camp members never fight (no monster damage, but xp)", () => {
+  it("raiders have no field monster (xp only; their foe lives in the dungeon)", () => {
     const office = newOffice();
     const ids = fill(office, DESK_COUNT + 1);
     const camp = emp(office, ids[8]);
     office.event(ev(camp.id, "PreToolUse", { tool_name: "Bash", tool_use_id: "a" }));
     office.event(ev(camp.id, "PostToolUse", { tool_name: "Bash", tool_use_id: "a" }));
-    expect(camp.kills).toBe(0);
+    expect(camp.monPos).toBeNull();
     expect(camp.xp).toBe(2);
   });
 

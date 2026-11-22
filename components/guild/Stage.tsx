@@ -17,18 +17,31 @@ export const Stage = ({
   scale,
   officeRef,
   dungeon,
+  viewScene,
 }: {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   stageRef: RefObject<HTMLDivElement | null>;
   scale: number;
   officeRef: OfficeRef;
   dungeon: DungeonStats;
+  /** the engine's scene from the view snapshot: selecting a raider (or a field adventurer) switches it from outside */
+  viewScene: "guild" | "dungeon";
 }) => {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState(false);
+  /** screen-reader text, set once when the dungeon scene is entered (the visible caption is not a live region) */
+  const [entered, setEntered] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
+  const captionRef = useRef("");
   const gateRef = useRef<HTMLButtonElement>(null);
+  const backRef = useRef<HTMLButtonElement>(null);
+  /** the scene the focus was last moved for: focus follows only a real switch, not the first render */
+  const focusedScene = useRef<"guild" | "dungeon">("guild");
   const gateTop = DUNGEON_HIT.y * scale + CANVAS_BORDER;
+  const scene = viewScene; // the engine owns the scene; the view snapshot mirrors it (selection can change it too)
+  const inDungeon = scene === "dungeon";
+  const caption =
+    dungeon.raidersShown > 0 ? m.dungeon_scene_raiders({ count: dungeon.raidersShown }) : m.dungeon_scene_empty();
   const toLogical = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = ev.currentTarget;
     const rect = canvas.getBoundingClientRect();
@@ -41,6 +54,40 @@ export const Stage = ({
     setOpen(false);
     gateRef.current?.focus({ preventScroll: true });
   };
+  const enterDungeon = () => {
+    officeRef.current?.setScene("dungeon");
+    setOpen(false);
+    setHover(false);
+  };
+  const backToGuild = () => {
+    officeRef.current?.setScene("guild");
+  };
+  useEffect(() => {
+    captionRef.current = caption;
+  }, [caption]);
+  useEffect(() => {
+    setEntered(inDungeon ? captionRef.current : "");
+  }, [inDungeon]);
+  useEffect(() => {
+    // the button that was pressed unmounts with its scene: hand the focus to the way back (or to the gate again).
+    // Only when the focus was lost with it (or is still on the stage): a Live/Demo switch keeps it on the header.
+    if (focusedScene.current === scene) return;
+    focusedScene.current = scene;
+    const active = document.activeElement;
+    if (active && active !== document.body && !boxRef.current?.contains(active)) return;
+    (inDungeon ? backRef : gateRef).current?.focus({ preventScroll: true });
+  }, [scene, inDungeon]);
+  useEffect(() => {
+    if (!inDungeon) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape" || ev.defaultPrevented) return;
+      const target = ev.target as HTMLElement | null;
+      if (target && (target.closest("input, textarea, select") || target.isContentEditable)) return;
+      officeRef.current?.setScene("guild");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [inDungeon, officeRef]);
   useEffect(() => {
     officeRef.current?.setGateLit(open || hover);
   }, [open, hover, officeRef, dungeon.since]); // `since` changes when the engine is cleared (Live/Demo switch)
@@ -79,31 +126,46 @@ export const Stage = ({
             }}
             onMouseLeave={() => officeRef.current?.setHover(null)}
           />
-          <button
-            type="button"
-            ref={gateRef}
-            className="gatehit"
-            aria-label={m.dungeon_gate_label()}
-            title={m.dungeon_gate_label()}
-            aria-expanded={open}
-            style={{
-              left: (DUNGEON_HIT.x - VIEW_X0) * scale + CANVAS_BORDER,
-              top: gateTop,
-              width: DUNGEON_HIT.w * scale,
-              height: DUNGEON_HIT.h * scale,
-            }}
-            onClick={() => setOpen((was) => !was)}
-            onMouseEnter={() => setHover(true)}
-            onMouseLeave={() => setHover(false)}
-            onFocus={() => setHover(true)}
-            onBlur={() => setHover(false)}
-          />
-          {open && (
+          {inDungeon && (
+            <>
+              <button type="button" ref={backRef} className="dungeonback" onClick={backToGuild}>
+                <span aria-hidden="true">⬅</span> {m.dungeon_back()}
+              </button>
+              <p className="dungeoncap">{caption}</p>
+              <p className="sr-only" role="status" aria-live="polite">
+                {entered}
+              </p>
+            </>
+          )}
+          {!inDungeon && (
+            <button
+              type="button"
+              ref={gateRef}
+              className="gatehit"
+              aria-label={m.dungeon_gate_label()}
+              title={m.dungeon_gate_label()}
+              aria-expanded={open}
+              style={{
+                left: (DUNGEON_HIT.x - VIEW_X0) * scale + CANVAS_BORDER,
+                top: gateTop,
+                width: DUNGEON_HIT.w * scale,
+                height: DUNGEON_HIT.h * scale,
+              }}
+              onClick={() => setOpen((was) => !was)}
+              onDoubleClick={enterDungeon}
+              onMouseEnter={() => setHover(true)}
+              onMouseLeave={() => setHover(false)}
+              onFocus={() => setHover(true)}
+              onBlur={() => setHover(false)}
+            />
+          )}
+          {open && !inDungeon && (
             <DungeonCard
               stats={dungeon}
               officeRef={officeRef}
               top={gateTop + DUNGEON_HIT.h * scale + CARD_GAP}
               onClose={closeCard}
+              onEnter={enterDungeon}
             />
           )}
         </div>

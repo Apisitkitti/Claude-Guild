@@ -75,6 +75,7 @@ const eslintConfig = defineConfig([
       "lib/office/bossSprites.ts",
       "lib/office/monsterSprites.ts",
       "lib/office/render.ts",
+      "lib/office/dungeonScene.ts",
       "tests/**",
     ],
     rules: { "@typescript-eslint/no-magic-numbers": "off" },

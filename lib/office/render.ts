@@ -1,5 +1,15 @@
 import { bossCenterX, bossSprite } from "./bossSprites";
 import {
+  DUNGEON_IDLERS,
+  DUNGEON_LAST_SPOT,
+  DUNGEON_SPOTS,
+  drawDungeonBack,
+  drawDungeonFront,
+  dungeonMonsterPoint,
+  dungeonSpotIndex,
+  dungeonSpotOf,
+} from "./dungeonScene";
+import {
   CHEERS_S,
   DUEL_FLOURISH,
   DUEL_IMPACT,
@@ -51,12 +61,12 @@ import {
   plotRect,
   spotOf,
   squirePoint,
-  campSquirePoint,
-  standSlot,
-  CAMP_MAX,
+  MON_DX,
+  type Pt,
 } from "./layout";
 import { monsterSprite } from "./monsterSprites";
 import { bardSprite, chefSprite, guildMasterSprite, innkeeperSprite } from "./npcSprites";
+import { MONSTER_KINDS } from "./palette";
 import { butterflySprite, charSprite, internSprite, prop, type Pose } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
@@ -335,15 +345,6 @@ const drawRoad = (ctx: Ctx) => {
     rect(ctx, DIRT.edge, x, roadBottom, 1, 1);
     if (x % 7 === 0) rect(ctx, DIRT.b, x, roadTop + 2, 3, 1);
     if (x % 9 === 4) rect(ctx, DIRT.a, x, roadBottom - 3, 2, 1);
-  }
-  // branch to the camp area (overflow adventurers)
-  for (let y = ROAD_Y; y < WORLD_H; y++) {
-    const left = 127 + wob(y, 1),
-      right = 141 + wob(y, 3);
-    rect(ctx, DIRT.edge, left - 1, y, 1, 1);
-    rect(ctx, DIRT.base, left, y, right - left, 1);
-    rect(ctx, DIRT.edge, right, y, 1, 1);
-    if (y % 8 === 0) rect(ctx, DIRT.b, left + 3, y, 3, 1);
   }
   // pebbles
   const rand = rng(9);
@@ -1515,9 +1516,9 @@ const outlined = (ctx: Ctx, text: string, x: number, y: number, fill: string) =>
 };
 
 /** `under`: the duel/territory particles, drawn before the entity pass (they fade, so they must never sit over a character) */
-const drawParticles = (ctx: Ctx, office: Office, under: boolean) => {
+const drawParticles = (ctx: Ctx, office: Office, under: boolean, dungeon = false) => {
   for (const particle of office.particles) {
-    if (!particle.on || particle.under !== under) continue;
+    if (!particle.on || particle.under !== under || particle.dungeon !== dungeon) continue;
     const progress = particle.age / particle.life;
     ctx.globalAlpha = progress > 0.65 ? Math.max(0, (1 - progress) / 0.35) : 1;
     if (particle.spr) blitC(ctx, particle.spr, particle.x, particle.y);
@@ -1526,10 +1527,11 @@ const drawParticles = (ctx: Ctx, office: Office, under: boolean) => {
   ctx.globalAlpha = 1;
 };
 
-const drawPopups = (ctx: Ctx, office: Office) => {
+const drawPopups = (ctx: Ctx, office: Office, dungeon = false) => {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (const popup of office.popups) {
+    if (popup.dungeon !== dungeon) continue;
     const progress = Math.max(0, Math.min(1, (office.clock - popup.born) / popup.dur));
     const y = popup.y - 12 * eob(Math.min(1, progress * 1.6));
     ctx.globalAlpha = progress > 0.7 ? Math.max(0, (1 - progress) / 0.3) : 1;
@@ -2302,8 +2304,7 @@ const drawSquire = (ctx: Ctx, emp: Employee, it: Squire, k: number, time: number
 };
 
 // ---------- adventurers ----------
-const squireSpotOf = (emp: Employee, slot: number) =>
-  emp.deskIdx >= 0 ? squirePoint(emp.deskIdx, slot) : campSquirePoint(emp.slot, slot);
+const squireSpotOf = (emp: Employee, slot: number) => squirePoint(Math.max(0, emp.deskIdx), slot);
 let duelDxNow = 0,
   duelDyNow = 0;
 /** a diner at the long table: mugs up on a cheers, otherwise eating and drinking with the odd pause to chat */
@@ -2315,7 +2316,7 @@ const atTable = (emp: Employee, time: number): { pose: Pose; frame: number } => 
     ? { pose: "idle", frame: Math.floor(time * 3) % 2 }
     : { pose: "drink", frame: Math.floor(time * 2.4) % 2 };
 };
-const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => {
+const poseFor = (emp: Employee, time: number, raidFoe = false): { pose: Pose; frame: number } => {
   duelDxNow = 0;
   duelDyNow = 0;
   if (emp.duel && duelPoseInto(emp, emp.duel, time)) {
@@ -2349,7 +2350,7 @@ const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => 
   }
   if (emp.resting) return { pose: "rest", frame: Math.floor(time * 1.2) % 2 };
   if (emp.hurtUntil > time) return { pose: "hurt", frame: Math.floor(time * 10) % 2 };
-  const hasMon = !!emp.monPos && !emp.monDead && !emp.bossPath.length; // a boss still walking out is too far to fight
+  const hasMon = raidFoe || (!!emp.monPos && !emp.monDead && !emp.bossPath.length); // a boss still walking out is too far to fight
   switch (emp.act) {
     case "typing":
     case "mcp":
@@ -2369,8 +2370,8 @@ const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => 
   }
 };
 
-const drawAdventurer = (ctx: Ctx, emp: Employee, time: number) => {
-  const { pose, frame } = poseFor(emp, time);
+const drawAdventurer = (ctx: Ctx, emp: Employee, time: number, raidFoe = false) => {
+  const { pose, frame } = poseFor(emp, time, raidFoe);
   const sprite = charSprite(emp.look, pose, frame);
   shadow(ctx, emp.x + duelDxNow, emp.y, 11);
   const hurt = emp.state === "SEATED" && emp.hurtUntil > time;
@@ -2497,7 +2498,7 @@ const manaBar = (ctx: Ctx, emp: Employee, time: number, office: Office) => {
   if (frac > 0) rect(ctx, color, x, y, Math.max(1, Math.round(width * frac)), 2);
 };
 
-const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office) => {
+const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office, raidFoe = false) => {
   // quest note popping up (board pause or new prompt)
   if (emp.state === "ENTERING" && emp.holdUntil > time) {
     const progress = Math.min(1, (time - emp.noteAt) / 0.3);
@@ -2542,9 +2543,9 @@ const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office) => {
     hitFx(ctx, emp, emp.boss ? bossCenterX(emp.monPos.x) : emp.monPos.x, emp.monPos.y, time, 20, 1);
 
   const monster = emp.monPos && !emp.monDead && !emp.bossPath.length ? emp.monPos : null;
-  const mx = monster ? (emp.boss ? bossCenterX(monster.x) : monster.x) : emp.x + 22;
+  const mx = raidFoe ? emp.x + MON_DX : monster ? (emp.boss ? bossCenterX(monster.x) : monster.x) : emp.x + 22;
   const my = emp.y;
-  const fight = !!monster && time - emp.monAppearAt > 0.3;
+  const fight = raidFoe || (!!monster && time - emp.monAppearAt > 0.3);
   switch (emp.act) {
     case "typing":
       if (fight) {
@@ -2812,6 +2813,200 @@ const drawAmbientAbove = (ctx: Ctx, office: Office, night: number) => {
   }
 };
 
+/** bubbles, level-up banner and the selection arrow over one adventurer at (emp.x, emp.y) */
+const drawOverhead = (ctx: Ctx, office: Office, emp: Employee, time: number) => {
+  if (waitsOnYou(emp) && !emp.tempBubble) {
+    if (Math.floor(time * 4) % 2 === 0 || office.selectedId === emp.id) drawAlert(ctx, emp.x, emp.y - CH_H - 1);
+  } else {
+    const emote = bubbleOf(emp, time);
+    // opaque 🔁 badge over a looping adventurer; alternates with any other bubble (static under reduced motion)
+    if (isLooping(emp) && (!emote || office.reducedMotion || Math.floor(time * 1.5) % 2 === 0))
+      drawBubble(ctx, emp.x, emp.y - CH_H - 1, "🔁");
+    else if (emote) drawBubble(ctx, emp.x, emp.y - CH_H - 1, emote);
+  }
+  if (isLooping(emp)) drawBerserk(ctx, emp, time, office.reducedMotion);
+  const sinceLevelUp = time - emp.lvlAt;
+  if (sinceLevelUp >= 0 && sinceLevelUp < 2.2 && emp.state !== "LEAVING") {
+    const progress = sinceLevelUp / 2.2;
+    ctx.globalAlpha = progress > 0.75 ? (1 - progress) / 0.25 : 1;
+    ctx.font = "800 7.5px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const ly = Math.round(
+      emp.y -
+        CH_H -
+        20 -
+        (bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp) ? 15 : 0) -
+        eob(Math.min(1, sinceLevelUp * 2)) * 6,
+    );
+    outlined(
+      ctx,
+      `LEVEL UP! Lv.${emp.lvlTo}`,
+      Math.max(VIEW_X0 + 34, Math.min(WORLD_W - 34, Math.round(emp.x))),
+      ly,
+      "#ffe14a",
+    );
+    ctx.globalAlpha = 1;
+  }
+  if (office.selectedId === emp.id) {
+    const bounce = Math.floor(office.realTime * 4) % 2;
+    duelOffsetInto(emp, time);
+    const ax = Math.round(emp.x + DP.dx),
+      ay = Math.round(
+        emp.y + DP.dy - 28 - (bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp) ? 16 : 0) - bounce,
+      );
+    rect(ctx, "#f2c14e", ax - 3, ay - 3, 7, 1);
+    rect(ctx, "#f2c14e", ax - 2, ay - 2, 5, 1);
+    rect(ctx, "#f2c14e", ax - 1, ay - 1, 3, 1);
+    rect(ctx, "#f2c14e", ax, ay, 1, 1);
+  }
+};
+
+/** gold outline + name tag over the hovered adventurer */
+const drawHover = (ctx: Ctx, office: Office, hovered: Employee, time: number) => {
+  duelOffsetInto(hovered, time);
+  ctx.globalAlpha = 0.9;
+  rect(
+    ctx,
+    "#f2c14e",
+    Math.round(hovered.x + DP.dx - CH_W / 2) - 1,
+    Math.round(hovered.y + DP.dy - CH_H) - 1,
+    CH_W + 2,
+    1,
+  );
+  ctx.globalAlpha = 1;
+  drawTag(
+    ctx,
+    hovered,
+    hovered.y + DP.dy - CH_H - 3 - (bubbleOf(hovered, time) || waitsOnYou(hovered) || isLooping(hovered) ? 17 : 0),
+    DP.dx,
+  );
+};
+
+// ---------- inside the dungeon ----------
+/** run `fn` with the adventurer standing at `spot` (the shared drawing helpers read emp.x / emp.y), then put them back */
+const atSpot = (emp: Employee, spot: Pt, fn: () => void) => {
+  const { x, y, facing } = emp;
+  emp.x = spot.x;
+  emp.y = spot.y;
+  emp.facing = 1; // raiders face their foe, on their right
+  try {
+    fn();
+  } finally {
+    emp.x = x;
+    emp.y = y;
+    emp.facing = facing;
+  }
+};
+
+/** the raider's foe: a monster facing left, white flash on a hit, poof and a coin when it falls, small HP bar */
+const drawRaidFoe = (ctx: Ctx, emp: Employee, time: number, still: boolean, pos: Pt) => {
+  const foe = emp.raid;
+  if (!foe) return;
+  if (foe.hp > 0) {
+    const sinceHit = time - foe.hitAt;
+    const hit = sinceHit >= 0 && sinceHit < 0.25;
+    const kind = MONSTER_KINDS[foe.kind % MONSTER_KINDS.length];
+    const sprite = monsterSprite(kind, still ? 0 : Math.floor(time * 3 + emp.order) % 4, hit);
+    const bob = still || Math.floor(time * 2 + emp.order) % 2 === 0 ? 0 : -1;
+    const sx = Math.round(pos.x - sprite.width / 2 + (hit ? 1 : 0)),
+      sy = Math.round(pos.y - sprite.height + bob);
+    shadow(ctx, pos.x, pos.y, 14);
+    ctx.drawImage(sprite, sx, sy);
+    if (sinceHit >= 0 && sinceHit < 0.12) ctx.drawImage(tinted(sprite, "#ffffff"), sx, sy);
+    hpBar(ctx, Math.round(pos.x), Math.round(pos.y - sprite.height) - 5, 12, 2, foe.hp);
+    return;
+  }
+  const dage = time - foe.deadAt;
+  if (dage < 0 || dage > 1.3) return;
+  if (dage < 0.5) blitC(ctx, "poof" + (Math.floor(dage * 8) % 2), pos.x, pos.y - 8);
+  const progress = dage / 1.3;
+  ctx.globalAlpha = progress < 0.75 ? 1 : (1 - progress) * 4;
+  blitC(ctx, "coin", pos.x - 2, pos.y - 8 - Math.sin(Math.min(1, progress * 1.3) * Math.PI * 0.6) * 14);
+  ctx.globalAlpha = 1;
+};
+
+/** nobody is inside: a few monsters doze in the chambers so a visit still has some atmosphere */
+const drawSleepers = (ctx: Ctx, time: number, still: boolean) => {
+  DUNGEON_IDLERS.forEach((idler, i) => {
+    const sprite = monsterSprite(idler.kind, 0, false);
+    shadow(ctx, idler.x, idler.y, 14);
+    ctx.drawImage(sprite, Math.round(idler.x - sprite.width / 2), Math.round(idler.y - sprite.height));
+    blitC(ctx, "zzz", idler.x + 6, idler.y - sprite.height - 4 - (still ? 0 : Math.floor(time * 1.5 + i) % 2));
+  });
+};
+
+const drawDungeonScene = (ctx: Ctx, office: Office, time: number) => {
+  const still = office.reducedMotion;
+  drawDungeonBack(ctx, time, still);
+  const raiders = office.dungeonRaiders().filter((emp) => !office.isHidden(emp));
+  const ents: { y: number; fn: () => void }[] = [];
+  if (raiders.length === 0) ents.push({ y: 0, fn: () => drawSleepers(ctx, time, still) });
+  let stackedOnLast = 0;
+  raiders.forEach((emp) => {
+    const spot = dungeonSpotOf(emp.slot); // keyed by the overflow slot: nobody jumps when another raider leaves
+    if (dungeonSpotIndex(emp.slot) === DUNGEON_LAST_SPOT) stackedOnLast++;
+    const foePos = dungeonMonsterPoint(spot);
+    const fighting = !!emp.raid && emp.raid.hp > 0;
+    const heldTime = frozenTime(emp, time);
+    ents.push({ y: spot.y, fn: () => atSpot(emp, spot, () => drawAdventurer(ctx, emp, heldTime, fighting)) });
+    ents.push({ y: spot.y, fn: () => drawRaidFoe(ctx, emp, time, still, foePos) });
+    ents.push({ y: spot.y + 0.4, fn: () => atSpot(emp, spot, () => drawFx(ctx, emp, heldTime, office, fighting)) });
+  });
+  const stacked = stackedOnLast - 1;
+  if (stacked > 0) {
+    const spot = DUNGEON_SPOTS[DUNGEON_LAST_SPOT];
+    ents.push({ y: spot.y + 2, fn: () => drawBadge(ctx, `+${stacked}`, spot.x, spot.y + 9) });
+  }
+  ents.sort((entA, entB) => entA.y - entB.y);
+  drawParticles(ctx, office, true, true);
+  for (const entity of ents) entity.fn();
+  drawDungeonFront(ctx, time, still);
+  drawParticles(ctx, office, false, true);
+  drawPopups(ctx, office, true);
+  raiders.forEach((emp) => {
+    atSpot(emp, dungeonSpotOf(emp.slot), () => {
+      drawOverhead(ctx, office, emp, time);
+      if (office.hoverId === emp.id) drawHover(ctx, office, emp, time);
+    });
+  });
+};
+
+/** opaque count badge over the dungeon gate while adventurers are raiding inside */
+const drawRaidBadge = (ctx: Ctx, count: number) => {
+  const text = String(count);
+  ctx.font = "700 7px ui-sans-serif, system-ui, sans-serif";
+  const width = Math.ceil(ctx.measureText(text).width) + 16;
+  const bx = Math.round(DUNGEON.x - width / 2),
+    by = DUNGEON.y - 46;
+  rect(ctx, INK, bx - 1, by - 1, width + 2, 13);
+  rect(ctx, "#a24853", bx, by, width, 11);
+  rect(ctx, "#d95763", bx, by, width, 1);
+  // little sword, point up
+  rect(ctx, "#fff6e0", bx + 5, by + 1, 1, 6);
+  rect(ctx, "#fff6e0", bx + 4, by + 2, 3, 1);
+  rect(ctx, "#fff6e0", bx + 3, by + 7, 5, 1);
+  rect(ctx, GOLD, bx + 5, by + 8, 1, 2);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(text, bx + 11, by + 6);
+};
+
+/** screen-space layers on top of the (restored) scene */
+const drawScreenOverlays = (ctx: Ctx, office: Office) => {
+  drawAlertVignette(ctx, office);
+  if (office.flash > 0) {
+    if (!office.reducedMotion) {
+      ctx.globalAlpha = office.flash;
+      rect(ctx, "#ffffff", 0, 0, VIEW_W, WORLD_H);
+      ctx.globalAlpha = 1;
+    }
+    office.flash = 0;
+  }
+  drawBannerQ(ctx, office);
+};
+
 export const drawScene = (ctx: Ctx, office: Office) => {
   const time = office.clock;
   const now = new Date();
@@ -2824,6 +3019,13 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   if (amp > 0.35 && !office.paused && !office.reducedMotion)
     ctx.translate(Math.round((Math.random() * 2 - 1) * amp), Math.round((Math.random() * 2 - 1) * amp));
   ctx.translate(WING_W, 0); // world coordinates from here on: the west wing is at negative x
+  if (office.scene === "dungeon") {
+    LOOPING = office.loopIds;
+    drawDungeonScene(ctx, office, time);
+    ctx.restore();
+    drawScreenOverlays(ctx, office);
+    return;
+  }
   drawSky(ctx, time, hour);
   if (office.bird && night < 0.6 && office.rain < 0.5) {
     const bird = office.bird;
@@ -2866,7 +3068,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
 
   // resting campfire glow + rain go under every entity so characters stay crisp
   for (const emp of office.employees.values()) {
-    if (office.isHidden(emp)) continue;
+    if (office.isHidden(emp) || emp.inDungeon) continue;
     if (emp.state === "SEATED" && emp.resting) {
       ctx.globalAlpha = 0.16 + 0.05 * Math.sin(time * 9);
       ctx.fillStyle = "#ffb050";
@@ -2888,8 +3090,13 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   drawParticles(ctx, office, true);
 
   const ents: { y: number; fn: () => void }[] = [];
+  let raidersInside = 0;
   for (const emp of office.employees.values()) {
     if (office.isHidden(emp)) continue;
+    if (emp.inDungeon) {
+      raidersInside++; // the badge counts only the raiders the session filter lets through (as the dungeon scene does)
+      continue;
+    }
     const heldTime = frozenTime(emp, time);
     ents.push({ y: emp.y, fn: () => drawAdventurer(ctx, emp, heldTime) });
     ents.push({ y: emp.y + 0.4, fn: () => drawFx(ctx, emp, heldTime, office) });
@@ -2897,8 +3104,8 @@ export const drawScene = (ctx: Ctx, office: Office) => {
       const monsterPos = emp.monPos;
       ents.push({ y: monsterPos.y, fn: () => drawMonster(ctx, emp, heldTime) });
     }
-    if ((emp.deskIdx >= 0 || emp.slot >= 0) && emp.state !== "LEAVING") {
-      const camp = emp.deskIdx < 0;
+    if (emp.deskIdx >= 0 && emp.state !== "LEAVING") {
+      // overflow adventurers (dungeon raiders) keep their squires inside the ally gate
       let k = 0;
       for (const it of emp.interns.values()) {
         if (k >= 2) break;
@@ -2910,23 +3117,14 @@ export const drawScene = (ctx: Ctx, office: Office) => {
         });
       }
       if (emp.interns.size > 2) {
-        const spot = camp ? standSlot(emp.slot) : spotOf(emp.deskIdx);
-        const bx = camp ? spot.x + 8 : spot.x - 24,
-          by = camp ? spot.y - 6 : spot.y;
-        ents.push({ y: spot.y + 1, fn: () => drawBadge(ctx, `+${emp.interns.size - 2}`, bx, by) });
+        const spot = spotOf(emp.deskIdx);
+        ents.push({ y: spot.y + 1, fn: () => drawBadge(ctx, `+${emp.interns.size - 2}`, spot.x - 24, spot.y) });
       }
     }
   }
   // finished squires walking back into the portal
   for (const leaver of office.leavers)
     ents.push({ y: leaver.y, fn: () => drawSquireWalk(ctx, leaver.x, leaver.y, leaver.face, time) });
-  // camp overflow beyond the last slot: stacked on it, badge shows how many
-  let stacked = 0;
-  for (const emp of office.employees.values()) if (emp.deskIdx < 0 && emp.slot >= CAMP_MAX) stacked++;
-  if (stacked > 0) {
-    const spot = standSlot(CAMP_MAX - 1);
-    ents.push({ y: spot.y + 2, fn: () => drawBadge(ctx, `+${stacked}`, spot.x, spot.y + 9) });
-  }
   // the west wing: chef, bard and the long table take part in the depth sort (diners sit behind / in front of it)
   ents.push({ y: office.chef.y, fn: () => drawChef(ctx, office, time) });
   ents.push({ y: office.guildMaster.y, fn: () => drawGuildMaster(ctx, office, time) });
@@ -2941,85 +3139,15 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   drawParticles(ctx, office, false);
   drawPopups(ctx, office);
   drawCheers(ctx, office, time);
+  if (raidersInside > 0) drawRaidBadge(ctx, raidersInside);
 
   // bubbles, highlights, tags
   for (const emp of office.employees.values()) {
-    if (office.isHidden(emp)) continue;
-    if (waitsOnYou(emp) && !emp.tempBubble) {
-      if (Math.floor(time * 4) % 2 === 0 || office.selectedId === emp.id) drawAlert(ctx, emp.x, emp.y - CH_H - 1);
-    } else {
-      const emote = bubbleOf(emp, time);
-      // opaque 🔁 badge over a looping adventurer; alternates with any other bubble (static under reduced motion)
-      if (isLooping(emp) && (!emote || office.reducedMotion || Math.floor(time * 1.5) % 2 === 0))
-        drawBubble(ctx, emp.x, emp.y - CH_H - 1, "🔁");
-      else if (emote) drawBubble(ctx, emp.x, emp.y - CH_H - 1, emote);
-    }
-    if (isLooping(emp)) drawBerserk(ctx, emp, time, office.reducedMotion);
-    const sinceLevelUp = time - emp.lvlAt;
-    if (sinceLevelUp >= 0 && sinceLevelUp < 2.2 && emp.state !== "LEAVING") {
-      const progress = sinceLevelUp / 2.2;
-      ctx.globalAlpha = progress > 0.75 ? (1 - progress) / 0.25 : 1;
-      ctx.font = "800 7.5px ui-sans-serif, system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const ly = Math.round(
-        emp.y -
-          CH_H -
-          20 -
-          (bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp) ? 15 : 0) -
-          eob(Math.min(1, sinceLevelUp * 2)) * 6,
-      );
-      outlined(
-        ctx,
-        `LEVEL UP! Lv.${emp.lvlTo}`,
-        Math.max(VIEW_X0 + 34, Math.min(WORLD_W - 34, Math.round(emp.x))),
-        ly,
-        "#ffe14a",
-      );
-      ctx.globalAlpha = 1;
-    }
-    if (office.selectedId === emp.id) {
-      const bounce = Math.floor(office.realTime * 4) % 2;
-      duelOffsetInto(emp, time);
-      const ax = Math.round(emp.x + DP.dx),
-        ay = Math.round(
-          emp.y + DP.dy - 28 - (bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp) ? 16 : 0) - bounce,
-        );
-      rect(ctx, "#f2c14e", ax - 3, ay - 3, 7, 1);
-      rect(ctx, "#f2c14e", ax - 2, ay - 2, 5, 1);
-      rect(ctx, "#f2c14e", ax - 1, ay - 1, 3, 1);
-      rect(ctx, "#f2c14e", ax, ay, 1, 1);
-    }
+    if (office.isHidden(emp) || emp.inDungeon) continue;
+    drawOverhead(ctx, office, emp, time);
   }
   const hovered = office.hoverId ? office.employees.get(office.hoverId) : undefined;
-  if (hovered) {
-    duelOffsetInto(hovered, time);
-    ctx.globalAlpha = 0.9;
-    rect(
-      ctx,
-      "#f2c14e",
-      Math.round(hovered.x + DP.dx - CH_W / 2) - 1,
-      Math.round(hovered.y + DP.dy - CH_H) - 1,
-      CH_W + 2,
-      1,
-    );
-    ctx.globalAlpha = 1;
-    drawTag(
-      ctx,
-      hovered,
-      hovered.y + DP.dy - CH_H - 3 - (bubbleOf(hovered, time) || waitsOnYou(hovered) || isLooping(hovered) ? 17 : 0),
-      DP.dx,
-    );
-  }
+  if (hovered && !hovered.inDungeon) drawHover(ctx, office, hovered, time);
   ctx.restore(); // end of shaken scene; screen-space overlays below
-  drawAlertVignette(ctx, office);
-  if (office.flash > 0) {
-    if (!office.reducedMotion) {
-      ctx.globalAlpha = office.flash;
-      rect(ctx, "#ffffff", 0, 0, VIEW_W, WORLD_H);
-      ctx.globalAlpha = 1;
-    }
-    office.flash = 0;
-  }
-  drawBannerQ(ctx, office);
+  drawScreenOverlays(ctx, office);
 };

@@ -368,7 +368,7 @@ describe("territory duel", () => {
     expect(priv.glareAt.size).toBe(0);
   });
 
-  it("camp (overflow) adventurers duel in place, without walking", () => {
+  it("raiders inside the dungeon never duel (nothing to draw on the field)", () => {
     const office = newOffice();
     const ids = Array.from({ length: 10 }, () => sid());
     for (const id of ids) seat(office, id);
@@ -379,11 +379,9 @@ describe("territory duel", () => {
       claims: [],
       conflicts: [{ file: "q.ts", sids: [campA.id, campB.id], level: "clash", since: 1 }],
     });
-    expect(office.duels).toHaveLength(1);
-    expect(office.duels[0].walk).toBe(false);
-    expect(campA.state).toBe("SEATED");
-    tick(office, 6);
+    expect(campA.inDungeon).toBe(true);
     expect(office.duels).toHaveLength(0);
+    expect(campA.state).toBe("SEATED");
   });
 });
 

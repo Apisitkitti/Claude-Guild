@@ -227,5 +227,10 @@
   "dungeon_wait": "Time waiting on you",
   "dungeon_dur_seconds": "{s}s",
   "dungeon_dur_minutes": "{min}m {s}s",
-  "dungeon_dur_hours": "{h}h {min}m"
+  "dungeon_dur_hours": "{h}h {min}m",
+  "dungeon_raiders": "Raiding now",
+  "dungeon_enter": "Enter the dungeon",
+  "dungeon_back": "Back to the guild",
+  "dungeon_scene_raiders": "Dungeon — {count} raiding",
+  "dungeon_scene_empty": "Dungeon — empty… only sleeping monsters"
 }

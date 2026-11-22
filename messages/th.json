@@ -173,5 +173,10 @@
   "dungeon_wait": "เวลารอคุณ",
   "dungeon_dur_seconds": "{s} วิ",
   "dungeon_dur_minutes": "{min} นาที {s} วิ",
-  "dungeon_dur_hours": "{h} ชม. {min} นาที"
+  "dungeon_dur_hours": "{h} ชม. {min} นาที",
+  "dungeon_raiders": "กำลังบุก dungeon",
+  "dungeon_enter": "เข้า dungeon",
+  "dungeon_back": "กลับ guild",
+  "dungeon_scene_raiders": "Dungeon — กำลังบุก {count} คน",
+  "dungeon_scene_empty": "Dungeon — ว่างเปล่า… มีแต่ monster หลับ"
 }
