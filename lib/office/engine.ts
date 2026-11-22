@@ -22,6 +22,9 @@ import {
   routeLeave,
   routePromote,
   routeToAllyGate,
+  routeToTavernSpot,
+  TAVERN_OVERFLOW,
+  TAVERN_SPOTS,
   routeToTavern,
   seatPoint,
   squirePoint,
@@ -313,13 +316,12 @@ const SQUIRE_WALK_MAX = 6;
 const SQUIRE_SLOTS = 2;
 const SQUIRE_SNAP_DIST = 0.5;
 const ALLY_DOORS_S = 0.6;
-const ALLY_GLOW_S = 4;
 const COMPACT_REST_S = 3;
 const COMPACT_BUBBLE_S = 2;
 const MANA_FLASH_S = 1.2;
 const GATE_BURST = { n: 12, speed: 40, up: 30, life: 0.7 };
 const GATE_PUFF = { n: 6, speed: 18, up: 14, life: 0.5, lift: 3 };
-const ARRIVE_SPARKS = { n: 8, speed: 24, up: 30, life: 0.6, lift: 6 };
+const REFILL_LIFE = 0.6;
 const DUST_PUFF_COLS = ["#d8c8a0", "#b59a6a", "#f2e8cf"];
 const GATE_COLS = ["#ff5a5a", "#ffb870", "#6a2a7a"];
 const WARM_COLS = ["#f2c14e", "#ffe9a0", "#ffb050", "#ffffff"];
@@ -489,9 +491,9 @@ export type EState =
   | "FROM_COFFEE"
   | "LEAVING"
   | "DUEL"
-  | "TO_ALLY_GATE"
-  | "IN_ALLY_GATE"
-  | "FROM_ALLY_GATE";
+  | "TO_TAVERN_REST"
+  | "AT_TAVERN_REST"
+  | "FROM_TAVERN_REST";
 
 // ---- territory duels ----
 export type DuelStyle = "sword" | "magic" | "arrow";
@@ -958,6 +960,8 @@ export interface Employee {
   known: boolean;
   /** PreCompact seen: the next context reading is the post-compact one (mana bar flashes when it lands) */
   compactPending: boolean;
+  /** index into TAVERN_SPOTS used by a rest trip (-1 = beside the counter) */
+  restSpot: number;
   manaFlashUntil: number;
 }
 
@@ -1283,7 +1287,6 @@ export class Office {
   readonly leavers: Leaver[] = [];
   /** the ally gate doors stand open until this clock time (someone passes) / the doorway glows (a compact event) */
   allyDoorsUntil = 0;
-  allyGlowUntil = 0;
   private allyNextAt = 0;
   private stats = {
     since: Date.now(),
@@ -1762,7 +1765,6 @@ export class Office {
     this.leavers.length = 0;
     this.bossAlive = 0;
     this.allyDoorsUntil = 0;
-    this.allyGlowUntil = 0;
     this.allyNextAt = 0;
     this.stats = { since: Date.now(), entered: 0, left: 0, monsters: 0, bosses: 0, longestBossS: 0, waitS: 0 };
     this.tools.clear();
@@ -1798,7 +1800,7 @@ export class Office {
         WARM_COLS,
         MANA_REFILL_BURST.speed,
         0,
-        ARRIVE_SPARKS.life,
+        REFILL_LIFE,
         1,
         true,
       );
@@ -2718,9 +2720,9 @@ export class Office {
       case "FROM_COFFEE":
       case "DRINK":
         return "coffee";
-      case "TO_ALLY_GATE":
-      case "IN_ALLY_GATE":
-      case "FROM_ALLY_GATE":
+      case "TO_TAVERN_REST":
+      case "AT_TAVERN_REST":
+      case "FROM_TAVERN_REST":
         return "compact";
     }
     if (emp.act !== "handup")
@@ -2734,9 +2736,9 @@ export class Office {
       case "TO_COFFEE":
       case "DRINK":
       case "FROM_COFFEE":
-      case "TO_ALLY_GATE":
-      case "IN_ALLY_GATE":
-      case "FROM_ALLY_GATE":
+      case "TO_TAVERN_REST":
+      case "AT_TAVERN_REST":
+      case "FROM_TAVERN_REST":
         return true;
       default:
         return false;
@@ -2760,12 +2762,12 @@ export class Office {
         return m.status_drink();
       case "DUEL":
         return m.status_duel();
-      case "TO_ALLY_GATE":
-        return m.status_to_ally_gate();
-      case "IN_ALLY_GATE":
-        return m.status_in_ally_gate();
-      case "FROM_ALLY_GATE":
-        return m.status_from_ally_gate();
+      case "TO_TAVERN_REST":
+        return m.status_to_tavern_rest();
+      case "AT_TAVERN_REST":
+        return m.status_at_tavern_rest();
+      case "FROM_TAVERN_REST":
+        return m.status_from_tavern_rest();
     }
     if (emp.hurtUntil > this.clock) return m.status_hurt();
     if (emp.boss && emp.act !== "handup") return m.status_boss();
@@ -3078,7 +3080,7 @@ export class Office {
         emp.y = target.y;
         rem -= dist;
         emp.path.shift();
-        if (emp.state === "TO_COFFEE" || emp.state === "TO_ALLY_GATE") emp.trail.push(target);
+        if (emp.state === "TO_COFFEE" || emp.state === "TO_TAVERN_REST") emp.trail.push(target);
         if (target.wait && emp.path.length) {
           emp.holdUntil = this.clock + target.wait;
           if (emp.state === "LEAVING") emp.lootAt = this.clock;
@@ -3111,31 +3113,19 @@ export class Office {
         if (this.move(emp, dt)) this.sit(emp);
         break;
       case "FROM_COFFEE":
-      case "FROM_ALLY_GATE":
+      case "FROM_TAVERN_REST":
         if (this.move(emp, dt)) this.sit(emp);
         break;
-      case "TO_ALLY_GATE":
+      case "TO_TAVERN_REST":
         if (this.move(emp, dt)) {
-          emp.state = "IN_ALLY_GATE";
+          emp.state = "AT_TAVERN_REST";
           emp.stateSince = this.clock;
           emp.facing = 1;
-          this.allyDoorsUntil = this.clock + COMPACT_REST_S + ALLY_DOORS_S; // the doors stand open while they rest
-          this.burst(
-            ALLY_GATE_MOUTH.x,
-            ALLY_GATE_MOUTH.y - ARRIVE_SPARKS.lift,
-            ARRIVE_SPARKS.n,
-            WARM_COLS,
-            ARRIVE_SPARKS.speed,
-            ARRIVE_SPARKS.up,
-            ARRIVE_SPARKS.life,
-            1,
-            true,
-          );
         }
         break;
-      case "IN_ALLY_GATE":
+      case "AT_TAVERN_REST":
         if (this.clock - emp.stateSince >= COMPACT_REST_S) {
-          emp.state = "FROM_ALLY_GATE";
+          emp.state = "FROM_TAVERN_REST";
           emp.stateSince = this.clock;
           emp.path = [...emp.trail].reverse();
           emp.trail = [];
@@ -3230,7 +3220,7 @@ export class Office {
         emp.bossFace = -1;
       }
       for (const intern of emp.interns.values()) if (intern.phase === "in") intern.phase = "snap";
-      if (emp.state === "TO_ALLY_GATE" || emp.state === "IN_ALLY_GATE" || emp.state === "FROM_ALLY_GATE") {
+      if (emp.state === "TO_TAVERN_REST" || emp.state === "AT_TAVERN_REST" || emp.state === "FROM_TAVERN_REST") {
         emp.path = [];
         emp.trail = [];
         this.sit(emp);
@@ -3512,6 +3502,7 @@ export class Office {
       evCount: 0,
       known: false,
       compactPending: false,
+      restSpot: -1,
       manaFlashUntil: 0,
     };
     const sv = this.demo ? undefined : this.progress[id];
@@ -3733,9 +3724,9 @@ export class Office {
         emp.tempBubble = null;
         this.enqueue(emp, evt);
         break;
-      case "TO_ALLY_GATE":
-      case "IN_ALLY_GATE": // the session is moving again: cut the trip short and walk back
-        emp.state = "FROM_ALLY_GATE";
+      case "TO_TAVERN_REST":
+      case "AT_TAVERN_REST": // the session is moving again: cut the trip short and walk back
+        emp.state = "FROM_TAVERN_REST";
         emp.path = [...emp.trail].reverse();
         emp.trail = [];
         emp.tempBubble = null;
@@ -3762,12 +3753,12 @@ export class Office {
       case "DRINK":
         emp.state = "FROM_COFFEE";
         break;
-      case "TO_ALLY_GATE":
-      case "IN_ALLY_GATE":
-        emp.state = "FROM_ALLY_GATE";
+      case "TO_TAVERN_REST":
+      case "AT_TAVERN_REST":
+        emp.state = "FROM_TAVERN_REST";
         break;
       case "FROM_COFFEE":
-      case "FROM_ALLY_GATE":
+      case "FROM_TAVERN_REST":
         return true;
       default:
         return false;
@@ -3861,7 +3852,7 @@ export class Office {
         if (HANDUP_NOTIFS.has(nt) || msg.includes("permission")) this.setAct(emp, "handup", "❗");
         else if (nt === "idle_prompt") {
           this.clearPending(emp);
-          this.setAct(emp, "thinking", "💤", "idle");
+          this.setAct(emp, "thinking", "🍺", "idle");
         } else emp.tempBubble = { e: "🔔", until: clock + 2 };
         break;
       }
@@ -4158,21 +4149,42 @@ export class Office {
   }
 
   /**
-   * PreCompact: the ally gate's doorway glows. A free adventurer walks there, rests inside for a moment and walks
+   * PreCompact: a free adventurer walks to a free tavern spot, sits and has a beer for a moment and walks
    * back (any event that arrives cuts the rest short). A busy one (tool in flight, boss, duel, hand up) stays put and
-   * just gets the 💤 bubble. The mana bar is never touched: it follows the next real context reading.
+   * just gets the 🍺 bubble. The mana bar is never touched: it follows the next real context reading.
    */
+  /** a tavern spot nobody is using (coffee-break drinkers and other resting adventurers count), else beside the counter */
+  private freeTavernSpot(emp: Employee): Pt {
+    const taken = new Set<number>();
+    for (const other of this.employees.values()) {
+      if (other === emp) continue;
+      if (other.state === "TO_COFFEE" || other.state === "DRINK" || other.state === "FROM_COFFEE")
+        taken.add(((other.order % TAVERN_SPOTS.length) + TAVERN_SPOTS.length) % TAVERN_SPOTS.length);
+      else if (this.onTavernRestState(other)) taken.add(other.restSpot);
+    }
+    for (let i = 0; i < TAVERN_SPOTS.length; i++) {
+      if (taken.has(i)) continue;
+      emp.restSpot = i;
+      return TAVERN_SPOTS[i];
+    }
+    emp.restSpot = -1;
+    return TAVERN_OVERFLOW;
+  }
+  private onTavernRestState(emp: Employee): boolean {
+    return emp.state === "TO_TAVERN_REST" || emp.state === "AT_TAVERN_REST" || emp.state === "FROM_TAVERN_REST";
+  }
+
   private onCompact(emp: Employee, canWalk: boolean) {
     const walk = canWalk && !this.reducedMotion && this.compactReady(emp);
-    this.allyGlowUntil = this.clock + ALLY_GLOW_S;
     emp.compactPending = true;
     this.setAct(emp, "thinking");
     if (!walk) {
-      emp.tempBubble = { e: "💤", until: this.clock + COMPACT_BUBBLE_S };
+      emp.tempBubble = { e: "🍺", until: this.clock + COMPACT_BUBBLE_S };
       return;
     }
-    const route = routeToAllyGate(emp.x, emp.y);
-    emp.state = "TO_ALLY_GATE";
+    const spot = this.freeTavernSpot(emp);
+    const route = routeToTavernSpot(emp.deskIdx, emp.slot, spot).slice(1);
+    emp.state = "TO_TAVERN_REST";
     emp.stateSince = this.clock;
     emp.trail = [{ x: emp.x, y: emp.y }];
     emp.path = route;

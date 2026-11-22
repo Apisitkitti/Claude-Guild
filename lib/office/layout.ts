@@ -125,10 +125,14 @@ export const routePromote = (x: number, y: number, desk: number): Pt[] => {
 };
 
 /** seat -> tavern stand point (first point = seat). */
-export const routeToTavern = (desk: number, slot: number, order: number): Pt[] => {
-  const spot = tavernSpot(order);
-  return dedupe([...seatToGate(desk, slot), { ...GATE_IN }, { x: spot.x, y: GATE_Y }, spot]);
-};
+export const routeToTavern = (desk: number, slot: number, order: number): Pt[] =>
+  routeToTavernSpot(desk, slot, tavernSpot(order));
+/** seat -> a given stand point inside the hall (first point = seat). */
+export const routeToTavernSpot = (desk: number, slot: number, spot: Pt): Pt[] =>
+  dedupe([...seatToGate(desk, slot), { ...GATE_IN }, { x: spot.x, y: GATE_Y }, spot]);
+/** when every tavern table spot is taken: stand by the quest counter, just off the aisle */
+const OVERFLOW_DY = 16;
+export const TAVERN_OVERFLOW: Pt = { x: COUNTER.x, y: COUNTER.y + OVERFLOW_DY };
 
 /** From wherever the character stands -> counter (turn in the quest, pause) -> door. Excludes the start. */
 const LOW_ROW_Y = 180; // below this the character is in the lower wilderness

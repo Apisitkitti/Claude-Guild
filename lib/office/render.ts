@@ -994,9 +994,9 @@ const BANNER = { cloth: "#d95763", shade: "#a8403f", gold: "#f2c14e" };
 const DOOR_WOOD = ["#a8764a", "#8f6040"];
 /**
  * Stone arch like the dungeon's, but with intact pillars, guild banners and warm wooden doors. `open` swings the
- * doors aside on a lit hall; `glow` brightens the doorway (a compact event). Drawn before the lighting layer.
+ * doors aside on a lit hall (someone is passing). Drawn before the lighting layer.
  */
-const drawAllyGate = (ctx: Ctx, open: boolean, glow: boolean, time: number, still: boolean) => {
+const drawAllyGate = (ctx: Ctx, open: boolean, time: number, still: boolean) => {
   const { x, y } = ALLY_GATE;
   ctx.globalAlpha = 0.25;
   rect(ctx, "#000", x - 26, y, 52, 3);
@@ -1031,10 +1031,6 @@ const drawAllyGate = (ctx: Ctx, open: boolean, glow: boolean, time: number, stil
     rect(ctx, "#2a2d3a", x - 8, y - 6, 16, 1);
     rect(ctx, GOLD, x - 2, y - 11, 1, 2); // handles
     rect(ctx, GOLD, x + 2, y - 11, 1, 2);
-    if (glow) {
-      rect(ctx, "#f6cf6a", x - 8, y - 22, 1, 22); // warm light leaking round the doors
-      rect(ctx, "#f6cf6a", x + 7, y - 22, 1, 22);
-    }
   }
   // intact pillars with guild banners and pennants
   for (const side of [-1, 1]) {
@@ -1075,7 +1071,7 @@ const drawAllyGate = (ctx: Ctx, open: boolean, glow: boolean, time: number, stil
 /** the warm lamplight of the ally gate's doorway (after the night overlay: emissive) */
 const drawAllyGlow = (ctx: Ctx, office: Office, time: number) => {
   const { x, y } = ALLY_GATE;
-  const lit = office.allyDoorsUntil > time || office.allyGlowUntil > time;
+  const lit = office.allyDoorsUntil > time;
   ctx.globalAlpha = lit ? (office.reducedMotion ? 0.35 : 0.3 + 0.1 * Math.sin(time * 6)) : 0.14;
   rect(ctx, "#ffb050", x - 7, y - 21, 14, 21);
   ctx.globalAlpha = 1;
@@ -1855,10 +1851,10 @@ const drawRain = (ctx: Ctx, office: Office) => {
   ctx.stroke();
 };
 
-const onAllyTrip = (emp: Employee): boolean =>
-  emp.state === "TO_ALLY_GATE" || emp.state === "IN_ALLY_GATE" || emp.state === "FROM_ALLY_GATE";
+const onTavernRest = (emp: Employee): boolean =>
+  emp.state === "TO_TAVERN_REST" || emp.state === "AT_TAVERN_REST" || emp.state === "FROM_TAVERN_REST";
 /** a hand is up: seated, or on the way to / from the well (the ❗ must not wait for the walk to end) */
-const waitsOnYou = (emp: Employee): boolean => emp.act === "handup" && (emp.state === "SEATED" || onAllyTrip(emp));
+const waitsOnYou = (emp: Employee): boolean => emp.act === "handup" && (emp.state === "SEATED" || onTavernRest(emp));
 
 // ---------- squires ----------
 const drawBadge = (ctx: Ctx, txt: string, x: number, y: number) => {
@@ -1941,11 +1937,11 @@ const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => 
           ? { pose: "cheer", frame: Math.floor(time * 4) % 2 }
           : { pose: "idle", frame: 0 };
       return { pose: "walk", frame: Math.floor(time * 8) % 4 };
-    case "TO_ALLY_GATE":
-    case "FROM_ALLY_GATE":
+    case "TO_TAVERN_REST":
+    case "FROM_TAVERN_REST":
       return { pose: "walk", frame: Math.floor(time * 8) % 4 };
-    case "IN_ALLY_GATE":
-      return { pose: "idle", frame: Math.floor(time * 1.5) % 2 };
+    case "AT_TAVERN_REST":
+      return { pose: "drink", frame: Math.floor(time * 1.5) % 2 };
     case "STRETCH":
       return { pose: "cheer", frame: Math.floor(time * 3) % 2 };
     case "DRINK":
@@ -2117,7 +2113,7 @@ const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office) => {
       }
     }
   }
-  if (emp.state === "DRINK") {
+  if (emp.state === "DRINK" || emp.state === "AT_TAVERN_REST") {
     blitC(ctx, "steam" + (Math.floor(time * 3) % 3), emp.x + 8, emp.y - 26);
     if (Math.floor(time * 1.5) % 2 === 0) blitC(ctx, "ale", emp.x + 9, emp.y - 12);
   }
@@ -2246,7 +2242,7 @@ const drawBerserk = (ctx: Ctx, emp: Employee, time: number, still: boolean) => {
 
 const bubbleOf = (emp: Employee, time: number): string | null => {
   if (emp.state === "DRINK") return "🍺";
-  if (onAllyTrip(emp)) return emp.act === "handup" ? "❗" : "💤";
+  if (onTavernRest(emp)) return emp.act === "handup" ? "❗" : "🍺";
   if (emp.state !== "SEATED") return null;
   if (emp.tempBubble) return emp.tempBubble.e;
   if (emp.bubble === "❗") return Math.floor(time * 4) % 2 === 0 ? "❗" : null;
@@ -2440,7 +2436,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   ctx.drawImage(bg, 0, 0);
   drawEnvAnim(ctx, time);
   drawGate(ctx, office, time);
-  drawAllyGate(ctx, office.allyDoorsUntil > time, office.allyGlowUntil > time, time, office.reducedMotion);
+  drawAllyGate(ctx, office.allyDoorsUntil > time, time, office.reducedMotion);
   // Lighting tints only the environment; characters, monsters and emissive things stay solid and full-colour.
   ctx.drawImage(overlay!, 0, 0);
   if (office.rain > 0) {
