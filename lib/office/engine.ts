@@ -52,8 +52,36 @@ export function nextAttentionId(rows: readonly { sid: string }[], selectedId: st
   return ids[(i + 1) % ids.length];
 }
 
+export type ReceiptVerdict = "done" | "red" | "none";
+/** a closed turn of the server's Receipt Ledger (counts only) */
+export interface ReceiptMsgRow {
+  id: string; sid: string; project: string; closedAt: number;
+  files: number; recovered: number; commits: number; amends: number; tasks: number; squire: number; calls: number;
+  verdict: ReceiptVerdict;
+  /** a runner is still red from an earlier turn (this turn did not run it) */
+  staleRed?: boolean;
+}
+/** a receipt joined with the adventurer: `live` = that adventurer is still in the guild (click selects them) */
+export interface ReceiptRow extends ReceiptMsgRow { tag: string; live: boolean }
+const RECEIPT_VERDICTS: readonly string[] = ["done", "red", "none"];
+const MAX_RECEIPTS = 30;
+/** a receipt that closed this recently (and was not seen before) gets the 📜 bubble + quest-log line */
+const RECEIPT_FRESH_MS = 20_000;
+/** outcome counts as Thai chips text, e.g. "ไฟล์ 3 · ฟื้น 1 · commit 1" (empty when nothing) */
+export function receiptSummary(r: Pick<ReceiptMsgRow, "files" | "recovered" | "commits" | "amends" | "tasks">): string {
+  const p: string[] = [];
+  if (r.files) p.push(`ไฟล์ ${r.files}`);
+  if (r.recovered) p.push(`ฟื้น ${r.recovered}`);
+  if (r.commits) p.push(`commit ${r.commits}`);
+  if (r.amends) p.push(`amend ${r.amends}`);
+  if (r.tasks) p.push(`งาน ${r.tasks}`);
+  return p.join(" · ");
+}
+export const RECEIPT_VERDICT_TEXT: Record<ReceiptVerdict, string> = { done: "ได้งาน", red: "ยังแดง", none: "ไม่มีผลลัพธ์" };
+
 export interface SnapshotMsg {
   attention?: AttentionMsgRow[];
+  receipts?: ReceiptMsgRow[];
   territory?: TerritoryMsg;
   sessions?: { session_id: string; cwd?: string; interns?: string[]; context?: CtxMsg | null; waiting?: boolean }[];
   events?: HookEvt[];
@@ -441,8 +469,10 @@ export interface OfficeView {
   conflicts?: ConflictRow[];
   /** Lookout Bell queue (non-dismissed rows of adventurers the guild knows, already ordered) */
   attention?: AttentionRow[];
+  /** Receipt Ledger: closed turns, newest first */
+  receipts?: ReceiptRow[];
 }
-export const EMPTY_VIEW: OfficeView = { roster: [], log: [], hoverId: null, selectedId: null, hiddenCount: 0, hiddenIds: [], waiting: [], conflicts: [], attention: [] };
+export const EMPTY_VIEW: OfficeView = { roster: [], log: [], hoverId: null, selectedId: null, hiddenCount: 0, hiddenIds: [], waiting: [], conflicts: [], attention: [], receipts: [] };
 
 declare global {
   interface Window { officeEvent?: (evt: HookEvt) => void }
@@ -530,6 +560,11 @@ export class Office {
   /** sessions with a live, non-dismissed loop row (drawn as "berserk") */
   readonly loopIds = new Set<string>();
   private attnRowsCache: AttentionRow[] | null = null;
+  /** Receipt Ledger (server state, full replacement); ids already shown, so a receipt bubbles only once. Never persisted. */
+  private rcpts: ReceiptMsgRow[] = [];
+  private rcptSeen = new Set<string>();
+  private rcptInit = false;
+  private rcptVer = 0;
   /** key -> Infinity while the conflict is live, else the time its dismissal expires (kept briefly so clash->overlap flaps stay dismissed) */
   private dismissed = new Map<string, number>();
   /** clash conflictKeys already fought out by a finished duel: their contested strip / flag / link are no longer drawn */
@@ -775,6 +810,52 @@ export class Office {
     this.attn = out;
     this.bumpAttn();
   }
+  /** Replace the Receipt Ledger. Malformed rows are skipped. A receipt that just closed with outcomes pops a 📜 bubble + quest-log line. */
+  setReceipts(rows: ReceiptMsgRow[] | null | undefined) {
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.min(99999, Math.max(0, Math.floor(v))) : 0);
+    const out: ReceiptMsgRow[] = [];
+    if (Array.isArray(rows)) {
+      for (const r of rows.slice(0, MAX_RECEIPTS)) {
+        if (!r || typeof r !== "object" || typeof r.id !== "string" || !r.id || typeof r.sid !== "string" || !r.sid) continue;
+        if (!RECEIPT_VERDICTS.includes(r.verdict) || !Number.isFinite(Number(r.closedAt))) continue;
+        out.push({
+          id: r.id.slice(0, 64), sid: r.sid, project: typeof r.project === "string" ? r.project.slice(0, 60) : "", closedAt: Number(r.closedAt),
+          files: num(r.files), recovered: num(r.recovered), commits: num(r.commits), amends: num(r.amends), tasks: num(r.tasks), squire: num(r.squire), calls: num(r.calls),
+          verdict: r.verdict, ...(r.staleRed === true ? { staleRed: true } : {}),
+        });
+      }
+    }
+    out.sort((a, b) => b.closedAt - a.closedAt);
+    const first = !this.rcptInit;
+    this.rcptInit = true;
+    for (const r of out) {
+      if (this.rcptSeen.has(r.id)) continue;
+      this.rcptSeen.add(r.id);
+      if (first || Date.now() - r.closedAt > RECEIPT_FRESH_MS) continue;
+      const sum = receiptSummary(r);
+      const e = this.employees.get(r.sid);
+      if (!sum || !e) continue;
+      if (e.state === "SEATED" && !e.bubble) e.tempBubble = { e: "📜", until: this.clock + 2.5 };
+      this.log.unshift({
+        id: this.logSeq++, sid: r.sid, color: lookFor(r.sid).shirt, bad: r.verdict === "red",
+        text: `#${r.sid.slice(0, 3)} · ${e.project} · ${RECEIPT_VERDICT_TEXT[r.verdict]}: ${sum}`,
+        time: Date.now(), tag: e.tag, project: e.project, intern: false, internLabel: "",
+        kind: "ใบเสร็จ", detail: `${RECEIPT_VERDICT_TEXT[r.verdict]}: ${sum}`,
+      });
+      if (this.log.length > 100) this.log.length = 100;
+    }
+    if (this.rcptSeen.size > 500) this.rcptSeen = new Set(out.map((r) => r.id));
+    this.rcpts = out;
+    this.rcptVer++;
+    this.dirty = true;
+  }
+  /** receipts to show: newest first, joined with the adventurer when the guild still knows them */
+  receiptRows(): ReceiptRow[] {
+    return this.rcpts.map((r) => {
+      const e = this.employees.get(r.sid);
+      return { ...r, tag: e ? e.tag : "#" + r.sid.slice(0, 3), project: e ? e.project : r.project || "unknown", live: !!e };
+    });
+  }
   dismissAttention(key: string) { if (this.attn.some((r) => r.key === key)) { this.attnDismissed.add(key); this.bumpAttn(); } }
   private bumpAttn() {
     this.attnVer++; this.attnRowsCache = null;
@@ -809,6 +890,7 @@ export class Office {
     this.endedAgents.clear();
     this.ctxMap.clear();
     this.attn = []; this.attnDismissed.clear(); this.bumpAttn();
+    this.rcpts = []; this.rcptSeen.clear(); this.rcptInit = false; this.rcptVer++;
     this.claimN.clear(); this.conflicts = []; this.dismissed.clear(); this.seenClash.clear(); this.seenOverlap.clear(); this.pendingClash.clear(); this.bumpTerr();
     this.duels.length = 0; this.duelAt.clear(); this.duelWait.clear(); this.glareAt.clear(); this.tugs.length = 0; this.editFailAt.clear();
     for (const p of this.particles) p.on = false;
@@ -1268,7 +1350,7 @@ export class Office {
 
   private signature(): string {
     let s = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
-    s += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}`;
+    s += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}|R${this.rcptVer}`;
     for (const e of this.employees.values()) {
       if (this.isHidden(e)) { s += `;h${e.id}${this.isWaiting(e) ? "w" + this.statusOf(e) : ""}`; continue; }
       const cf = this.ctxFrac(e.id);
@@ -1315,7 +1397,7 @@ export class Office {
         interns: e.interns.size, internList: [...e.interns.values()].map(internRow), desk: e.deskIdx, look: e.look, act: this.rosterAct(e),
         level: e.lv, xp: e.xp, xpNext: xpNeed(e.lv), gold: e.gold, kills: e.kills, hp: e.hearts, hpMax: MAX_HEARTS,
       };});
-    return { roster, log: this.log.slice(), hoverId: this.hoverId, selectedId: this.selectedId, treasury: this.treasury, hiddenCount, hiddenIds, waiting, conflicts, attention: this.attentionRows() };
+    return { roster, log: this.log.slice(), hoverId: this.hoverId, selectedId: this.selectedId, treasury: this.treasury, hiddenCount, hiddenIds, waiting, conflicts, attention: this.attentionRows(), receipts: this.receiptRows() };
   }
 
   private rosterAct(e: Employee): RosterAct {
@@ -1748,6 +1830,7 @@ export class Office {
     if (!this.log.length) for (const ev of [...(snap.events ?? [])]) this.pushLog(ev);
     if (snap.territory !== undefined) this.setTerritory(snap.territory, true);
     if (snap.attention !== undefined) this.setAttention(snap.attention);
+    if (snap.receipts !== undefined) this.setReceipts(snap.receipts);
     this.hidVer++;
     this.dirty = true;
   }

@@ -1,4 +1,4 @@
-import type { AttentionMsgRow, Employee, HookEvt, Office } from "./engine";
+import type { AttentionMsgRow, Employee, HookEvt, Office, ReceiptMsgRow } from "./engine";
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const randInt = (a: number, b: number) => Math.floor(rand(a, b + 1));
@@ -55,6 +55,7 @@ export class Simulator {
     this.spawn(this.territory());
     this.spawn(this.attention());
     this.spawn(this.attentionSync());
+    this.spawn(this.receipts());
   }
 
   /** how often each class pairing has duelled in this demo (so cycles rotate through sword / magic / arrow matchups) */
@@ -158,6 +159,31 @@ export class Simulator {
         this.pushAttention([]);
       }
       yield rand(40, 60);
+    }
+  }
+
+  private demoReceipts: ReceiptMsgRow[] = [];
+  private receiptN = 0;
+  private makeReceipt(sid: string, closedAt: number): ReceiptMsgRow {
+    const roll = Math.random();
+    const project = this.active.get(sid) ?? "portfolio";
+    const base = { id: `demo-${++this.receiptN}`, sid, project, closedAt, amends: 0, squire: Math.random() < 0.25 ? 1 : 0 };
+    if (roll < 0.15) return { ...base, files: 0, recovered: 0, commits: 0, tasks: 0, squire: 0, calls: Math.round(rand(12, 45)), verdict: "none" };
+    const files = 1 + Math.floor(rand(0, 6)), recovered = Math.random() < 0.5 ? 1 : 0, commits = Math.random() < 0.6 ? 1 : 0, tasks = Math.floor(rand(0, 3));
+    return { ...base, files, recovered, commits, tasks, calls: Math.round(rand(8, 60)), verdict: roll < 0.3 ? "red" : "done" };
+  }
+  /** demo-only: turns "finish" now and then and leave a receipt on the board (a couple are already there at start) */
+  private *receipts(): Gen {
+    yield rand(1, 2);
+    const seed = [...this.active.keys()].slice(0, 2);
+    seed.forEach((id, i) => this.demoReceipts.unshift(this.makeReceipt(id, Date.now() - (6 + i * 17) * 60_000)));
+    if (this.demoReceipts.length) this.o.setReceipts(this.demoReceipts);
+    for (;;) {
+      yield rand(14, 24);
+      const live = [...this.o.employees.values()].filter((e) => e.state === "SEATED" && this.active.has(e.id));
+      if (!live.length) continue;
+      this.demoReceipts = [this.makeReceipt(pick(live).id, Date.now()), ...this.demoReceipts].slice(0, 12);
+      this.o.setReceipts(this.demoReceipts);
     }
   }
 

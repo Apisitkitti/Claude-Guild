@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { EMPTY_VIEW, Office, bellCount, nextAttentionId, type AttentionRow, type InternRow, type OfficeView, type RosterAct, type RosterRow, type WaitingRow, type ConflictRow } from "@/lib/office/engine";
+import { EMPTY_VIEW, Office, RECEIPT_VERDICT_TEXT, bellCount, nextAttentionId, receiptSummary, type ReceiptRow, type AttentionRow, type InternRow, type OfficeView, type RosterAct, type RosterRow, type WaitingRow, type ConflictRow } from "@/lib/office/engine";
 import { charSprite } from "@/lib/office/sprites";
 import { CLASS_LABEL, type Look } from "@/lib/office/palette";
 import { connectLive } from "@/lib/office/live";
@@ -34,7 +34,7 @@ const EVT_ICON: Record<string, string> = {
   Read: "📖", Grep: "🔎", Glob: "🔎", LS: "📂", Edit: "✏️", Write: "✏️", MultiEdit: "✏️", NotebookEdit: "✏️",
   Bash: "💻", WebFetch: "🌐", WebSearch: "🌐", TodoWrite: "📝", TaskCreate: "📝", TaskUpdate: "📝",
   Agent: "🤖", Task: "🤖", Workflow: "🤖", SubagentStart: "🛡️", SubagentStop: "🛡️",
-  Notification: "🔔", Clash: "⚔️", PermissionRequest: "❗", SessionStart: "📜", SessionEnd: "🏰", PreCompact: "🗜️", UserPromptSubmit: "💬", Stop: "⏹️",
+  Notification: "🔔", Clash: "⚔️", PermissionRequest: "❗", SessionStart: "📜", SessionEnd: "🏰", PreCompact: "🗜️", UserPromptSubmit: "💬", Stop: "⏹️", ใบเสร็จ: "📜",
 };
 const iconFor = (kind: string) => EVT_ICON[kind] ?? (kind.startsWith("mcp__") ? "🔌" : "•");
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -181,6 +181,47 @@ function AttentionItem({ r, now, selected, onSelect, onDismiss }: { r: Attention
   );
 }
 
+function agoText(at: number, now: number): string {
+  const s = Math.max(0, Math.round((now - at) / 1000));
+  if (s < 60) return `เมื่อ ${s} วินาทีที่แล้ว`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `เมื่อ ${m} นาทีที่แล้ว` : `เมื่อ ${Math.floor(m / 60)} ชม. ${m % 60} นาทีที่แล้ว`;
+}
+
+function ReceiptItem({ r, now, selected, onSelect }: { r: ReceiptRow; now: number; selected: boolean; onSelect: () => void }) {
+  const chips: [string, string, number, string][] = [
+    ["📝", "ไฟล์", r.files, "แก้ไฟล์สำเร็จ (ไม่ซ้ำ)"],
+    ["✅", "ฟื้น", r.recovered, "test แดง → เขียว"],
+    ["📦", "commit", r.commits, "git commit สำเร็จ"],
+    ["↩", "amend", r.amends, "git commit --amend"],
+    ["☑", "งาน", r.tasks, "งานที่ติ๊กเสร็จ"],
+  ];
+  const sum = receiptSummary(r);
+  return (
+    <li className={`rcpt ${r.verdict}${selected ? " hl" : ""}`}>
+      <button
+        type="button"
+        className="rsel"
+        onClick={onSelect}
+        disabled={!r.live}
+        title={`${sum || "ไม่มีผลลัพธ์"} · ${r.calls} tool calls · ตามที่ hook รายงาน${r.live ? "" : " · นักผจญภัยออกจากกิลด์แล้ว"}`}
+      >
+        <span className="rhead">
+          <b>{r.tag} <span className="rproj">{r.project}</span></b>
+          <span className={`rverdict ${r.verdict}`}>{RECEIPT_VERDICT_TEXT[r.verdict]}</span>
+        </span>
+        <span className="rchips">
+          {chips.filter((c) => c[2] > 0).map((c) => (
+            <span key={c[1]} className="rchip" title={c[3]}><span aria-hidden="true">{c[0]}</span> {c[1]} {c[2]}</span>
+          ))}
+          {sum === "" && <span className="rnone">{r.calls} tool calls ไม่มีผลลัพธ์</span>}
+        </span>
+        <span className="rage">{agoText(r.closedAt, now)}{r.squire > 0 ? ` · squire ${r.squire}` : ""}{r.staleRed && r.verdict !== "red" ? " · ยังแดงจากรอบก่อน" : ""}</span>
+      </button>
+    </li>
+  );
+}
+
 function Avatar({ look }: { look: Look }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -302,6 +343,7 @@ export default function OfficeApp() {
   const clashes = useMemo(() => (mode === "live" ? conflicts.filter((c) => c.level === "clash") : []), [conflicts, mode]);
   const clashN = clashes.length;
   const attention = useMemo(() => view.attention ?? [], [view.attention]);
+  const receipts = useMemo(() => view.receipts ?? [], [view.receipts]);
   // permission waits are already counted by the ❗ in the title
   const bellN = useMemo(() => bellCount(attention, false), [attention]);
   /** select an adventurer; if the query filter hides it, relax the filter first (also used by notification clicks) */
@@ -469,6 +511,7 @@ export default function OfficeApp() {
       onEvent: (e) => o.event(e),
       onTerritory: (m) => o.setTerritory(m),
       onAttention: (rows) => o.setAttention(rows),
+      onReceipts: (rows) => o.setReceipts(rows),
       onContext: (m) => { if (m && typeof m.session_id === "string") o.setContext(m.session_id, m.used, m.limit, !!m.limitGuessed); },
       onStatus: (s) => {
         if (s === "open") { opened = true; setConn("connected"); } else { errored = true; setConn(opened ? "reconnecting" : "connecting"); }
@@ -622,6 +665,20 @@ export default function OfficeApp() {
               ))}
             </ul>
             <p className="terrnote">กด N เพื่อไปคนถัดไปในคิว · “น่าจะรอคำตอบคุณ” เป็นการเดาจากท้ายข้อความ · เตือนได้ แต่ขวางไม่ได้</p>
+          </div>
+          <h2>
+            <button className="sec" onClick={() => toggleSec("rcpt")} aria-expanded={!secHidden.rcpt} aria-controls="sec-rcpt">
+              {secHidden.rcpt ? "▸" : "▾"} 📜 ใบเสร็จ <small>({receipts.length})</small>
+            </button>
+          </h2>
+          <div className="rcptsec" id="sec-rcpt" hidden={!!secHidden.rcpt}>
+            <ul className="rcpts">
+              {receipts.length === 0 && <li className="empty">ยังไม่มีใบเสร็จ — ออกเมื่อ session จบรอบ (Stop)</li>}
+              {receipts.map((r) => (
+                <ReceiptItem key={r.id} r={r} now={nowMs || r.closedAt} selected={r.sid === view.selectedId} onSelect={() => { lastN.current = r.sid; revealSelect(r.sid); }} />
+              ))}
+            </ul>
+            <p className="terrnote">นับ “ผลลัพธ์” ไม่ใช่ความยุ่ง · ตามที่ hook รายงาน · เก็บ 2 ชม. ในหน่วยความจำเท่านั้น</p>
           </div>
           <h2>
             <button className="sec" onClick={() => toggleSec("roster")} aria-expanded={!secHidden.roster} aria-controls="sec-roster">

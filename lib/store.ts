@@ -1,6 +1,8 @@
 import { readContext, type ContextUsage } from "@/lib/transcript";
 import { TerritoryTracker } from "@/lib/territory";
 import { AttentionTracker, type AttentionRow } from "@/lib/attention";
+import { ReceiptTracker, type ReceiptRow } from "@/lib/receipts";
+import { redactDeep } from "@/lib/redact";
 
 // In-memory event + session store shared by route handlers.
 // Kept on globalThis so it survives dev hot-reloads and is shared across route modules.
@@ -50,16 +52,18 @@ type Store = {
   territory: TerritoryTracker;
   attention: AttentionTracker;
   attentionJson: string;
+  receipts: ReceiptTracker;
+  receiptsJson: string;
 };
 
-const STORE_VERSION = 10; // bump when Store shape changes so dev HMR rebuilds it
+const STORE_VERSION = 12; // bump when Store shape changes so dev HMR rebuilds it
 
 const g = globalThis as typeof globalThis & { __claudeOffice?: Store & { version?: number } };
 
 type Timers = { ping: ReturnType<typeof setInterval>; sweep: ReturnType<typeof setInterval> };
 
 function createStore(): Store & { version: number; timers: Timers } {
-  const store = { events: [], sessions: new Map(), ended: new Map(), clients: new Set(), ctxTimers: new Map(), ctxSeq: new Map(), ctxInflight: 0, territory: new TerritoryTracker(), attention: new AttentionTracker(), attentionJson: "[]", startedAt: Date.now(), version: STORE_VERSION } as unknown as Store & {
+  const store = { events: [], sessions: new Map(), ended: new Map(), clients: new Set(), ctxTimers: new Map(), ctxSeq: new Map(), ctxInflight: 0, territory: new TerritoryTracker(), attention: new AttentionTracker(), attentionJson: "[]", receipts: new ReceiptTracker(), receiptsJson: "[]", startedAt: Date.now(), version: STORE_VERSION } as unknown as Store & {
     version: number;
     timers: Timers;
   };
@@ -72,6 +76,8 @@ function createStore(): Store & { version: number; timers: Timers } {
     if (store.territory.sweep(Date.now())) broadcastTerritory(store);
     store.attention.sweep(Date.now());
     refreshAttention(store);
+    store.receipts.sweep(Date.now());
+    refreshReceipts(store);
   }, 30_000);
   ping.unref?.();
   sweep.unref?.();
@@ -121,9 +127,23 @@ function refreshAttention(s: Store) {
   broadcastRaw(s, `event: attention\ndata: ${json}\n\n`);
 }
 
+function receiptRows(s: Store): ReceiptRow[] {
+  return s.receipts.rows(Date.now());
+}
+
+/** recompute the Receipt Ledger; broadcast iff it changed. Counts only, never persisted. */
+function refreshReceipts(s: Store) {
+  const json = JSON.stringify(receiptRows(s));
+  if (json === s.receiptsJson) return;
+  s.receiptsJson = json;
+  broadcastRaw(s, `event: receipts\ndata: ${json}\n\n`);
+}
+
 function dropSession(id: string) {
   store.attention.dropSession(id);
   refreshAttention(store);
+  store.receipts.dropSession(id, Date.now()); // closed receipts outlive the session
+  refreshReceipts(store);
   if (store.territory.dropSession(id, Date.now())) broadcastTerritory(store);
   store.sessions.delete(id);
   const t = store.ctxTimers.get(id);
@@ -281,7 +301,26 @@ function slim(value: unknown, depth = 0): unknown {
 
 const DROP_KEYS = new Set(["tool_response", "last_assistant_message", "prompt", "custom_instructions"]);
 
-export function addEvent(raw: Record<string, unknown>) {
+const META_KEYS = ["session_id", "hook_event_name", "cwd", "agent_id", "agent_type", "tool_name", "tool_use_id"];
+
+/**
+ * Secret-redacted copy of a hook payload: every string is scrubbed (see lib/redact.ts) and tool_response (big, never
+ * read) is dropped. EVERYTHING downstream (slim, trackers that keep text, SSE, logs) works from this copy only.
+ */
+function sanitize(raw: Record<string, unknown>): Record<string, unknown> {
+  try {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(raw)) if (k !== "tool_response") out[k] = redactDeep(v);
+    return out;
+  } catch {
+    const out: Record<string, unknown> = {};
+    for (const k of META_KEYS) if (typeof raw[k] === "string") out[k] = raw[k];
+    return out; // fail closed: keep identifiers only
+  }
+}
+
+export function addEvent(rawIn: Record<string, unknown>) {
+  const raw = sanitize(rawIn);
   const clean: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (DROP_KEYS.has(k)) continue;
@@ -299,7 +338,10 @@ export function addEvent(raw: Record<string, unknown>) {
   }
   if (!lateAfterEnd) {
     try {
-      store.attention.ingest(raw, evt.receivedAt); // RAW event: tool_response / last_assistant_message are already gone from `evt`
+      store.attention.ingest(raw, evt.receivedAt); // redacted copy; keeps last_assistant_message (dropped from `evt`)
+    } catch {}
+    try {
+      store.receipts.ingest(raw, evt.receivedAt);
     } catch {}
   }
   updateSessions(evt);
@@ -308,11 +350,12 @@ export function addEvent(raw: Record<string, unknown>) {
     const sess = sid ? store.sessions.get(sid) : undefined;
     if (sid && sess) store.attention.setWaiting(sid, sess.waiting ? sess.waitingSince : null);
     refreshAttention(store);
+    refreshReceipts(store);
   } catch {}
   logEvent(evt);
   broadcastRaw(store, `data: ${JSON.stringify(evt)}\n\n`);
   try {
-    handleContext(evt, raw.transcript_path);
+    handleContext(evt, rawIn.transcript_path);
   } catch {}
 }
 
@@ -322,6 +365,7 @@ export function snapshot() {
     events: store.events.slice(-SNAPSHOT_EVENTS),
     territory: store.territory.snapshot(),
     attention: attentionQueue(store),
+    receipts: receiptRows(store),
   };
 }
 
