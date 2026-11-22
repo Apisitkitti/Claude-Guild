@@ -1,6 +1,6 @@
 import { useEffect, useState, type RefObject } from "react";
 
-import { WORLD_H, WORLD_W } from "@/lib/office/layout";
+import { VIEW_W, WORLD_H } from "@/lib/office/layout";
 
 import type { OfficeRef } from "../types";
 
@@ -42,7 +42,7 @@ export const useCanvasScale = (stageRef: RefObject<HTMLDivElement | null>, offic
       const availW = stage.clientWidth - padX - FRAME;
       const availH = stage.clientHeight - padY - FRAME;
       const ratio = window.devicePixelRatio || 1;
-      const fit = Math.min(availW / WORLD_W, availH / WORLD_H);
+      const fit = Math.min(availW / VIEW_W, availH / WORLD_H);
       setScale(Math.max(1 / ratio, Math.floor(fit * ratio) / ratio));
     };
     const resizeObserver = new ResizeObserver(calc);

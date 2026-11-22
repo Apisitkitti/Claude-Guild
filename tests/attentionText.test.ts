@@ -11,25 +11,25 @@ describe("attention wording (th, en)", () => {
   it("words every kind in Thai, keeping the original phrases", () => {
     expect(attentionText({ kind: "permission" })).toBe("รออนุญาตจากคุณ (permission)");
     expect(attentionText({ kind: "permission", stale: true })).toBe("อาจอนุญาตแล้ว — ตรวจดู");
-    expect(attentionText(loop)).toBe("วนลูป: Bash npm test ล้มซ้ำ 4 ครั้ง");
+    expect(attentionText(loop)).toBe("วน loop: Bash npm test ล้มซ้ำ 4 ครั้ง");
     expect(attentionText({ kind: "asked" })).toBe("น่าจะรอคำตอบคุณ (เดา)");
-    expect(attentionText({ kind: "context", pct: 92 })).toBe("context ใกล้เต็ม 92%");
-    expect(attentionText({ kind: "done" })).toBe("เสร็จแล้ว รอรีวิว");
+    expect(attentionText({ kind: "context", pct: 92 })).toBe("Context ใกล้เต็ม 92%");
+    expect(attentionText({ kind: "done" })).toBe("เสร็จแล้ว รอ review");
   });
   it("builds detail and copy text from the data", () => {
     expect(attentionDetail(loop)).toBe("boom");
     expect(attentionDetail({ kind: "asked", tail: "…ไหม?" })).toBe("…ไหม?");
     expect(attentionDetail({ kind: "done" })).toBeUndefined();
     expect(attentionCopy(loop)).toBe(
-      "คุณรัน `npm test` แล้วล้มด้วย error เดิม 4 ครั้ง: boom. หยุดลองซ้ำ อธิบายสาเหตุก่อนแล้วเปลี่ยนวิธี",
+      "คุณ run `npm test` แล้วล้มด้วย error เดิม 4 ครั้ง: boom. หยุดลองซ้ำ อธิบายสาเหตุก่อนแล้วเปลี่ยนวิธี",
     );
     expect(attentionCopy({ ...loop, error: undefined })).toBe(
-      "คุณรัน `npm test` แล้วล้มด้วย error เดิม 4 ครั้ง. หยุดลองซ้ำ อธิบายสาเหตุก่อนแล้วเปลี่ยนวิธี",
+      "คุณ run `npm test` แล้วล้มด้วย error เดิม 4 ครั้ง. หยุดลองซ้ำ อธิบายสาเหตุก่อนแล้วเปลี่ยนวิธี",
     );
     expect(attentionCopy({ kind: "done" })).toBeUndefined();
   });
   it("falls back to the bare tool when a loop has no target", () => {
-    expect(attentionText({ kind: "loop", tool: "Read", count: 3 })).toBe("วนลูป: Read ล้มซ้ำ 3 ครั้ง");
+    expect(attentionText({ kind: "loop", tool: "Read", count: 3 })).toBe("วน loop: Read ล้มซ้ำ 3 ครั้ง");
   });
   it("English uses plural forms", () => {
     expect(m.queue_loop({ what: "Bash", count: 1 }, { locale: "en" })).toBe("Looping: Bash failed 1 time");

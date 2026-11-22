@@ -55,7 +55,7 @@ describe("squires (subagents)", () => {
     const row = office.getView().roster[0];
     expect(row.act).toBe("intern_handup");
     expect(row.internList[0].needsYou).toBe(true);
-    expect(office.statusOf(emp(office, id))).toContain("สไควร์");
+    expect(office.statusOf(emp(office, id))).toContain("squire");
   });
 
   it("a squire's PreToolUse for an unseen agent creates it", () => {

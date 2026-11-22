@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local guild token (MCP, paused)
 .guild/
+
+# sed -i backup leftovers
+*-e

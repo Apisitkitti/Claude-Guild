@@ -1507,6 +1507,8 @@ const PROPS: Record<string, string[]> = {
   paper: ["OOOOOO", "OfBBfO", "OfffBO", "OfBBfO", "OOOOOO"],
   sticky: ["yyyy", "yOOy", "yyOy", "YyyY"],
   mug: ["OOOO.", "OmwOO", "OmmOO", "OOOO."],
+  note0: ["....OO..", "....OFO.", "....OFFO", "....OF.O", "....OF..", "..OOOF..", ".OFFFO..", ".OFFFO..", "..OOO..."],
+  note1: ["...OO...", "...OFOO.", "...OFFFO", "...OF.OO", "...OF...", ".OOOF...", "OFFFO...", "OFFFO...", ".OOO...."],
   plant: [
     "....g.....",
     "...ggg.g..",

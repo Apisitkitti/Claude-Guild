@@ -1,5 +1,14 @@
+/**
+ * World coordinates: the wilderness, the hall gate and every route keep the coordinates they always had (the hall's
+ * east edge is HALL_W, the world's is WORLD_W). The guild grew WESTWARD: a wing (kitchen, feast table, bard) now
+ * occupies the negative x range [VIEW_X0, 0), and the canvas shows VIEW_W x WORLD_H logical px with x = VIEW_X0 at its
+ * left edge. Hit-testing and drawing translate by WING_W.
+ */
 export const WORLD_W = 384;
 export const WORLD_H = 216;
+export const WING_W = 96;
+export const VIEW_X0 = -WING_W;
+export const VIEW_W = WORLD_W + WING_W;
 export const CH_W = 16;
 export const CH_H = 24;
 /** `wait` (seconds): pause when this waypoint is reached. */
@@ -16,7 +25,8 @@ export const WALL_X0 = 118; // right wall of the hall (with the gate)
 export const BACK_WALL_H = 52;
 
 // ---- guild hall anchor points ----
-export const DOOR: Pt = { x: 6, y: 176 };
+const DOOR_INSET = 6;
+export const DOOR: Pt = { x: VIEW_X0 + DOOR_INSET, y: 176 };
 export const DOOR_IN: Pt = { x: 30, y: 176 };
 export const BOARD: Pt = { x: 30, y: 68 };
 export const COUNTER: Pt = { x: 98, y: 80 };
@@ -24,10 +34,46 @@ export const GATE_Y = 124;
 export const GATE_IN: Pt = { x: 112, y: GATE_Y };
 export const GATE_OUT: Pt = { x: 134, y: GATE_Y };
 export const GATE_OPEN = { y0: 102, y1: 146 };
-export const TAVERN_SPOTS: Pt[] = [
-  { x: 88, y: 160 },
-  { x: 88, y: 180 },
-  { x: 88, y: 200 },
+
+// ---- the west wing: kitchen, long feast table, bard ----
+export interface FeastSeat extends Pt {
+  /** which way the diner looks (towards the middle of the table) */
+  face: 1 | -1;
+  /** far side of the table (behind it, reached by the east lane) or the near side (reached from the aisle) */
+  far: boolean;
+}
+export const FEAST_TABLE: Rect = { x: -78, y: 86, w: 56, h: 16 };
+/** walkers must not cross this part of the table (seats sit on its edges) */
+export const FEAST_BLOCK: Rect = { x: -76, y: 90, w: 52, h: 10 };
+const FEAST_COLS = 4;
+const FEAST_COL_X0 = -71;
+const FEAST_COL_DX = 14;
+const FEAST_FAR_Y = 88;
+const FEAST_NEAR_Y = 114;
+/** order the table fills in: opposite pairs first, the ends last */
+const FEAST_COL_ORDER = [1, 2, 0, FEAST_COLS - 1];
+export const FEAST_SEATS: FeastSeat[] = FEAST_COL_ORDER.flatMap((col): FeastSeat[] => {
+  const x = FEAST_COL_X0 + col * FEAST_COL_DX;
+  const face = col < FEAST_COLS / 2 ? 1 : -1;
+  return [
+    { x, y: FEAST_NEAR_Y, face, far: false },
+    { x, y: FEAST_FAR_Y, face, far: true },
+  ];
+});
+/** the vertical lane just east of the table that leads to the far side, and the row behind the far seats */
+export const FEAST_LANE_X = -14;
+const FEAST_FAR_LANE_Y = 78;
+/** kitchen: the chef cooks at the hearth, picks plates up at the serving counter and sets them down at the table's east end */
+export const CHEF_HOME: Pt = { x: -80, y: 62 };
+export const CHEF_PICKUP: Pt = { x: -34, y: 62 };
+export const CHEF_SERVE: Pt = { x: FEAST_LANE_X, y: 94 };
+const CHEF_LANE_Y = 62;
+export const BARD_POS: Pt = { x: -50, y: 148 }; // between the feast aisle (y 124) and the entrance path (y 176), clear of both
+export const KITCHEN_HEARTH = { x: -92, y: 14, w: 30, h: 38 };
+export const SERVING_COUNTER = { x: -50, y: 40, w: 32, h: 12 };
+export const WING_TORCHES: Pt[] = [
+  { x: -58, y: 34 },
+  { x: -16, y: 34 },
 ];
 export const NPC_POS: Pt = { x: 98, y: 54 };
 export const BAR = { x: 98, y: 150, w: 18, h: 54 };
@@ -72,7 +118,6 @@ const SQUIRE_0_DX = -15;
 const SQUIRE_1_DX = -11;
 const SQUIRE_1_DY = -9;
 const CAMP_SQUIRE_DX = 8;
-const TAVERN_COUNT = TAVERN_SPOTS.length;
 /** Squire (intern) standing point: just behind / left of the adventurer. */
 export const squirePoint = (desk: number, index: number): Pt => {
   const spot = spotOf(desk);
@@ -85,7 +130,6 @@ export const campSquirePoint = (slot: number, index: number): Pt => {
   const spot = standSlot(slot);
   return { x: spot.x + (index === 0 ? -CAMP_SQUIRE_DX : CAMP_SQUIRE_DX), y: spot.y + 1 };
 };
-export const tavernSpot = (order: number): Pt => TAVERN_SPOTS[((order % TAVERN_COUNT) + TAVERN_COUNT) % TAVERN_COUNT];
 
 const dedupe = (pts: Pt[]): Pt[] => {
   const out: Pt[] = [];
@@ -124,15 +168,48 @@ export const routePromote = (x: number, y: number, desk: number): Pt[] => {
   return dedupe([{ x, y }, { x: GATE_OUT.x, y }, { ...GATE_OUT }, { x: spot.x, y: ROAD_Y }, spot]).slice(1);
 };
 
-/** seat -> tavern stand point (first point = seat). */
-export const routeToTavern = (desk: number, slot: number, order: number): Pt[] =>
-  routeToTavernSpot(desk, slot, tavernSpot(order));
+/** when every feast seat is taken: stand by the quest counter, just off the aisle */
+const OVERFLOW_DY = 16;
+export const TAVERN_OVERFLOW: Pt = { x: COUNTER.x, y: COUNTER.y + OVERFLOW_DY };
+/** the table seat's last leg: near-side seats are reached from the aisle, far-side ones round the east end of the table */
+const feastApproach = (seat: FeastSeat): Pt[] =>
+  seat.far
+    ? [
+        { x: FEAST_LANE_X, y: GATE_Y },
+        { x: FEAST_LANE_X, y: FEAST_FAR_LANE_Y },
+        { x: seat.x, y: FEAST_FAR_LANE_Y },
+        { x: seat.x, y: seat.y },
+      ]
+    : [
+        { x: seat.x, y: GATE_Y },
+        { x: seat.x, y: seat.y },
+      ];
+/** seat (desk or camp) -> a place at the feast table (first point = seat) */
+export const routeToFeast = (desk: number, slot: number, seatIdx: number): Pt[] =>
+  dedupe([...seatToGate(desk, slot), { ...GATE_IN }, ...feastApproach(FEAST_SEATS[seatIdx])]);
 /** seat -> a given stand point inside the hall (first point = seat). */
 export const routeToTavernSpot = (desk: number, slot: number, spot: Pt): Pt[] =>
   dedupe([...seatToGate(desk, slot), { ...GATE_IN }, { x: spot.x, y: GATE_Y }, spot]);
-/** when every tavern table spot is taken: stand by the quest counter, just off the aisle */
-const OVERFLOW_DY = 16;
-export const TAVERN_OVERFLOW: Pt = { x: COUNTER.x, y: COUNTER.y + OVERFLOW_DY };
+/** seat -> feast seat (seatIdx >= 0) or the counter overflow spot (-1); first point = seat */
+export const routeToBreak = (desk: number, slot: number, seatIdx: number): Pt[] =>
+  seatIdx >= 0 ? routeToFeast(desk, slot, seatIdx) : routeToTavernSpot(desk, slot, TAVERN_OVERFLOW);
+/** the chef's round trip from the hearth: serving counter (pick a plate up), the table's east end (set it down), home. Excludes the start. */
+export const CHEF_PICK_S = 0.7;
+export const CHEF_PLACE_S = 0.6;
+export const routeChefServe = (): Pt[] => [
+  { ...CHEF_PICKUP, wait: CHEF_PICK_S },
+  { x: FEAST_LANE_X, y: CHEF_LANE_Y },
+  { ...CHEF_SERVE, wait: CHEF_PLACE_S },
+  { x: FEAST_LANE_X, y: CHEF_LANE_Y },
+  { ...CHEF_HOME },
+];
+/** where a plate lands on the table, in front of seat `seatIdx` */
+export const FEAST_PLATE_NEAR_DY = 9;
+export const FEAST_PLATE_FAR_DY = 5;
+export const platePoint = (seatIdx: number): Pt => {
+  const seat = FEAST_SEATS[seatIdx];
+  return { x: seat.x, y: FEAST_TABLE.y + (seat.far ? FEAST_PLATE_FAR_DY : FEAST_PLATE_NEAR_DY) };
+};
 
 /** From wherever the character stands -> counter (turn in the quest, pause) -> door. Excludes the start. */
 const LOW_ROW_Y = 180; // below this the character is in the lower wilderness
@@ -143,6 +220,11 @@ export const routeLeave = (x: number, y: number): Pt[] => {
   if (x >= HALL_W + 1) {
     pts.push(y > LOW_ROW_Y ? { x: GATE_OUT.x, y } : { x, y: ROAD_Y });
     pts.push({ ...GATE_OUT }, { ...GATE_IN });
+  } else if (x < 0 && y < GATE_Y - UPPER_HALL_MARGIN) {
+    // behind the feast table / in the kitchen: out by the east lane, never across the table. A far-side diner first
+    // steps back to the row behind the seats (the mirror of the approach), so nobody walks over the table edge.
+    if (y > FEAST_FAR_LANE_Y && x < FEAST_LANE_X) pts.push({ x, y: FEAST_FAR_LANE_Y });
+    pts.push({ x: FEAST_LANE_X, y: Math.min(y, FEAST_FAR_LANE_Y) }, { x: FEAST_LANE_X, y: GATE_Y });
   } else if (y < GATE_Y - UPPER_HALL_MARGIN && x <= HALL_AISLE_X) {
     // already in the upper hall: walk straight to the counter (no detour via the gate row)
   } else if (x < BOARD.x && y > GATE_Y) {

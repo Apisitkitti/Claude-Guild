@@ -1,4 +1,5 @@
 import {
+  CHEERS_S,
   DUEL_FLOURISH,
   DUEL_IMPACT,
   DUEL_IMPACT_FINAL,
@@ -18,11 +19,21 @@ import {
   ALLY_GATE,
   ALLY_TORCHES,
   BACK_WALL_H,
+  BARD_POS,
   BAR,
   BRIDGE_X,
   CH_H,
   CH_W,
   COUNTER_BOX,
+  FEAST_SEATS,
+  FEAST_TABLE,
+  KITCHEN_HEARTH,
+  SERVING_COUNTER,
+  VIEW_W,
+  VIEW_X0,
+  WING_TORCHES,
+  WING_W,
+  platePoint,
   DESK_COUNT,
   DUNGEON,
   DUNGEON_HIT,
@@ -76,9 +87,11 @@ const rng = (seed: number) => {
 };
 const mk = () => {
   const canvas = document.createElement("canvas");
-  canvas.width = WORLD_W;
+  canvas.width = VIEW_W;
   canvas.height = WORLD_H;
-  return { cv: canvas, c: canvas.getContext("2d")! };
+  const ctx = canvas.getContext("2d")!;
+  ctx.translate(WING_W, 0); // drawing happens in world coordinates; the wing sits at negative x
+  return { cv: canvas, c: ctx };
 };
 const roundRect = (ctx: Ctx, x: number, y: number, width: number, height: number, radius: number) => {
   ctx.beginPath();
@@ -360,22 +373,22 @@ const drawHall = (ctx: Ctx) => {
   // wood floor
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, BACK_WALL_H, HALL_W, WORLD_H - BACK_WALL_H);
+  ctx.rect(VIEW_X0, BACK_WALL_H, HALL_W - VIEW_X0, WORLD_H - BACK_WALL_H);
   ctx.clip();
   const rand = rng(7);
   let row = 0;
   for (let y = BACK_WALL_H; y < WORLD_H; y += 8, row++) {
-    let x = -((row * 13) % 32);
+    let x = VIEW_X0 - ((row * 13) % 32);
     while (x < HALL_W) {
       const len = 28 + ((rand() * 3) | 0) * 8;
-      const x0 = Math.max(0, x),
+      const x0 = Math.max(VIEW_X0, x),
         x1 = Math.min(HALL_W, x + len);
       rect(ctx, FLOOR[(rand() * 5) | 0], x0, y, x1 - x0, 8);
       ctx.globalAlpha = 0.16;
       rect(ctx, "#ffe6b4", x0, y, x1 - x0, 1);
       ctx.globalAlpha = 0.5;
       rect(ctx, "#6b4529", x0, y + 7, x1 - x0, 1);
-      if (x >= 0) rect(ctx, "#6b4529", x, y, 1, 8);
+      if (x >= VIEW_X0) rect(ctx, "#6b4529", x, y, 1, 8);
       ctx.globalAlpha = 0.14;
       for (let grain = 0; grain < 3; grain++)
         rect(
@@ -393,27 +406,27 @@ const drawHall = (ctx: Ctx) => {
   ctx.restore();
   for (let i = 0; i < 5; i++) {
     ctx.globalAlpha = 0.28 - i * 0.05;
-    rect(ctx, "#000", 0, BACK_WALL_H + i, HALL_W, 1);
+    rect(ctx, "#000", VIEW_X0, BACK_WALL_H + i, HALL_W - VIEW_X0, 1);
   }
   ctx.globalAlpha = 1;
 
   // back wall (stone) + baseboard
-  bricks(ctx, 0, 0, HALL_W, BACK_WALL_H - 2, 11);
-  rect(ctx, WD.dark, 0, BACK_WALL_H - 3, HALL_W, 3);
-  rect(ctx, WD.mid, 0, BACK_WALL_H - 3, HALL_W, 1);
+  bricks(ctx, VIEW_X0, 0, HALL_W - VIEW_X0, BACK_WALL_H - 2, 11);
+  rect(ctx, WD.dark, VIEW_X0, BACK_WALL_H - 3, HALL_W - VIEW_X0, 3);
+  rect(ctx, WD.mid, VIEW_X0, BACK_WALL_H - 3, HALL_W - VIEW_X0, 1);
   // ceiling beam
-  rect(ctx, WD.dark, 0, 0, HALL_W, 3);
-  rect(ctx, WD.mid, 0, 3, HALL_W, 1);
-  for (let x = 20; x < HALL_W; x += 40) {
+  rect(ctx, WD.dark, VIEW_X0, 0, HALL_W - VIEW_X0, 3);
+  rect(ctx, WD.mid, VIEW_X0, 3, HALL_W - VIEW_X0, 1);
+  for (let x = VIEW_X0 + 4; x < HALL_W; x += 40) {
     rect(ctx, WD.mid, x, 0, 5, 8);
     rect(ctx, WD.dark, x + 4, 0, 1, 8);
   }
 
   // side walls
-  bricks(ctx, 0, BACK_WALL_H, 9, WORLD_H - BACK_WALL_H, 12, true);
-  rect(ctx, ST.hi, 8, BACK_WALL_H, 1, WORLD_H - BACK_WALL_H);
+  bricks(ctx, VIEW_X0, BACK_WALL_H, 9, WORLD_H - BACK_WALL_H, 12, true);
+  rect(ctx, ST.hi, VIEW_X0 + 8, BACK_WALL_H, 1, WORLD_H - BACK_WALL_H);
   ctx.globalAlpha = 0.3;
-  rect(ctx, "#000", 9, BACK_WALL_H, 2, WORLD_H - BACK_WALL_H);
+  rect(ctx, "#000", VIEW_X0 + 9, BACK_WALL_H, 2, WORLD_H - BACK_WALL_H);
   ctx.globalAlpha = 1;
   // right wall with the gate opening
   const gy0 = GATE_OPEN.y0,
@@ -460,7 +473,7 @@ const drawHallDecor = (ctx: Ctx) => {
     rect(ctx, "#fff", x + 4, y + 4, width - 8, height - 8);
     ctx.globalAlpha = 1;
   };
-  rug(8, 166, 32, 22, "#8a2f3a", GOLD);
+  rug(VIEW_X0 + 12, 166, 32, 22, "#8a2f3a", GOLD);
   rug(22, 54, 16, 114, "#8a2f3a", GOLD);
   for (let y = 62; y < 160; y += 14) {
     rect(ctx, GOLD, 28, y, 4, 1);
@@ -592,31 +605,6 @@ const drawHallDecor = (ctx: Ctx) => {
   rect(ctx, "#000", 11, 116, 18, 2);
   ctx.globalAlpha = 1;
 
-  // tables with stools
-  for (const [tx, ty] of [
-    [58, 138],
-    [58, 186],
-  ] as const) {
-    ctx.globalAlpha = 0.22;
-    rect(ctx, "#000", tx - 11, ty + 5, 24, 3);
-    ctx.globalAlpha = 1;
-    rect(ctx, WD.dark, tx - 3, ty + 2, 6, 6);
-    rect(ctx, WD.mid, tx - 11, ty - 4, 22, 9);
-    rect(ctx, WD.mid, tx - 9, ty - 6, 18, 13);
-    rect(ctx, WD.light, tx - 10, ty - 4, 20, 8);
-    rect(ctx, WD.light, tx - 8, ty - 5, 16, 10);
-    rect(ctx, WD.top, tx - 8, ty - 5, 16, 1);
-    for (const sx of [-16, 14]) {
-      rect(ctx, WD.dark, tx + sx, ty - 1, 5, 6);
-      rect(ctx, "#8a3f3a", tx + sx, ty - 2, 5, 3);
-      rect(ctx, "#a5504a", tx + sx, ty - 2, 5, 1);
-    }
-    rect(ctx, "#f5efe0", tx - 5, ty - 3, 3, 3);
-    rect(ctx, "#d9a441", tx - 2, ty - 2, 1, 1);
-    rect(ctx, "#e8c9a0", tx + 3, ty - 3, 3, 3);
-    rect(ctx, "#f6ecd2", tx + 3, ty - 3, 3, 1);
-    rect(ctx, "#f5efe0", tx + 1, ty - 6, 1, 3);
-  }
   blitB(ctx, "barrel", 14, 138);
   blitB(ctx, "barrel", 14, 150);
   blitB(ctx, "barrel", 21, 144);
@@ -653,23 +641,24 @@ const drawHallDecor = (ctx: Ctx) => {
   rect(ctx, GOLD, 113, 14, 3, 1);
   rect(ctx, "#f5efe0", 117, 15, 1, 2);
 
-  // door (left wall)
-  rect(ctx, ST.dark, 0, 152, 10, 4);
-  rect(ctx, "#2a1810", 0, 156, 9, 40);
-  rect(ctx, WD.mid, 0, 157, 8, 38);
+  // door (west wall of the wing)
+  const dx = VIEW_X0;
+  rect(ctx, ST.dark, dx, 152, 10, 4);
+  rect(ctx, "#2a1810", dx, 156, 9, 40);
+  rect(ctx, WD.mid, dx, 157, 8, 38);
   for (let y = 158; y < 194; y += 6) {
-    rect(ctx, WD.light, 0, y, 8, 5);
-    rect(ctx, WD.top, 0, y, 8, 1);
+    rect(ctx, WD.light, dx, y, 8, 5);
+    rect(ctx, WD.top, dx, y, 8, 1);
   }
-  rect(ctx, "#2a2d3a", 0, 163, 8, 2);
-  rect(ctx, "#2a2d3a", 0, 183, 8, 2);
-  rect(ctx, GOLD, 6, 176, 2, 2);
+  rect(ctx, "#2a2d3a", dx, 163, 8, 2);
+  rect(ctx, "#2a2d3a", dx, 183, 8, 2);
+  rect(ctx, GOLD, dx + 6, 176, 2, 2);
   ctx.globalAlpha = 0.3;
-  rect(ctx, "#000", 8, 156, 2, 40);
+  rect(ctx, "#000", dx + 8, 156, 2, 40);
   ctx.globalAlpha = 1;
   // welcome light on floor by the door
   ctx.globalAlpha = 0.12;
-  rect(ctx, "#ffe6b4", 9, 160, 7, 32);
+  rect(ctx, "#ffe6b4", dx + 9, 160, 7, 32);
   ctx.globalAlpha = 1;
 };
 
@@ -739,6 +728,130 @@ const drawWildDecor = (ctx: Ctx) => {
   }
 };
 
+// ---------- the west wing: kitchen, feast table, bard corner ----------
+const KH = KITCHEN_HEARTH;
+const SC = SERVING_COUNTER;
+const rugAt = (ctx: Ctx, x: number, y: number, width: number, height: number, base: string, trim: string) => {
+  ctx.globalAlpha = 0.2;
+  rect(ctx, "#000", x + 2, y + 2, width, height);
+  ctx.globalAlpha = 1;
+  rect(ctx, base, x, y, width, height);
+  rect(ctx, trim, x + 1, y + 1, width - 2, 1);
+  rect(ctx, trim, x + 1, y + height - 2, width - 2, 1);
+  rect(ctx, trim, x + 1, y + 1, 1, height - 2);
+  rect(ctx, trim, x + width - 2, y + 1, 1, height - 2);
+  ctx.globalAlpha = 0.15;
+  rect(ctx, "#fff", x + 4, y + 4, width - 8, height - 8);
+  ctx.globalAlpha = 1;
+};
+const drawWingDecor = (ctx: Ctx) => {
+  // rugs: a long one under the feast table, a small one in the bard's corner
+  rugAt(ctx, FEAST_TABLE.x - 8, FEAST_TABLE.y - 6, FEAST_TABLE.w + 16, 42, "#3f5a3a", "#d9c27a");
+  rugAt(ctx, BARD_POS.x - 16, BARD_POS.y - 6, 34, 14, "#7a2f3a", GOLD);
+
+  // kitchen hearth: stone block, mantle, dark opening, iron spit posts
+  bricks(ctx, KH.x - 2, KH.y, KH.w + 4, KH.h, 21);
+  rect(ctx, WD.dark, KH.x - 4, KH.y - 3, KH.w + 8, 4);
+  rect(ctx, WD.top, KH.x - 4, KH.y - 3, KH.w + 8, 1);
+  rect(ctx, "#14100c", KH.x + 3, KH.y + 10, KH.w - 6, KH.h - 10);
+  rect(ctx, "#2a1810", KH.x + 3, KH.y + 10, KH.w - 6, 2);
+  rect(ctx, "#4a2f20", KH.x + 6, KH.y + 34, KH.w - 12, 3);
+  rect(ctx, "#8a8f9c", KH.x - 4, KH.y + KH.h - 2, KH.w + 8, 3);
+  rect(ctx, "#b0b6c4", KH.x - 4, KH.y + KH.h - 2, KH.w + 8, 1);
+  for (const px of [KH.x + 4, KH.x + KH.w - 6]) {
+    rect(ctx, "#3b3f4f", px, KH.y + 16, 2, 20);
+    rect(ctx, "#6e7585", px - 1, KH.y + 16, 4, 2);
+  }
+  // pots and jars on the mantle
+  rect(ctx, "#3b3f4f", KH.x + 2, KH.y - 8, 7, 5);
+  rect(ctx, "#6e7585", KH.x + 2, KH.y - 8, 7, 1);
+  rect(ctx, "#d95763", KH.x + 12, KH.y - 7, 4, 4);
+  rect(ctx, "#e9f3f7", KH.x + 13, KH.y - 9, 2, 2);
+  rect(ctx, "#f2c14e", KH.x + 19, KH.y - 6, 5, 3);
+
+  // hanging herbs, chilies, garlic and onions from the beam
+  const hangers: [number, string, number][] = [
+    [-50, "#5fa55a", 10],
+    [-45, "#d95763", 8],
+    [-40, "#e8e0c8", 9],
+    [-35, "#5fa55a", 11],
+    [-30, "#c98a3a", 8],
+    [-25, "#d95763", 10],
+    [-20, "#5fa55a", 9],
+  ];
+  for (const [hx, color, len] of hangers) {
+    rect(ctx, "#6b4a30", hx, 4, 1, len - 4);
+    rect(ctx, color, hx - 2, 4 + len - 4, 5, 4);
+    rect(ctx, "#fff", hx - 1, 4 + len - 4, 1, 1);
+    ctx.globalAlpha = 0.25;
+    rect(ctx, "#000", hx - 2, 4 + len, 5, 1);
+    ctx.globalAlpha = 1;
+  }
+  // shelves with pots, pans and jars
+  const jarColors = ["#d95763", "#f2c14e", "#4a6fa5", "#5fa55a", "#e8c9a0"];
+  [28, 38].forEach((sy, row) => {
+    for (let jx = -52; jx < -22; jx += 7) {
+      const item = (jx + row * 3) % 3;
+      if (item === 0) {
+        rect(ctx, "#3b3f4f", jx, sy - 5, 6, 5);
+        rect(ctx, "#6e7585", jx, sy - 5, 6, 1);
+        rect(ctx, "#3b3f4f", jx + 6, sy - 4, 2, 1);
+      } else if (item === 1) {
+        rect(ctx, jarColors[(jx + 60 + row) % jarColors.length], jx + 1, sy - 5, 4, 5);
+        rect(ctx, "#e9f3f7", jx + 2, sy - 6, 2, 1);
+        rect(ctx, "#fff", jx + 1, sy - 5, 1, 1);
+      } else {
+        rect(ctx, "#a8764a", jx, sy - 3, 6, 3);
+        rect(ctx, "#e3bd86", jx, sy - 3, 6, 1);
+      }
+    }
+    rect(ctx, WD.mid, -53, sy, 32, 2);
+    rect(ctx, WD.top, -53, sy, 32, 1);
+  });
+  // serving counter with bread, cheese and a stack of plates
+  ctx.globalAlpha = 0.22;
+  rect(ctx, "#000", SC.x + 2, SC.y + SC.h, SC.w, 3);
+  ctx.globalAlpha = 1;
+  rect(ctx, WD.dark, SC.x, SC.y, SC.w, SC.h);
+  rect(ctx, "#c89a62", SC.x, SC.y, SC.w, 5);
+  rect(ctx, "#e3bd86", SC.x, SC.y, SC.w, 1);
+  rect(ctx, WD.mid, SC.x + 1, SC.y + 6, SC.w - 2, SC.h - 6);
+  rect(ctx, GOLD, SC.x, SC.y + 5, SC.w, 1);
+  rect(ctx, "#d9a35a", SC.x + 3, SC.y - 3, 7, 4);
+  rect(ctx, "#a8763a", SC.x + 5, SC.y - 3, 1, 2);
+  rect(ctx, "#d9a35a", SC.x + 11, SC.y - 2, 6, 3);
+  rect(ctx, "#f2c14e", SC.x + 19, SC.y - 3, 6, 4);
+  rect(ctx, "#fff0a0", SC.x + 19, SC.y - 3, 6, 1);
+  for (let k = 0; k < 3; k++) {
+    rect(ctx, "#f5efe0", SC.x + 26, SC.y - 1 - k, 5, 1);
+    rect(ctx, "#c9c2ae", SC.x + 26, SC.y - k, 5, 1);
+  }
+  // kegs of ale against the east end of the back wall
+  blitB(ctx, "barrel", -9, 52);
+  blitB(ctx, "barrel", -3, 51);
+  // wall torch brackets
+  for (const torch of WING_TORCHES) {
+    rect(ctx, "#2a2d3a", torch.x - 2, torch.y - 1, 5, 3);
+    rect(ctx, "#6e7585", torch.x - 1, torch.y - 1, 3, 1);
+  }
+
+  // benches either side of the table
+  for (const by of [FEAST_TABLE.y - 5, FEAST_TABLE.y + 22]) {
+    ctx.globalAlpha = 0.22;
+    rect(ctx, "#000", FEAST_TABLE.x + 1, by + 6, FEAST_TABLE.w, 2);
+    ctx.globalAlpha = 1;
+    rect(ctx, WD.dark, FEAST_TABLE.x + 1, by, FEAST_TABLE.w - 2, 6);
+    rect(ctx, WD.light, FEAST_TABLE.x + 2, by + 1, FEAST_TABLE.w - 4, 3);
+    rect(ctx, WD.top, FEAST_TABLE.x + 2, by + 1, FEAST_TABLE.w - 4, 1);
+  }
+  // bard's stool and music stand
+  rect(ctx, WD.dark, BARD_POS.x + 11, BARD_POS.y - 5, 6, 5);
+  rect(ctx, WD.light, BARD_POS.x + 10, BARD_POS.y - 6, 8, 2);
+  rect(ctx, WD.top, BARD_POS.x + 10, BARD_POS.y - 6, 8, 1);
+  blitB(ctx, "barrel", FEAST_TABLE.x - 4, 134);
+  blitB(ctx, "barrel", FEAST_TABLE.x + 3, 130);
+};
+
 const buildBg = (): HTMLCanvasElement => {
   const { cv: canvas, c: ctx } = mk();
   drawBackdrop(ctx);
@@ -747,6 +860,7 @@ const buildBg = (): HTMLCanvasElement => {
   drawRoad(ctx);
   drawHall(ctx);
   drawHallDecor(ctx);
+  drawWingDecor(ctx);
   drawWildDecor(ctx);
   return canvas;
 };
@@ -768,12 +882,12 @@ const buildLighting = (hour: number) => {
   const night = nightness(hour);
   if (hour >= 16 && hour < 19.5) {
     ctx.globalAlpha = Math.min(0.12, Math.max(0, 1 - Math.abs(hour - 17.8) / 1.7) * 0.12);
-    rect(ctx, "#ff9a4a", 0, 0, WORLD_W, WORLD_H);
+    rect(ctx, "#ff9a4a", VIEW_X0, 0, VIEW_W, WORLD_H);
     ctx.globalAlpha = 1;
   }
   if (night > 0) {
     ctx.fillStyle = `rgba(18,22,66,${0.2 * night})`;
-    ctx.fillRect(0, 0, HALL_W, WORLD_H);
+    ctx.fillRect(VIEW_X0, 0, HALL_W - VIEW_X0, WORLD_H);
     ctx.fillStyle = `rgba(10,16,58,${0.5 * night})`;
     ctx.fillRect(HALL_W, 0, WORLD_W - HALL_W, WORLD_H);
     const pools: [number, number, number][] = [
@@ -782,8 +896,11 @@ const buildLighting = (hour: number) => {
       [58, 44, 66],
       [98, 40, 44],
       [105, 170, 64],
-      [58, 138, 34],
-      [58, 186, 34],
+      [-78, 40, 44],
+      [-34, 44, 40],
+      [-50, 100, 62],
+      [-66, 156, 38],
+      [-84, 176, 26],
       [30, 60, 34],
       [122, 94, 46],
       [122, 152, 46],
@@ -807,18 +924,12 @@ const buildLighting = (hour: number) => {
       ctx.fillRect(lx - radius, ly - radius, radius * 2, radius * 2);
     }
   }
-  const vignetteGradient = ctx.createRadialGradient(
-    WORLD_W / 2,
-    WORLD_H / 2 + 10,
-    100,
-    WORLD_W / 2,
-    WORLD_H / 2 + 10,
-    250,
-  );
+  const centerX = VIEW_X0 + VIEW_W / 2;
+  const vignetteGradient = ctx.createRadialGradient(centerX, WORLD_H / 2 + 10, 120, centerX, WORLD_H / 2 + 10, 290);
   vignetteGradient.addColorStop(0, "rgba(30,20,10,0)");
   vignetteGradient.addColorStop(1, "rgba(30,20,10,0.25)");
   ctx.fillStyle = vignetteGradient;
-  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+  ctx.fillRect(VIEW_X0, 0, VIEW_W, WORLD_H);
   overlay = layer.cv;
 };
 
@@ -925,6 +1036,262 @@ const drawEnvAnim = (ctx: Ctx, time: number) => {
   ctx.globalAlpha = 1;
 };
 
+// ---------- the west wing, animated: hearth + pig on the spit, bunting, chef, bard, feast table, cheers ----------
+const FLAME_BASE_Y = KH.y + 34;
+/** fire under the spit, the roasting pig turning above it, the crank outside the hearth */
+const drawKitchenFire = (ctx: Ctx, time: number, still: boolean) => {
+  const fx = KH.x + 6;
+  const flames = 8;
+  for (let i = 0; i < flames; i++) {
+    const height = still
+      ? 7
+      : 5 + Math.round(3 * Math.abs(Math.sin(time * 7 + i * 1.7)) + (i === 3 || i === 4 ? 4 : 0));
+    rect(ctx, "#e8742a", fx + i * 2 + 1, FLAME_BASE_Y - height, 3, height);
+    rect(ctx, GOLD, fx + 2 + i * 2, FLAME_BASE_Y - height + 3, 1, Math.max(1, height - 3));
+  }
+  rect(ctx, "#d95763", fx, FLAME_BASE_Y - 2, 18, 2);
+  if (!still && Math.floor(time * 5) % 3 === 0)
+    rect(ctx, GOLD, fx + 2 + ((Math.floor(time * 9) * 5) % 13), FLAME_BASE_Y - 14 - (Math.floor(time * 9) % 4), 1, 1);
+  // spit rod and the pig
+  const spitY = KH.y + 22;
+  rect(ctx, "#8d93a0", KH.x + 4, spitY, KH.w - 8, 1);
+  const px = KH.x + 8,
+    py = spitY - 4;
+  rect(ctx, "#8a4a22", px + 2, py, 14, 9);
+  rect(ctx, "#8a4a22", px, py + 2, 18, 5);
+  rect(ctx, "#c8793a", px + 2, py + 1, 14, 7);
+  rect(ctx, "#c8793a", px + 1, py + 2, 16, 5);
+  // the turning: highlight bands slide round the body
+  const phase = still ? 0 : (time * 3) % 6;
+  for (let band = 0; band < 2; band++) {
+    const by = py + 1 + ((phase + band * 3) % 7);
+    rect(ctx, "#f0b46a", px + 3, by, 12, 1);
+    rect(ctx, "#fff0b0", px + 5 + band * 2, by, 3, 1);
+  }
+  // head (snout, ear, eye) and curly tail
+  rect(ctx, "#a85a2a", px - 4, py + 2, 5, 6);
+  rect(ctx, "#c8793a", px - 4, py + 3, 4, 3);
+  rect(ctx, "#e8a05a", px - 6, py + 4, 2, 3);
+  rect(ctx, INK, px - 6, py + 4, 1, 1);
+  rect(ctx, INK, px - 3, py + 3, 1, 1);
+  rect(ctx, "#8a4a22", px - 2, py + 1, 2, 2);
+  rect(ctx, "#8a4a22", px + 18, py + 3, 2, 1);
+  rect(ctx, "#8a4a22", px + 19, py + 4, 1, 2);
+  // drips sizzle in the fire
+  if (!still && Math.floor(time * 6) % 2 === 0) rect(ctx, GOLD, px + 6, py + 10 + (Math.floor(time * 12) % 3), 1, 2);
+  // crank outside the hearth turns with the pig
+  const turn = still ? 0 : Math.floor(time * 3) % 4;
+  const cx = KH.x + KH.w + 1,
+    cy = spitY;
+  rect(ctx, "#6e7585", cx - 2, cy, 3, 1);
+  const crankOffsets: [number, number][] = [
+    [1, -3],
+    [3, 0],
+    [1, 3],
+    [-1, 0],
+  ];
+  rect(ctx, "#8d93a0", cx + crankOffsets[turn][0], cy + crankOffsets[turn][1], 2, 2);
+};
+
+/** festive pennants strung across the hall while a feast is on (before the entity pass: fully opaque) */
+const BUNTING_COLS = ["#d95763", "#f2c14e", "#4a6fa5", "#5fa55a", "#7b5ea7"];
+const BUNTING_Y = 56;
+const drawBunting = (ctx: Ctx, time: number, still: boolean) => {
+  const x0 = VIEW_X0 + 8,
+    x1 = -6;
+  for (let x = x0; x <= x1; x++)
+    rect(ctx, "#6b4a30", x, BUNTING_Y + Math.round(2 * Math.sin(((x - x0) / (x1 - x0)) * Math.PI)), 1, 1);
+  for (let x = x0 + 3, flag = 0; x <= x1 - 4; x += 8, flag++) {
+    const sag = Math.round(2 * Math.sin(((x - x0) / (x1 - x0)) * Math.PI));
+    const flutter = still ? 0 : Math.round(Math.sin(time * 5 + flag * 1.3));
+    const color = BUNTING_COLS[flag % BUNTING_COLS.length];
+    rect(ctx, color, x, BUNTING_Y + sag + 1, 5, 2);
+    rect(ctx, color, x + 1, BUNTING_Y + sag + 3, 3, 2 + flutter);
+    rect(ctx, color, x + 2, BUNTING_Y + sag + 5, 1, 1);
+  }
+};
+
+/** a plate of food on the table: roast leg, bread, fruit or pie */
+const drawDish = (ctx: Ctx, kind: number, x: number, y: number) => {
+  rect(ctx, "#c9c2ae", x - 4, y, 9, 1);
+  rect(ctx, "#f5efe0", x - 4, y - 1, 9, 1);
+  rect(ctx, "#f5efe0", x - 3, y - 2, 7, 1);
+  switch (kind % 4) {
+    case 0: // roast leg
+      rect(ctx, "#8a4a22", x - 2, y - 5, 6, 4);
+      rect(ctx, "#c8793a", x - 2, y - 5, 5, 3);
+      rect(ctx, "#e0954a", x - 1, y - 5, 3, 1);
+      rect(ctx, "#f2ecd8", x - 4, y - 4, 2, 2);
+      break;
+    case 1: // bread
+      rect(ctx, "#a8763a", x - 3, y - 5, 7, 3);
+      rect(ctx, "#d9a35a", x - 3, y - 5, 7, 2);
+      rect(ctx, "#a8763a", x - 1, y - 5, 1, 2);
+      rect(ctx, "#a8763a", x + 1, y - 5, 1, 2);
+      break;
+    case 2: // fruit
+      rect(ctx, "#d95763", x - 3, y - 4, 3, 3);
+      rect(ctx, "#f2c14e", x, y - 4, 3, 3);
+      rect(ctx, "#6fb04a", x - 1, y - 6, 3, 3);
+      rect(ctx, "#fff", x - 3, y - 4, 1, 1);
+      break;
+    default: // pie
+      rect(ctx, "#a8763a", x - 3, y - 4, 7, 3);
+      rect(ctx, "#d9a35a", x - 3, y - 4, 7, 1);
+      rect(ctx, "#f2ecd8", x, y - 6, 1, 1);
+      rect(ctx, "#f2ecd8", x + 2, y - 7, 1, 1);
+  }
+};
+
+const POP_IN_S = 0.3;
+/** a near-side diner hides the table top, so their mug and plate are drawn in front of them, at the table's lip */
+const NEAR_SETTING_DY = 12;
+/** sorts just after the near-side diners' feet */
+const NEAR_SETTINGS_Y = Math.max(...FEAST_SEATS.map((seat) => seat.y)) + 1;
+/** a mug and the chef's plate in front of every seated diner: far side on the table, near side after the diners (opaque) */
+const drawSettings = (ctx: Ctx, office: Office, time: number, far: boolean) => {
+  office.feastDiners(); // refreshes office.dinerSlots in place (no allocation)
+  FEAST_SEATS.forEach((seat, idx) => {
+    if (seat.far !== far || !office.dinerSlots[idx]) return;
+    const spot = platePoint(idx);
+    const sy = far ? spot.y : spot.y + NEAR_SETTING_DY;
+    // a mug beside the plate
+    blitB(ctx, "mug", spot.x + seat.face * 6, sy);
+    const dish = office.dishes[idx];
+    if (!dish) return;
+    const age = time - dish.at;
+    drawDish(ctx, dish.kind, spot.x, sy - (age < POP_IN_S ? Math.round(4 * (1 - age / POP_IN_S)) : 0));
+  });
+};
+/** the long feast table: top, cloth runner, candles, and the far-side settings (an entity, sorted by its front edge) */
+const drawFeastTable = (ctx: Ctx, office: Office, time: number) => {
+  const tbl = FEAST_TABLE;
+  ctx.globalAlpha = 0.22;
+  rect(ctx, "#000", tbl.x + 2, tbl.y + tbl.h + 3, tbl.w, 3);
+  ctx.globalAlpha = 1;
+  rect(ctx, WD.dark, tbl.x + 3, tbl.y + 12, 4, 9);
+  rect(ctx, WD.dark, tbl.x + tbl.w - 7, tbl.y + 12, 4, 9);
+  rect(ctx, WD.dark, tbl.x - 1, tbl.y - 1, tbl.w + 2, 14);
+  rect(ctx, WD.light, tbl.x, tbl.y, tbl.w, 12);
+  rect(ctx, WD.top, tbl.x, tbl.y, tbl.w, 1);
+  rect(ctx, WD.mid, tbl.x, tbl.y + 12, tbl.w, 4);
+  rect(ctx, WD.dark, tbl.x, tbl.y + 15, tbl.w, 1);
+  ctx.globalAlpha = 0.16;
+  for (let x = tbl.x + 14; x < tbl.x + tbl.w - 4; x += 14) rect(ctx, "#5a3a26", x, tbl.y + 1, 1, 11);
+  ctx.globalAlpha = 1;
+  // cloth runner with gold trim
+  rect(ctx, "#8a2f3a", tbl.x + 2, tbl.y + 4, tbl.w - 4, 4);
+  rect(ctx, GOLD, tbl.x + 2, tbl.y + 4, tbl.w - 4, 1);
+  rect(ctx, GOLD, tbl.x + 2, tbl.y + 7, tbl.w - 4, 1);
+  // candles
+  for (const cx of [tbl.x + 18, tbl.x + tbl.w - 18]) {
+    rect(ctx, "#f5efe0", cx, tbl.y + 1, 2, 4);
+    rect(ctx, "#c9c2ae", cx, tbl.y + 4, 2, 1);
+    rect(ctx, GOLD, cx, tbl.y - 1 + (Math.floor(time * 8 + cx) % 2), 2, 2);
+  }
+  drawSettings(ctx, office, time, true);
+  // the feast: a whole roast and a fruit pile in the middle
+  if (office.feasting()) {
+    const mx = tbl.x + tbl.w / 2;
+    rect(ctx, "#c9c2ae", mx - 9, tbl.y + 9, 19, 1);
+    rect(ctx, "#f5efe0", mx - 9, tbl.y + 8, 19, 1);
+    rect(ctx, "#8a4a22", mx - 7, tbl.y + 3, 15, 6);
+    rect(ctx, "#c8793a", mx - 7, tbl.y + 3, 14, 5);
+    rect(ctx, "#e0954a", mx - 5, tbl.y + 3, 8, 1);
+    rect(ctx, "#6fb04a", mx - 9, tbl.y + 6, 3, 2);
+    rect(ctx, "#d95763", mx + 8, tbl.y + 6, 3, 3);
+    rect(ctx, "#f2c14e", mx + 10, tbl.y + 5, 3, 3);
+  }
+};
+
+const CHEF_LOOK = lookFor("guild-chef-npc");
+const BARD_LOOK = lookFor("guild-bard-npc");
+const drawChef = (ctx: Ctx, office: Office, time: number) => {
+  const chef = office.chef;
+  const moving = chef.path.length > 0;
+  const waiting = moving && chef.holdUntil > office.clock;
+  const pose: Pose = !moving ? "write" : waiting ? "idle" : "walk";
+  const frame = !moving ? Math.floor(time * 4) % 2 : waiting ? 0 : Math.floor(time * 8) % 4;
+  const sprite = charSprite(CHEF_LOOK, pose, frame);
+  shadow(ctx, chef.x, chef.y, 11);
+  const px = Math.round(chef.x - CH_W / 2),
+    py = Math.round(chef.y - CH_H + (moving && !waiting && frame % 2 === 1 ? -1 : 0));
+  if (chef.face < 0) {
+    ctx.save();
+    ctx.translate(px + CH_W, py);
+    ctx.scale(-1, 1);
+    ctx.drawImage(sprite, 0, 0);
+    ctx.restore();
+  } else ctx.drawImage(sprite, px, py);
+  // apron and the tall white hat (opaque pixels over the sprite)
+  rect(ctx, "#f5efe0", px + 5, py + 12, 6, 8);
+  rect(ctx, "#c9c2ae", px + 5, py + 19, 6, 1);
+  rect(ctx, "#c9c2ae", px + 7, py + 14, 2, 1);
+  rect(ctx, INK, px + 3, py - 4, 10, 1);
+  rect(ctx, INK, px + 2, py - 3, 1, 7);
+  rect(ctx, INK, px + 13, py - 3, 1, 7);
+  rect(ctx, "#ffffff", px + 3, py - 3, 10, 7);
+  rect(ctx, "#e6e1d2", px + 3, py + 2, 10, 2);
+  rect(ctx, "#ffffff", px + 4, py - 5, 8, 1);
+  rect(ctx, INK, px + 4, py - 6, 8, 1);
+  if (chef.plate >= 0) {
+    const hx = Math.round(chef.x + chef.face * 8);
+    drawDish(ctx, chef.plate, hx, Math.round(chef.y - 10));
+  }
+};
+
+const drawBard = (ctx: Ctx, office: Office, time: number) => {
+  const playing = office.bardOn;
+  const pose: Pose = playing ? "write" : "idle";
+  const frame = playing ? Math.floor(time * 6) % 2 : Math.floor(time * 1.2) % 2;
+  const sprite = charSprite(BARD_LOOK, pose, frame);
+  shadow(ctx, BARD_POS.x, BARD_POS.y, 11);
+  const px = Math.round(BARD_POS.x - CH_W / 2),
+    py = Math.round(BARD_POS.y - CH_H);
+  ctx.drawImage(sprite, px, py);
+  // feathered cap
+  rect(ctx, "#2f6a3f", px + 3, py - 1, 10, 3);
+  rect(ctx, "#4f9a52", px + 3, py - 1, 10, 1);
+  rect(ctx, "#d95763", px + 12, py - 4, 1, 4);
+  rect(ctx, "#d95763", px + 13, py - 5, 1, 2);
+  // the lute: round body, neck with a headstock, strings
+  const strum = playing ? Math.floor(time * 6) % 2 : 0;
+  const lx = px + 8,
+    ly = py + 14 + strum;
+  rect(ctx, INK, lx - 1, ly - 1, 8, 7);
+  rect(ctx, "#a8764a", lx, ly, 6, 5);
+  rect(ctx, "#6e4a36", lx + 4, ly + 2, 2, 3);
+  rect(ctx, INK, lx + 2, ly + 2, 2, 2);
+  rect(ctx, "#6e4a36", lx + 6, ly - 4, 1, 4);
+  rect(ctx, "#6e4a36", lx + 7, ly - 8, 2, 4);
+  rect(ctx, "#e3bd86", lx, ly, 6, 1);
+};
+
+/** opaque "Cheers!" pill above the table (never translucent, drawn after the characters) */
+const drawCheers = (ctx: Ctx, office: Office, time: number) => {
+  const since = office.realTime - office.cheersReal;
+  if (since < 0 || since > CHEERS_S) return;
+  ctx.font = WORLD_FONT;
+  const width = Math.ceil(ctx.measureText(office.cheersText).width) + 10,
+    height = 12;
+  const cx = FEAST_TABLE.x + FEAST_TABLE.w / 2;
+  const bx = Math.round(cx - width / 2),
+    by = FEAST_TABLE.y - 40 - (office.reducedMotion ? 0 : Math.round(Math.abs(Math.sin(time * 6)) * 2));
+  rect(ctx, INK, bx + 1, by, width - 2, height);
+  rect(ctx, INK, bx, by + 1, width, height - 2);
+  rect(ctx, "#fff6d0", bx + 1, by + 1, width - 2, height - 2);
+  rect(ctx, "#f2c14e", bx + 1, by + 1, width - 2, 2);
+  rect(ctx, INK, Math.round(cx) - 1, by + height, 3, 1);
+  rect(ctx, INK, Math.round(cx), by + height + 1, 1, 1);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#3b2418";
+  ctx.fillText(office.cheersText, cx, by + height / 2 + 1);
+};
+
+const FEAST_BUBBLES = ["🍖", "🍺", "💬"];
+const FEAST_BUBBLE_S = 1.7;
+
 // emissive things drawn after the night overlay
 const drawLights = (ctx: Ctx, time: number, office: Office) => {
   // fireplace
@@ -939,6 +1306,10 @@ const drawLights = (ctx: Ctx, time: number, office: Office) => {
     rect(ctx, GOLD, hx + 2 + ((Math.floor(time * 9) * 5) % 9), 36 - (Math.floor(time * 9) % 4), 1, 1);
   // candle on the counter
   rect(ctx, GOLD, 113, 40 + (Math.floor(time * 8) % 2), 2, 2);
+  // the kitchen hearth in the west wing, and pennants while a feast is on
+  drawKitchenFire(ctx, time, office.reducedMotion);
+  if (office.feasting()) drawBunting(ctx, time, office.reducedMotion);
+  WING_TORCHES.forEach((point, i) => blitB(ctx, "torch" + ((Math.floor(time * 6) + i) % 2), point.x, point.y));
   // wall + gate torches
   const boss = office.bossAlive > 0;
   const { dx, dy } = gateShake(office, time);
@@ -1194,7 +1565,7 @@ const iconBlocked = (office: Office, cx: number, cy: number): boolean => {
   return false;
 };
 const placeLinkIcon = (office: Office, link: TLink, topFeetY: number) => {
-  const x = Math.max(ICON_R + 1, Math.min(WORLD_W - ICON_R - 1, Math.round((link.ax + link.bx) / 2)));
+  const x = Math.max(VIEW_X0 + ICON_R + 1, Math.min(WORLD_W - ICON_R - 1, Math.round((link.ax + link.bx) / 2)));
   let y = Math.round(topFeetY - ICON_UP);
   for (let k = 0; k < ICON_TRIES && y > ICON_R + 1 && iconBlocked(office, x, y); k++) y -= ICON_STEP;
   link.ix = x;
@@ -1214,7 +1585,7 @@ const territoryLinks = (office: Office): number => {
         !emp ||
         office.isHidden(emp) ||
         emp.state === "LEAVING" ||
-        emp.x < 0 ||
+        emp.x < VIEW_X0 ||
         emp.x > WORLD_W ||
         emp.y < 0 ||
         emp.y > WORLD_H
@@ -1785,7 +2156,7 @@ const drawBannerQ = (ctx: Ctx, office: Office) => {
   ctx.font = boss ? "800 8px ui-sans-serif, system-ui, sans-serif" : WORLD_FONT;
   const width = Math.ceil(ctx.measureText(banner.text).width) + 22,
     height = 15;
-  const x = Math.round((WORLD_W - width) / 2),
+  const x = Math.round((VIEW_W - width) / 2),
     y = Math.round(-height - 2 + (height + 8) * eob(Math.max(0, slide)));
   rect(ctx, "rgba(0,0,0,0.3)", x + 1, y + 2, width, height);
   rect(ctx, INK, x - 3, y - 1, width + 6, height + 2);
@@ -1796,7 +2167,7 @@ const drawBannerQ = (ctx: Ctx, office: Office) => {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = boss ? "#ffdede" : "#3b2418";
-  ctx.fillText(banner.text, WORLD_W / 2, y + height / 2 + 0.5);
+  ctx.fillText(banner.text, VIEW_W / 2, y + height / 2 + 0.5);
 };
 
 let vignette: HTMLCanvasElement | null = null;
@@ -1812,13 +2183,14 @@ const drawAlertVignette = (ctx: Ctx, office: Office) => {
   if (!vignette) {
     // edge-only ring (never reaches further than VIG_EDGE px in), so it can't tint characters
     const layer = mk();
+    layer.c.setTransform(1, 0, 0, 1, 0, 0); // screen space: no wing offset
     vignette = layer.cv;
     for (let i = 0; i < VIG_EDGE; i++) {
       layer.c.fillStyle = `rgba(255,30,30,${(0.85 * (1 - i / VIG_EDGE) ** 2).toFixed(3)})`;
-      layer.c.fillRect(i, i, WORLD_W - 2 * i, 1);
-      layer.c.fillRect(i, WORLD_H - 1 - i, WORLD_W - 2 * i, 1);
+      layer.c.fillRect(i, i, VIEW_W - 2 * i, 1);
+      layer.c.fillRect(i, WORLD_H - 1 - i, VIEW_W - 2 * i, 1);
       layer.c.fillRect(i, i + 1, 1, WORLD_H - 2 * i - 2);
-      layer.c.fillRect(WORLD_W - 1 - i, i + 1, 1, WORLD_H - 2 * i - 2);
+      layer.c.fillRect(VIEW_W - 1 - i, i + 1, 1, WORLD_H - 2 * i - 2);
     }
   }
   const calm = age > 60;
@@ -1854,7 +2226,10 @@ const drawRain = (ctx: Ctx, office: Office) => {
 const onTavernRest = (emp: Employee): boolean =>
   emp.state === "TO_TAVERN_REST" || emp.state === "AT_TAVERN_REST" || emp.state === "FROM_TAVERN_REST";
 /** a hand is up: seated, or on the way to / from the well (the ❗ must not wait for the walk to end) */
-const waitsOnYou = (emp: Employee): boolean => emp.act === "handup" && (emp.state === "SEATED" || onTavernRest(emp));
+const onCoffeeTrip = (emp: Employee): boolean =>
+  emp.state === "TO_COFFEE" || emp.state === "DRINK" || emp.state === "FROM_COFFEE";
+const waitsOnYou = (emp: Employee): boolean =>
+  emp.act === "handup" && (emp.state === "SEATED" || onTavernRest(emp) || onCoffeeTrip(emp));
 
 // ---------- squires ----------
 const drawBadge = (ctx: Ctx, txt: string, x: number, y: number) => {
@@ -1915,6 +2290,15 @@ const squireSpotOf = (emp: Employee, slot: number) =>
   emp.deskIdx >= 0 ? squirePoint(emp.deskIdx, slot) : campSquirePoint(emp.slot, slot);
 let duelDxNow = 0,
   duelDyNow = 0;
+/** a diner at the long table: mugs up on a cheers, otherwise eating and drinking with the odd pause to chat */
+const atTable = (emp: Employee, time: number): { pose: Pose; frame: number } => {
+  if (emp.restSpot < 0) return { pose: "drink", frame: Math.floor(time * 1.5) % 2 };
+  if (emp.cheerUntil > time) return { pose: "cheer", frame: Math.floor(time * 5) % 2 };
+  const chatting = Math.floor(time * 0.9 + emp.order) % 3 === 0;
+  return chatting
+    ? { pose: "idle", frame: Math.floor(time * 3) % 2 }
+    : { pose: "drink", frame: Math.floor(time * 2.4) % 2 };
+};
 const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => {
   duelDxNow = 0;
   duelDyNow = 0;
@@ -1941,11 +2325,11 @@ const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => 
     case "FROM_TAVERN_REST":
       return { pose: "walk", frame: Math.floor(time * 8) % 4 };
     case "AT_TAVERN_REST":
-      return { pose: "drink", frame: Math.floor(time * 1.5) % 2 };
+      return atTable(emp, time);
     case "STRETCH":
       return { pose: "cheer", frame: Math.floor(time * 3) % 2 };
     case "DRINK":
-      return { pose: "drink", frame: Math.floor(time * 1.5) % 2 };
+      return atTable(emp, time);
   }
   if (emp.resting) return { pose: "rest", frame: Math.floor(time * 1.2) % 2 };
   if (emp.hurtUntil > time) return { pose: "hurt", frame: Math.floor(time * 10) % 2 };
@@ -2241,7 +2625,13 @@ const drawBerserk = (ctx: Ctx, emp: Employee, time: number, still: boolean) => {
 };
 
 const bubbleOf = (emp: Employee, time: number): string | null => {
-  if (emp.state === "DRINK") return "🍺";
+  const feasting = (emp.state === "DRINK" || emp.state === "AT_TAVERN_REST") && emp.restSpot >= 0;
+  if (feasting && emp.act !== "handup") {
+    // at the long table: 🍖 / 🍺 / 💬 take turns (the Cheers! pill replaces them while mugs are up)
+    if (emp.cheerUntil > time) return null;
+    return FEAST_BUBBLES[Math.floor(time / FEAST_BUBBLE_S + emp.order) % FEAST_BUBBLES.length];
+  }
+  if (emp.state === "DRINK") return emp.act === "handup" ? "❗" : "🍺";
   if (onTavernRest(emp)) return emp.act === "handup" ? "❗" : "🍺";
   if (emp.state !== "SEATED") return null;
   if (emp.tempBubble) return emp.tempBubble.e;
@@ -2300,7 +2690,7 @@ const drawTag = (ctx: Ctx, emp: Employee, topY: number, dx = 0) => {
   ctx.font = TAG_FONT;
   const width = Math.ceil(ctx.measureText(text).width) + 7,
     height = 9;
-  const bx = Math.max(1, Math.min(WORLD_W - width - 1, emp.x + dx - width / 2));
+  const bx = Math.max(VIEW_X0 + 1, Math.min(WORLD_W - width - 1, emp.x + dx - width / 2));
   const by = Math.max(1, topY - height);
   ctx.fillStyle = "rgba(0,0,0,0.3)";
   roundRect(ctx, bx, by + 1, width, height, 2.5);
@@ -2320,7 +2710,7 @@ const drawTag = (ctx: Ctx, emp: Employee, topY: number, dx = 0) => {
   if (subLine) {
     const shortText = subLine.length > 44 ? subLine.slice(0, 43) + "…" : subLine;
     const w2 = Math.ceil(ctx.measureText(shortText).width) + 7;
-    const bx2 = Math.max(1, Math.min(WORLD_W - w2 - 1, emp.x + dx - w2 / 2)),
+    const bx2 = Math.max(VIEW_X0 + 1, Math.min(WORLD_W - w2 - 1, emp.x + dx - w2 / 2)),
       by2 = Math.max(1, by - height - 1);
     ctx.fillStyle = "#23253a";
     roundRect(ctx, bx2, by2, w2, height, 2.5);
@@ -2339,7 +2729,7 @@ const drawNpc = (ctx: Ctx, time: number, office: Office) => {
   const sprite = charSprite(lookFor("guild-receptionist-npc"), "idle", Math.floor(time * 1.2) % 2);
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, 0, WORLD_W, COUNTER_BOX.y + 1);
+  ctx.rect(VIEW_X0, 0, VIEW_W, COUNTER_BOX.y + 1);
   ctx.clip(); // counter hides the legs
   ctx.drawImage(sprite, Math.round(NPC_POS.x - CH_W / 2), Math.round(NPC_POS.y - CH_H));
   ctx.restore();
@@ -2413,6 +2803,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   const amp = 3 * office.trauma * office.trauma;
   if (amp > 0.35 && !office.paused && !office.reducedMotion)
     ctx.translate(Math.round((Math.random() * 2 - 1) * amp), Math.round((Math.random() * 2 - 1) * amp));
+  ctx.translate(WING_W, 0); // world coordinates from here on: the west wing is at negative x
   drawSky(ctx, time, hour);
   if (office.bird && night < 0.6 && office.rain < 0.5) {
     const bird = office.bird;
@@ -2433,18 +2824,18 @@ export const drawScene = (ctx: Ctx, office: Office) => {
     buildLighting(hour);
     lightKey = key;
   }
-  ctx.drawImage(bg, 0, 0);
+  ctx.drawImage(bg, VIEW_X0, 0);
   drawEnvAnim(ctx, time);
   drawGate(ctx, office, time);
   drawAllyGate(ctx, office.allyDoorsUntil > time, time, office.reducedMotion);
   // Lighting tints only the environment; characters, monsters and emissive things stay solid and full-colour.
-  ctx.drawImage(overlay!, 0, 0);
+  ctx.drawImage(overlay!, VIEW_X0, 0);
   if (office.rain > 0) {
     // rain darkens the world (before entities, so characters stay solid)
     ctx.fillStyle = `rgba(20,30,60,${0.2 * office.rain})`;
     ctx.fillRect(HALL_W, 0, WORLD_W - HALL_W, WORLD_H);
     ctx.fillStyle = `rgba(20,30,60,${0.07 * office.rain})`;
-    ctx.fillRect(0, 0, HALL_W, WORLD_H);
+    ctx.fillRect(VIEW_X0, 0, HALL_W - VIEW_X0, WORLD_H);
   }
   drawLights(ctx, time, office);
   drawAllyGlow(ctx, office, time);
@@ -2516,12 +2907,18 @@ export const drawScene = (ctx: Ctx, office: Office) => {
     const spot = standSlot(CAMP_MAX - 1);
     ents.push({ y: spot.y + 2, fn: () => drawBadge(ctx, `+${stacked}`, spot.x, spot.y + 9) });
   }
+  // the west wing: chef, bard and the long table take part in the depth sort (diners sit behind / in front of it)
+  ents.push({ y: office.chef.y, fn: () => drawChef(ctx, office, time) });
+  ents.push({ y: BARD_POS.y, fn: () => drawBard(ctx, office, time) });
+  ents.push({ y: FEAST_TABLE.y + FEAST_TABLE.h - 2, fn: () => drawFeastTable(ctx, office, time) });
+  ents.push({ y: NEAR_SETTINGS_Y, fn: () => drawSettings(ctx, office, time, false) });
   ents.sort((entA, entB) => entA.y - entB.y);
   for (const entity of ents) entity.fn();
   drawDuels(ctx, office, time);
   drawLinkIcons(ctx, nLinks, time, office); // after entities: the opaque badge is never hidden
   drawParticles(ctx, office, false);
   drawPopups(ctx, office);
+  drawCheers(ctx, office, time);
 
   // bubbles, highlights, tags
   for (const emp of office.employees.values()) {
@@ -2553,7 +2950,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
       outlined(
         ctx,
         `LEVEL UP! Lv.${emp.lvlTo}`,
-        Math.max(34, Math.min(WORLD_W - 34, Math.round(emp.x))),
+        Math.max(VIEW_X0 + 34, Math.min(WORLD_W - 34, Math.round(emp.x))),
         ly,
         "#ffe14a",
       );
@@ -2597,7 +2994,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   if (office.flash > 0) {
     if (!office.reducedMotion) {
       ctx.globalAlpha = office.flash;
-      rect(ctx, "#ffffff", 0, 0, WORLD_W, WORLD_H);
+      rect(ctx, "#ffffff", 0, 0, VIEW_W, WORLD_H);
       ctx.globalAlpha = 1;
     }
     office.flash = 0;

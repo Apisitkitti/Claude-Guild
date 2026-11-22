@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 import type { DungeonStats } from "@/lib/office/dungeon";
-import { DUNGEON_HIT, WORLD_H, WORLD_W } from "@/lib/office/layout";
+import { DUNGEON_HIT, VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
 import { m } from "@/paraglide/messages";
 
 import { DungeonCard } from "./DungeonCard";
@@ -33,7 +33,7 @@ export const Stage = ({
     const canvas = ev.currentTarget;
     const rect = canvas.getBoundingClientRect();
     return {
-      x: ((ev.clientX - rect.left - canvas.clientLeft) * WORLD_W) / canvas.clientWidth,
+      x: ((ev.clientX - rect.left - canvas.clientLeft) * VIEW_W) / canvas.clientWidth + VIEW_X0,
       y: ((ev.clientY - rect.top - canvas.clientTop) * WORLD_H) / canvas.clientHeight,
     };
   };
@@ -72,7 +72,7 @@ export const Stage = ({
             ref={canvasRef}
             role="img"
             aria-label={m.stage_label()}
-            style={{ width: WORLD_W * scale, height: WORLD_H * scale }}
+            style={{ width: VIEW_W * scale, height: WORLD_H * scale }}
             onMouseMove={(ev) => {
               const point = toLogical(ev);
               officeRef.current?.setHover(officeRef.current.hit(point.x, point.y));
@@ -87,7 +87,7 @@ export const Stage = ({
             title={m.dungeon_gate_label()}
             aria-expanded={open}
             style={{
-              left: DUNGEON_HIT.x * scale + CANVAS_BORDER,
+              left: (DUNGEON_HIT.x - VIEW_X0) * scale + CANVAS_BORDER,
               top: gateTop,
               width: DUNGEON_HIT.w * scale,
               height: DUNGEON_HIT.h * scale,

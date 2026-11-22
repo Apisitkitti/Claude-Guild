@@ -16,8 +16,10 @@ import {
   seatPoint,
   ALLY_GATE_MOUTH,
   GATE_OPEN,
+  FEAST_BLOCK,
+  FEAST_SEATS,
   TAVERN_OVERFLOW,
-  TAVERN_SPOTS,
+  VIEW_X0,
   WALL_X0,
   squirePoint,
   type Pt,
@@ -69,10 +71,17 @@ const expectDryAndInside = (points: Pt[], bridgeX = BRIDGE_X) => {
 /** inside the world, and through the hall wall only by its gate opening */
 const expectInsideWalls = (points: Pt[]) => {
   for (const point of points) {
-    expect(point.x).toBeGreaterThanOrEqual(0);
+    expect(point.x).toBeGreaterThanOrEqual(VIEW_X0);
     expect(point.x).toBeLessThanOrEqual(WORLD_W);
     expect(point.y).toBeGreaterThanOrEqual(0);
     expect(point.y).toBeLessThanOrEqual(WORLD_H);
+    // never through the long feast table
+    const inBlock =
+      point.x > FEAST_BLOCK.x &&
+      point.x < FEAST_BLOCK.x + FEAST_BLOCK.w &&
+      point.y > FEAST_BLOCK.y &&
+      point.y < FEAST_BLOCK.y + FEAST_BLOCK.h;
+    expect(inBlock).toBe(false);
     if (point.x > WALL_X0 && point.x < HALL_W) {
       expect(point.y).toBeGreaterThanOrEqual(GATE_OPEN.y0);
       expect(point.y).toBeLessThanOrEqual(GATE_OPEN.y1);
@@ -317,7 +326,7 @@ describe("ally gate: compact trip (PreCompact)", () => {
     office.event(ev(id, "PreCompact", { trigger: "auto" }));
     expect(employee.state).toBe("TO_TAVERN_REST");
     expect(office.statusOf(employee)).toContain("โรงเตี๊ยม");
-    expect(TAVERN_SPOTS).toContainEqual(employee.path[employee.path.length - 1]);
+    expect(FEAST_SEATS).toContainEqual(expect.objectContaining(employee.path[employee.path.length - 1]));
     expect(office.getView().roster[0].act).toBe("compact");
     const seen: Pt[] = [];
     for (let i = 0; i < 1200 && employee.state === "TO_TAVERN_REST"; i++) {
@@ -325,7 +334,7 @@ describe("ally gate: compact trip (PreCompact)", () => {
       seen.push({ x: employee.x, y: employee.y });
     }
     expect(employee.state).toBe("AT_TAVERN_REST");
-    expect(TAVERN_SPOTS).toContainEqual({ x: employee.x, y: employee.y });
+    expect(FEAST_SEATS).toContainEqual(expect.objectContaining({ x: employee.x, y: employee.y }));
     expectInsideWalls(seen);
     expect(office.allyDoorsUntil).toBe(0);
     const arrivedAt = office.clock;
@@ -337,20 +346,14 @@ describe("ally gate: compact trip (PreCompact)", () => {
     expect({ x: employee.x, y: employee.y }).toEqual(seatSpot);
   });
 
-  it("every desk's tavern trip stays inside the walls (through the hall gate only), and the 4th rester stands by the counter", () => {
+  it("every desk's break trip stays inside the walls and off the table; 8 resters take the 8 feast seats, the 9th stands by the counter", () => {
     const office = newOffice();
-    const ids = Array.from({ length: DESK_COUNT }, () => sid());
+    const ids = Array.from({ length: DESK_COUNT + 1 }, () => sid());
     const staff = ids.map((id) => seat(office, id));
-    for (const id of ids.slice(0, 4)) office.event(ev(id, "PreCompact"));
-    expect(staff.slice(0, 4).map((employee) => employee.restSpot)).toEqual([0, 1, 2, -1]);
-    expect(staff[3].path[staff[3].path.length - 1]).toEqual(TAVERN_OVERFLOW);
-    for (const employee of staff.slice(0, 4))
-      expectInsideWalls(sampleAlong({ x: employee.x, y: employee.y }, employee.path));
-    for (const id of ids.slice(4)) {
-      const employee = emp(office, id);
-      office.event(ev(id, "PreCompact"));
-      expectInsideWalls(sampleAlong({ x: employee.x, y: employee.y }, employee.path));
-    }
+    for (const id of ids) office.event(ev(id, "PreCompact"));
+    expect(staff.map((employee) => employee.restSpot)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, -1]);
+    expect(staff[DESK_COUNT].path[staff[DESK_COUNT].path.length - 1]).toEqual(TAVERN_OVERFLOW);
+    for (const employee of staff) expectInsideWalls(sampleAlong({ x: employee.x, y: employee.y }, employee.path));
   });
 
   it("the mana bar is never invented: the context stays as reported until a new reading lands, which flashes it", () => {
@@ -574,6 +577,20 @@ describe("review fixes", () => {
     for (let i = 0; i < 1200 && employee.state !== "SEATED"; i++) tick(office, 0.05);
     expect(employee.state).toBe("SEATED");
     expect(employee.act).toBe("handup");
+  });
+
+  it("a hand going up during the coffee walk lets the roster and status show it while walking back", () => {
+    const office = newOffice();
+    const id = sid();
+    const employee = seat(office, id);
+    office.event(ev(id, "Stop"));
+    for (let i = 0; i < 400 && employee.state !== "DRINK"; i++) tick(office, 0.1);
+    expect(employee.state).toBe("DRINK");
+    office.event(permission(id));
+    expect(employee.state).toBe("FROM_COFFEE");
+    expect(employee.act).toBe("handup");
+    expect(office.getView().roster[0].act).toBe("handup");
+    expect(office.statusOf(employee)).toBe(office.statusOf({ ...employee, state: "SEATED" } as Employee));
   });
 
   it("a permission Notification during the tavern walk also applies at once", () => {

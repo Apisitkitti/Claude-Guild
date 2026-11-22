@@ -10,9 +10,16 @@ import {
   WORLD_W,
   CH_H,
   CH_W,
+  BARD_POS,
+  CHEF_HOME,
+  FEAST_TABLE,
+  CHEF_PICKUP,
+  CHEF_SERVE,
   DOOR,
+  FEAST_SEATS,
   GATE_MOUTH,
   HEARTH,
+  VIEW_W,
   campSquirePoint,
   duelMidOfDesks,
   monsterSpot,
@@ -22,10 +29,8 @@ import {
   routeLeave,
   routePromote,
   routeToAllyGate,
-  routeToTavernSpot,
-  TAVERN_OVERFLOW,
-  TAVERN_SPOTS,
-  routeToTavern,
+  routeChefServe,
+  routeToBreak,
   seatPoint,
   squirePoint,
   type Pt,
@@ -235,7 +240,7 @@ const DUST_LIFE = 0.35;
 
 // -- employee behaviour
 const STRETCH_S = 1.2;
-const DRINK_S = 3;
+const DRINK_S = 7;
 const THOUGHT_BUBBLE_S = 1.5;
 const THOUGHT_MIN_S = 4;
 const THOUGHT_MAX_S = 8;
@@ -316,7 +321,7 @@ const SQUIRE_WALK_MAX = 6;
 const SQUIRE_SLOTS = 2;
 const SQUIRE_SNAP_DIST = 0.5;
 const ALLY_DOORS_S = 0.6;
-const COMPACT_REST_S = 3;
+const COMPACT_REST_S = 7;
 const COMPACT_BUBBLE_S = 2;
 const MANA_FLASH_S = 1.2;
 const GATE_BURST = { n: 12, speed: 40, up: 30, life: 0.7 };
@@ -327,6 +332,47 @@ const GATE_COLS = ["#ff5a5a", "#ffb870", "#6a2a7a"];
 const WARM_COLS = ["#f2c14e", "#ffe9a0", "#ffb050", "#ffffff"];
 const MANA_REFILL_BURST = { n: 10, speed: 30, lift: 10 };
 const LEAVER_MAX = 12;
+
+// -- the guild hall's west wing: feast table, chef, cheers, feast, bard
+/** sim seconds of "busy" the chef looks back over, and how a busy guild shortens the wait between two plates */
+const BUSY_WINDOW_S = 120;
+const SERVE_IDLE_S = 40;
+const SERVE_MIN_S = 8;
+const SERVE_PER_EVENT_S = 0.8;
+const SERVE_FEAST_S = 3;
+const SERVE_RETRY_S = 2;
+/** a plate stays on the table this long (or until its diner leaves) */
+const DISH_LIFE_S = 16;
+const DISH_KINDS = 4;
+/** how long mugs stay up (sim seconds) and the Cheers! pill stays on screen (real seconds) */
+export const CHEERS_S = 2.6;
+const CHEERS_SPARKS = { n: 10, speed: 34, gravity: 60, life: 0.9, lift: 30 };
+/** "done" receipts from this many different sessions inside FEAST_WINDOW_S start a feast */
+const FEAST_MIN_DONE = 2;
+const FEAST_WINDOW_S = 60;
+const FEAST_S = 16;
+const FEAST_COOLDOWN_S = 90;
+const CONFETTI_COLS = ["#d95763", "#f2c14e", "#4a6fa5", "#5fa55a", "#ffffff", "#7b5ea7"];
+const CONFETTI_PER_S = 22;
+const CONFETTI_X0 = -90;
+const CONFETTI_X1 = -8;
+const CONFETTI_Y = 54;
+const CONFETTI_VY = 22;
+const CONFETTI_LIFE = 3.2;
+const NOTE_EVERY_S = 0.9;
+const NOTE_JITTER_MIN = 0.7;
+const NOTE_JITTER_MAX = 1.3;
+const NEVER_S = -99;
+const NOTE_VX = 6;
+const NOTE_VY_MIN = 10;
+const NOTE_VY_MAX = 14;
+const NOTE_LIFE = 1.6;
+const NOTE_LIFT = 30;
+const NOTE_DX = 6;
+const BARD_REST_COUNT = 1;
+const BUSY_EVENTS = new Set(["PreToolUse", "PostToolUse", "UserPromptSubmit"]);
+const BUSY_MAX = 600;
+const CHEF_FACE_HOME = 1;
 
 export interface HookEvt {
   session_id?: string;
@@ -960,9 +1006,30 @@ export interface Employee {
   known: boolean;
   /** PreCompact seen: the next context reading is the post-compact one (mana bar flashes when it lands) */
   compactPending: boolean;
-  /** index into TAVERN_SPOTS used by a rest trip (-1 = beside the counter) */
+  /** index into FEAST_SEATS used by a break / rest trip (-1 = beside the counter) */
   restSpot: number;
   manaFlashUntil: number;
+  /** raising a mug at the feast table until this clock time */
+  cheerUntil: number;
+}
+
+/** the guild's cook: stirs at the hearth, carries a plate to the feast table now and then */
+export interface Chef {
+  x: number;
+  y: number;
+  face: 1 | -1;
+  /** waypoints still to walk (empty = at the hearth) */
+  path: Pt[];
+  holdUntil: number;
+  /** kind of the dish in the chef's hands (-1 = empty-handed) */
+  plate: number;
+  /** feast seat the plate is for */
+  target: number;
+}
+/** a plate on the feast table in front of one seat */
+export interface Dish {
+  kind: number;
+  at: number;
 }
 
 export interface Particle {
@@ -1285,6 +1352,28 @@ export class Office {
   bossAlive = 0;
   /** squires walking back into the ally gate */
   readonly leavers: Leaver[] = [];
+  // ---- the west wing (render reads these) ----
+  readonly chef: Chef = { x: CHEF_HOME.x, y: CHEF_HOME.y, face: 1, path: [], holdUntil: 0, plate: -1, target: -1 };
+  /** one slot per feast seat: the plate in front of it, if any */
+  readonly dishes: (Dish | null)[] = FEAST_SEATS.map(() => null);
+  /** reusable: the diners on screen and who sits in each feast seat (see feastDiners) */
+  private readonly diners: Employee[] = [];
+  readonly dinerSlots: (Employee | null)[] = FEAST_SEATS.map(() => null);
+  /** clock time of the last cheers (and its text in the language it was raised in) */
+  cheersAt = NEVER_S;
+  /** realTime of the last cheers: the pill's lifetime follows the wall clock, so it never sticks while paused */
+  cheersReal = NEVER_S;
+  cheersText = "";
+  /** the feast: clock time it started / ends (confetti, extra food) */
+  feastAt = NEVER_S;
+  feastUntil = 0;
+  /** the bard plays while someone is resting or at the table */
+  bardOn = false;
+  private nextServeAt = 0;
+  private nextNoteAt = 0;
+  private confettiAcc = 0;
+  private busyStamps: number[] = [];
+  private doneStamps: { sid: string; at: number }[] = [];
   /** the ally gate doors stand open until this clock time (someone passes) / the doorway glows (a compact event) */
   allyDoorsUntil = 0;
   private allyNextAt = 0;
@@ -1382,7 +1471,7 @@ export class Office {
   };
 
   constructor(readonly canvas: HTMLCanvasElement) {
-    canvas.width = WORLD_W;
+    canvas.width = VIEW_W;
     canvas.height = WORLD_H;
     this.ctx = canvas.getContext("2d")!;
     this.ctx.imageSmoothingEnabled = false;
@@ -1466,7 +1555,7 @@ export class Office {
     const factor = Math.max(1, Math.round(scale));
     if (factor === this.pxScale) return;
     this.pxScale = factor;
-    this.canvas.width = WORLD_W * factor;
+    this.canvas.width = VIEW_W * factor;
     this.canvas.height = WORLD_H * factor;
     this.ctx.setTransform(factor, 0, 0, factor, 0, 0);
     this.ctx.imageSmoothingEnabled = false;
@@ -1644,6 +1733,8 @@ export class Office {
       if (this.rcptSeen.has(receipt.id)) continue;
       this.rcptSeen.add(receipt.id);
       if (first || Date.now() - receipt.closedAt > RECEIPT_FRESH_MS) continue;
+      if (receipt.verdict === "done" || receipt.commits > 0) this.cheers();
+      if (receipt.verdict === "done") this.noteDone(receipt.sid);
       const sum = receiptSummary(receipt);
       const emp = this.employees.get(receipt.sid);
       if (!sum || !emp) continue;
@@ -1766,6 +1857,7 @@ export class Office {
     this.bossAlive = 0;
     this.allyDoorsUntil = 0;
     this.allyNextAt = 0;
+    this.resetWing();
     this.stats = { since: Date.now(), entered: 0, left: 0, monsters: 0, bosses: 0, longestBossS: 0, waitS: 0 };
     this.tools.clear();
     this.statsVer++;
@@ -2759,13 +2851,13 @@ export class Office {
       case "FROM_COFFEE":
         return m.status_from_coffee();
       case "DRINK":
-        return m.status_drink();
+        return emp.restSpot >= 0 ? m.status_feasting() : m.status_drink();
       case "DUEL":
         return m.status_duel();
       case "TO_TAVERN_REST":
         return m.status_to_tavern_rest();
       case "AT_TAVERN_REST":
-        return m.status_at_tavern_rest();
+        return emp.restSpot >= 0 ? m.status_feasting() : m.status_at_tavern_rest();
       case "FROM_TAVERN_REST":
         return m.status_from_tavern_rest();
     }
@@ -2853,6 +2945,7 @@ export class Office {
       if (this.reducedMotion) this.settleMotion();
     }
     this.updateSquires(dt);
+    this.updateWing(dt);
     let bosses = 0;
     for (const emp of this.employees.values()) if (emp.boss) bosses++;
     this.bossAlive = bosses;
@@ -3120,7 +3213,7 @@ export class Office {
         if (this.move(emp, dt)) {
           emp.state = "AT_TAVERN_REST";
           emp.stateSince = this.clock;
-          emp.facing = 1;
+          emp.facing = this.seatFacing(emp);
         }
         break;
       case "AT_TAVERN_REST":
@@ -3138,7 +3231,7 @@ export class Office {
         if (this.move(emp, dt)) {
           emp.state = "DRINK";
           emp.stateSince = this.clock;
-          emp.facing = 1;
+          emp.facing = this.seatFacing(emp);
           emp.hearts = MAX_HEARTS;
           for (let k = 0; k < HEART_COUNT; k++)
             this.emitP(
@@ -3169,7 +3262,7 @@ export class Office {
         if (this.clock - emp.stateSince >= STRETCH_S) {
           emp.state = "TO_COFFEE";
           emp.stateSince = this.clock;
-          const route = routeToTavern(emp.deskIdx, emp.slot, emp.order);
+          const route = routeToBreak(emp.deskIdx, emp.slot, this.freeFeastSeat(emp));
           emp.trail = [route[0]];
           emp.path = route.slice(1);
         }
@@ -3263,6 +3356,7 @@ export class Office {
     emp.y = spot.y;
     emp.facing = 1;
     emp.trail = [];
+    emp.restSpot = -1; // the break is over: the table seat is free
     if (emp.deskIdx >= 0 && !emp.monPos) this.spawnMonster(emp);
     emp.state = "SEATED";
     emp.stateSince = this.clock;
@@ -3344,6 +3438,7 @@ export class Office {
     emp.slot = -1;
     emp.state = "FROM_COFFEE";
     emp.stateSince = this.clock;
+    emp.restSpot = -1; // a camp walk, not a table break
     emp.trail = [];
     emp.holdUntil = 0;
     emp.monAppearAt = -1;
@@ -3385,6 +3480,7 @@ export class Office {
     emp.deskIdx = desk;
     emp.slot = slot;
     emp.returning = false;
+    emp.restSpot = -1;
     emp.state = "ENTERING";
     emp.stateSince = this.clock;
     emp.trail = [];
@@ -3504,6 +3600,7 @@ export class Office {
       compactPending: false,
       restSpot: -1,
       manaFlashUntil: 0,
+      cheerUntil: 0,
     };
     const sv = this.demo ? undefined : this.progress[id];
     if (sv) {
@@ -3642,6 +3739,7 @@ export class Office {
     const sid = str(evt.session_id);
     const name = str(evt.hook_event_name);
     if (!sid) return;
+    if (BUSY_EVENTS.has(name)) this.noteBusy();
     const nowMs = Date.now();
     for (const stamps of [this.ended, this.endedAgents])
       for (const [key, stamp] of stamps) if (nowMs - stamp > ENDED_TTL_S * MS_PER_SECOND) stamps.delete(key);
@@ -4153,22 +4251,38 @@ export class Office {
    * back (any event that arrives cuts the rest short). A busy one (tool in flight, boss, duel, hand up) stays put and
    * just gets the 🍺 bubble. The mana bar is never touched: it follows the next real context reading.
    */
-  /** a tavern spot nobody is using (coffee-break drinkers and other resting adventurers count), else beside the counter */
-  private freeTavernSpot(emp: Employee): Pt {
+  /** a feast seat nobody is using (walkers and diners both hold theirs), else -1 = stand beside the counter; remembered in restSpot */
+  private freeFeastSeat(emp: Employee): number {
     const taken = new Set<number>();
     for (const other of this.employees.values()) {
       if (other === emp) continue;
-      if (other.state === "TO_COFFEE" || other.state === "DRINK" || other.state === "FROM_COFFEE")
-        taken.add(((other.order % TAVERN_SPOTS.length) + TAVERN_SPOTS.length) % TAVERN_SPOTS.length);
-      else if (this.onTavernRestState(other)) taken.add(other.restSpot);
-    }
-    for (let i = 0; i < TAVERN_SPOTS.length; i++) {
-      if (taken.has(i)) continue;
-      emp.restSpot = i;
-      return TAVERN_SPOTS[i];
+      if (other.restSpot >= 0 && this.holdsFeastSeat(other)) taken.add(other.restSpot);
     }
     emp.restSpot = -1;
-    return TAVERN_OVERFLOW;
+    for (let i = 0; i < FEAST_SEATS.length; i++) {
+      if (taken.has(i)) continue;
+      emp.restSpot = i;
+      break;
+    }
+    return emp.restSpot;
+  }
+  private seatFacing(emp: Employee): 1 | -1 {
+    return emp.restSpot >= 0 ? FEAST_SEATS[emp.restSpot].face : 1;
+  }
+  /** a seat stays taken while its owner is on a break, and while a leaver is still walking out of the wing */
+  private holdsFeastSeat(emp: Employee): boolean {
+    return this.onBreak(emp) || (emp.state === "LEAVING" && emp.x < 0);
+  }
+  /** on a coffee or beer break (walking there, sitting, or walking back) */
+  private onBreak(emp: Employee): boolean {
+    switch (emp.state) {
+      case "TO_COFFEE":
+      case "DRINK":
+      case "FROM_COFFEE":
+        return true;
+      default:
+        return this.onTavernRestState(emp);
+    }
   }
   private onTavernRestState(emp: Employee): boolean {
     return emp.state === "TO_TAVERN_REST" || emp.state === "AT_TAVERN_REST" || emp.state === "FROM_TAVERN_REST";
@@ -4182,8 +4296,7 @@ export class Office {
       emp.tempBubble = { e: "🍺", until: this.clock + COMPACT_BUBBLE_S };
       return;
     }
-    const spot = this.freeTavernSpot(emp);
-    const route = routeToTavernSpot(emp.deskIdx, emp.slot, spot).slice(1);
+    const route = routeToBreak(emp.deskIdx, emp.slot, this.freeFeastSeat(emp)).slice(1);
     emp.state = "TO_TAVERN_REST";
     emp.stateSince = this.clock;
     emp.trail = [{ x: emp.x, y: emp.y }];
@@ -4192,6 +4305,238 @@ export class Office {
     this.dirty = true;
   }
 
+  // ---------- the west wing: feast table, chef, cheers, feast, bard ----------
+  private resetWing() {
+    this.chef.x = CHEF_HOME.x;
+    this.chef.y = CHEF_HOME.y;
+    this.chef.face = CHEF_FACE_HOME;
+    this.chef.path = [];
+    this.chef.holdUntil = 0;
+    this.chef.plate = -1;
+    this.chef.target = -1;
+    this.dishes.fill(null);
+    this.cheersAt = NEVER_S;
+    this.cheersReal = NEVER_S;
+    this.cheersText = "";
+    this.feastAt = NEVER_S;
+    this.feastUntil = 0;
+    this.bardOn = false;
+    this.nextServeAt = 0;
+    this.nextNoteAt = 0;
+    this.confettiAcc = 0;
+    this.busyStamps = [];
+    this.doneStamps = [];
+  }
+
+  /** a tool call / prompt just happened: the busier the guild, the more often the chef carries a plate out */
+  private noteBusy() {
+    this.busyStamps.push(this.clock);
+    if (this.busyStamps.length > BUSY_MAX) this.busyStamps.splice(0, this.busyStamps.length - BUSY_MAX);
+  }
+  /** tool calls / prompts seen in the last BUSY_WINDOW_S sim seconds */
+  recentBusy(): number {
+    while (this.busyStamps.length && this.clock - this.busyStamps[0] > BUSY_WINDOW_S) this.busyStamps.shift();
+    return this.busyStamps.length;
+  }
+  /** sim seconds between two plates: long when the guild is quiet, short when it is busy, shortest during a feast */
+  serveEvery(): number {
+    if (this.feasting()) return SERVE_FEAST_S;
+    return Math.max(SERVE_MIN_S, SERVE_IDLE_S - this.recentBusy() * SERVE_PER_EVENT_S);
+  }
+  feasting(): boolean {
+    return this.clock < this.feastUntil;
+  }
+  /** sitting at the long table right now (arrived, not walking) */
+  atFeast(emp: Employee): boolean {
+    return (emp.state === "DRINK" || emp.state === "AT_TAVERN_REST") && emp.restSpot >= 0;
+  }
+  /**
+   * who sits at the table and is on screen (a hidden session keeps its seat but is not drawn, toasted to or served).
+   * Refills one reusable array and the seat -> diner slots in place: no allocation per call, call it once per tick/frame.
+   */
+  feastDiners(): Employee[] {
+    this.diners.length = 0;
+    this.dinerSlots.fill(null);
+    for (const emp of this.employees.values())
+      if (this.atFeast(emp) && !this.isHidden(emp)) {
+        this.diners.push(emp);
+        this.dinerSlots[emp.restSpot] = emp;
+      }
+    return this.diners;
+  }
+  /** the bard plays while anyone is at the table or resting at their post; silent when everyone is working */
+  private bardShouldPlay(diners: Employee[]): boolean {
+    if (diners.length >= BARD_REST_COUNT) return true;
+    for (const emp of this.employees.values()) if (emp.resting) return true;
+    return false;
+  }
+
+  /** a receipt closed "done" (or a commit landed): everyone at the table raises a mug */
+  cheers() {
+    const diners = this.feastDiners();
+    if (!diners.length) return;
+    this.cheersAt = this.clock;
+    this.cheersReal = this.realTime;
+    this.cheersText = m.cheers_pop();
+    let sumX = 0;
+    for (const emp of diners) {
+      emp.cheerUntil = this.clock + CHEERS_S;
+      sumX += emp.x;
+    }
+    if (!this.reducedMotion)
+      this.burst(
+        sumX / diners.length,
+        FEAST_TABLE.y - CHEERS_SPARKS.lift,
+        CHEERS_SPARKS.n,
+        WARM_COLS,
+        CHEERS_SPARKS.speed,
+        CHEERS_SPARKS.gravity,
+        CHEERS_SPARKS.life,
+        1,
+        true,
+      );
+    this.dirty = true;
+  }
+  /** a "done" receipt closed: two different sessions inside FEAST_WINDOW_S start a feast */
+  private noteDone(sid: string) {
+    this.doneStamps.push({ sid, at: this.clock });
+    this.doneStamps = this.doneStamps.filter((stamp) => this.clock - stamp.at <= FEAST_WINDOW_S);
+    const recentSessions = new Set(this.doneStamps.map((stamp) => stamp.sid)).size;
+    if (recentSessions >= FEAST_MIN_DONE && this.clock - this.feastAt > FEAST_COOLDOWN_S) this.startFeast();
+  }
+  private startFeast() {
+    this.feastAt = this.clock;
+    this.feastUntil = this.clock + FEAST_S;
+    this.nextServeAt = this.clock;
+    this.doneStamps = [];
+    this.addBanner("quest", m.banner_feast());
+    for (const emp of this.feastDiners()) this.dishes[emp.restSpot] = { kind: this.dishKind(), at: this.clock };
+    this.dirty = true;
+  }
+
+  private dishKind(): number {
+    return Math.floor(Math.random() * DISH_KINDS);
+  }
+  private updateWing(dt: number) {
+    const diners = this.feastDiners();
+    for (let i = 0; i < this.dishes.length; i++) {
+      const dish = this.dishes[i];
+      if (dish && (this.clock - dish.at > DISH_LIFE_S || !this.dinerSlots[i])) this.dishes[i] = null;
+    }
+    this.updateChef(dt, diners);
+    this.bardOn = this.bardShouldPlay(diners);
+    if (this.reducedMotion) return;
+    if (this.bardOn && this.clock >= this.nextNoteAt) {
+      this.nextNoteAt = this.clock + NOTE_EVERY_S * rand(NOTE_JITTER_MIN, NOTE_JITTER_MAX);
+      this.emitP(
+        BARD_POS.x + rand(-NOTE_DX, NOTE_DX),
+        BARD_POS.y - NOTE_LIFT,
+        rand(-NOTE_VX, NOTE_VX),
+        -rand(NOTE_VY_MIN, NOTE_VY_MAX),
+        0,
+        NOTE_LIFE,
+        "#f2c14e",
+        1,
+        Math.random() < COIN_FLIP ? "note0" : "note1",
+        true,
+      );
+    }
+    if (this.feasting()) {
+      this.confettiAcc += dt * CONFETTI_PER_S;
+      while (this.confettiAcc >= 1) {
+        this.confettiAcc -= 1;
+        this.emitP(
+          rand(CONFETTI_X0, CONFETTI_X1),
+          CONFETTI_Y,
+          rand(-NOTE_VX, NOTE_VX),
+          rand(CONFETTI_VY, CONFETTI_VY * 2),
+          0,
+          CONFETTI_LIFE,
+          CONFETTI_COLS[Math.floor(Math.random() * CONFETTI_COLS.length)],
+          2,
+          null,
+          true,
+        );
+      }
+    }
+  }
+
+  private updateChef(dt: number, diners: Employee[]) {
+    const chef = this.chef;
+    if (this.reducedMotion) {
+      // no walking: the plate just appears
+      chef.path = [];
+      chef.plate = -1;
+      chef.x = CHEF_HOME.x;
+      chef.y = CHEF_HOME.y;
+      if (diners.length && this.clock >= this.nextServeAt) {
+        this.dishes[this.pickDiner(diners).restSpot] = { kind: this.dishKind(), at: this.clock };
+        this.nextServeAt = this.clock + this.serveEvery();
+      }
+      return;
+    }
+    if (chef.path.length) {
+      this.walkChef(dt);
+      return;
+    }
+    if (this.clock < this.nextServeAt) return;
+    if (!diners.length) {
+      this.nextServeAt = this.clock + SERVE_RETRY_S;
+      return;
+    }
+    chef.target = this.pickDiner(diners).restSpot;
+    chef.path = routeChefServe();
+    chef.holdUntil = 0;
+    this.nextServeAt = this.clock + this.serveEvery();
+  }
+  /** who gets the next plate: someone without one, else anyone */
+  private pickDiner(diners: Employee[]): Employee {
+    let hungry = 0;
+    for (const emp of diners) if (!this.dishes[emp.restSpot]) hungry++;
+    let pick = Math.floor(Math.random() * (hungry || diners.length));
+    for (const emp of diners) {
+      if (hungry && this.dishes[emp.restSpot]) continue;
+      if (pick-- === 0) return emp;
+    }
+    return diners[0];
+  }
+  private walkChef(dt: number) {
+    const chef = this.chef;
+    if (chef.holdUntil > this.clock) return;
+    let rem = SPEED * dt;
+    while (rem > 0 && chef.path.length) {
+      const target = chef.path[0];
+      const dx = target.x - chef.x,
+        dy = target.y - chef.y;
+      const dist = Math.hypot(dx, dy);
+      if (dx !== 0) chef.face = dx > 0 ? 1 : -1;
+      if (dist <= rem) {
+        chef.x = target.x;
+        chef.y = target.y;
+        rem -= dist;
+        chef.path.shift();
+        this.chefArrived(target);
+        if (target.wait && chef.path.length) {
+          chef.holdUntil = this.clock + target.wait;
+          break;
+        }
+      } else {
+        chef.x += (dx / dist) * rem;
+        chef.y += (dy / dist) * rem;
+        rem = 0;
+      }
+    }
+  }
+  /** the chef reached a waypoint: take a plate at the serving counter, set it down at the table */
+  private chefArrived(point: Pt) {
+    const chef = this.chef;
+    if (point.x === CHEF_PICKUP.x && point.y === CHEF_PICKUP.y) chef.plate = this.dishKind();
+    else if (point.x === CHEF_SERVE.x && point.y === CHEF_SERVE.y) {
+      if (chef.plate >= 0 && this.dinerSlots[chef.target])
+        this.dishes[chef.target] = { kind: chef.plate, at: this.clock };
+      chef.plate = -1;
+    } else if (!chef.path.length) chef.face = CHEF_FACE_HOME;
+  }
   // ---------- interns (squires) ----------
   /** where squire number `slot` of this adventurer stands */
   private squireSpot(emp: Employee, slot: number): Pt {

@@ -193,7 +193,7 @@ describe("boss", () => {
     tick(office, 31);
     expect(employee.boss).not.toBeNull();
     expect(office.banners.some((banner) => banner.kind === "boss")).toBe(true);
-    expect(office.statusOf(employee)).toContain("บอส");
+    expect(office.statusOf(employee)).toContain("boss");
   });
 
   it("PostToolUse kills the boss: +10 gold, +1 kill, +25 xp (multi-level), respawn later", () => {

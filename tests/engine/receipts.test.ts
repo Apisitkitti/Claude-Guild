@@ -86,7 +86,7 @@ describe("receipts (engine)", () => {
     office.setReceipts([fresh, old]);
     expect(emp(office, sessionId).tempBubble?.e).toBe("📜");
     const entry = office.getView().log.find((x) => x.kind === KIND_RECEIPT)!;
-    expect(entry.detail).toBe("ได้งาน: ไฟล์ 3 · ฟื้น 1 · commit 1");
+    expect(entry.detail).toBe("ได้งาน: file 3 · ฟื้น 1 · commit 1");
     office.setReceipts([fresh, old]); // same ids again: nothing new
     expect(office.getView().log.filter((x) => x.kind === KIND_RECEIPT)).toHaveLength(1);
   });
@@ -125,7 +125,7 @@ describe("receipts (engine)", () => {
 
   it("receiptSummary lists only non-zero counts", () => {
     expect(receiptSummary({ files: 3, recovered: 1, commits: 1, amends: 0, tasks: 2 })).toBe(
-      "ไฟล์ 3 · ฟื้น 1 · commit 1 · งาน 2",
+      "file 3 · ฟื้น 1 · commit 1 · งาน 2",
     );
     expect(receiptSummary({ files: 0, recovered: 0, commits: 0, amends: 0, tasks: 0 })).toBe("");
   });

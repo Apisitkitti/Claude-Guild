@@ -100,7 +100,7 @@ const OK_DURATION_MS = 1200;
 const STEP_PAUSE: Range = { min: 0.3, max: 1.5 };
 const LONG_BREAK_CHANCE = 0.25;
 const LONG_BREAK: Range = { min: 85, max: 110 };
-const SHORT_BREAK: Range = { min: 6, max: 15 };
+const SHORT_BREAK: Range = { min: 22, max: 34 };
 
 // ---- demo pacing: ally showcase (extra squires through the ally gate + tavern trips for compaction) ----
 const ALLY_START_DELAY: Range = { min: 9, max: 14 };
