@@ -18,23 +18,23 @@ const ATTN_ICON: Record<AttentionRow["kind"], string> = {
   done: "✅",
 };
 
-function AttentionItem({
-  r,
+const AttentionItem = ({
+  row,
   now,
   selected,
   onSelect,
   onDismiss,
 }: {
-  r: AttentionRow;
+  row: AttentionRow;
   now: number;
   selected: boolean;
   onSelect: () => void;
   onDismiss: () => void;
-}) {
+}) => {
   const [copied, setCopied] = useState(false);
-  const text = attentionText(r);
-  const detail = attentionDetail(r);
-  const copyText = attentionCopy(r);
+  const text = attentionText(row);
+  const detail = attentionDetail(row);
+  const copyText = attentionCopy(row);
   const copy = () => {
     if (!copyText) return;
     try {
@@ -48,19 +48,19 @@ function AttentionItem({
     } catch {}
   };
   return (
-    <li className={`attn ${r.kind}${selected ? " hl" : ""}`}>
+    <li className={`attn ${row.kind}${selected ? " hl" : ""}`}>
       <button type="button" className="asel" onClick={onSelect} title={detail ? `${text} — ${detail}` : text}>
         <span className="aico" aria-hidden="true">
-          {ATTN_ICON[r.kind]}
+          {ATTN_ICON[row.kind]}
         </span>
         <span className="atxt">
           <b>
-            {r.tag} <span className="aproj">{r.project}</span>
+            {row.tag} <span className="aproj">{row.project}</span>
           </b>
           <span className="areason">{text}</span>
           {detail && <span className="adetail">{detail}</span>}
         </span>
-        <span className="aage">{ageText(r.since, now)}</span>
+        <span className="aage">{ageText(row.since, now)}</span>
       </button>
       <div className="aact">
         {copyText && (
@@ -72,7 +72,7 @@ function AttentionItem({
           type="button"
           className="adismiss"
           onClick={onDismiss}
-          aria-label={m.queue_dismiss_label({ tag: r.tag })}
+          aria-label={m.queue_dismiss_label({ tag: row.tag })}
           title={m.queue_dismiss_title()}
         >
           ✕
@@ -80,9 +80,9 @@ function AttentionItem({
       </div>
     </li>
   );
-}
+};
 
-export function AttentionQueue({
+export const AttentionQueue = ({
   rows,
   now,
   selectedId,
@@ -98,7 +98,7 @@ export function AttentionQueue({
   onToggle: () => void;
   onJump: (sid: string) => void;
   officeRef: OfficeRef;
-}) {
+}) => {
   return (
     <>
       <SectionHeading id="attn" hidden={hidden} onToggle={onToggle} count={rows.length}>
@@ -107,14 +107,14 @@ export function AttentionQueue({
       <div className="attnsec" id="sec-attn" hidden={hidden}>
         <ul className="attns" aria-live="polite">
           {rows.length === 0 && <li className="empty">{m.queue_empty()}</li>}
-          {rows.map((r) => (
+          {rows.map((row) => (
             <AttentionItem
-              key={r.key}
-              r={r}
-              now={now || r.since}
-              selected={r.sid === selectedId}
-              onSelect={() => onJump(r.sid)}
-              onDismiss={() => officeRef.current?.dismissAttention(r.key)}
+              key={row.key}
+              row={row}
+              now={now || row.since}
+              selected={row.sid === selectedId}
+              onSelect={() => onJump(row.sid)}
+              onDismiss={() => officeRef.current?.dismissAttention(row.key)}
             />
           ))}
         </ul>
@@ -122,4 +122,4 @@ export function AttentionQueue({
       </div>
     </>
   );
-}
+};

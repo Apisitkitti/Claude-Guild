@@ -31,14 +31,15 @@ const VARIABLE_HOOKS = new Set(["useMemo"]);
 const isHookName = (name) => typeof name === "string" && /^use[A-Z0-9]/.test(name);
 const isComponentName = (name) => typeof name === "string" && /^[A-Z]/.test(name);
 
-function calleeName(call) {
-  const c = call.callee;
-  if (c.type === "Identifier") return c.name;
-  if (c.type === "MemberExpression" && !c.computed && c.property.type === "Identifier") return c.property.name;
+const calleeName = (call) => {
+  const callee = call.callee;
+  if (callee.type === "Identifier") return callee.name;
+  if (callee.type === "MemberExpression" && !callee.computed && callee.property.type === "Identifier")
+    return callee.property.name;
   return null;
-}
+};
 
-function unwrapInit(init) {
+const unwrapInit = (init) => {
   let node = init;
   while (
     node &&
@@ -47,9 +48,9 @@ function unwrapInit(init) {
     node = node.expression ?? node.argument;
   }
   return node;
-}
+};
 
-function classifyInit(init) {
+const classifyInit = (init) => {
   const node = unwrapInit(init);
   if (!node) return VARIABLE;
   if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression") return FUNCTION;
@@ -61,28 +62,28 @@ function classifyInit(init) {
     if (isHookName(name)) return STATE;
   }
   return VARIABLE;
-}
+};
 
-function containsReturn(node) {
+const containsReturn = (node) => {
   if (!node) return false;
   if (node.type === "ReturnStatement") return true;
   if (node.type === "BlockStatement") return node.body.some(containsReturn);
   if (node.type === "IfStatement") return containsReturn(node.consequent) || containsReturn(node.alternate);
   return false;
-}
+};
 
 /** @returns {{ stage: number, label: string } | null} null means "not classified, ignore". */
-function classifyStatement(stmt) {
+const classifyStatement = (stmt) => {
   switch (stmt.type) {
     case "FunctionDeclaration":
       return { stage: FUNCTION, label: `function ${stmt.id ? stmt.id.name : "declaration"}` };
     case "VariableDeclaration": {
       let best = null;
-      for (const d of stmt.declarations) {
-        const stage = classifyInit(d.init);
+      for (const declarator of stmt.declarations) {
+        const stage = classifyInit(declarator.init);
         if (!best || stage > best.stage) {
-          const id = d.id.type === "Identifier" ? d.id.name : "declaration";
-          const call = d.init && unwrapInit(d.init);
+          const id = declarator.id.type === "Identifier" ? declarator.id.name : "declaration";
+          const call = declarator.init && unwrapInit(declarator.init);
           const hook = call && call.type === "CallExpression" ? calleeName(call) : null;
           best = { stage, label: hook && stage !== VARIABLE ? hook : id };
         }
@@ -90,9 +91,9 @@ function classifyStatement(stmt) {
       return best;
     }
     case "ExpressionStatement": {
-      const e = stmt.expression;
-      if (e.type === "CallExpression") {
-        const name = calleeName(e);
+      const expression = stmt.expression;
+      if (expression.type === "CallExpression") {
+        const name = calleeName(expression);
         if (EFFECT_HOOKS.has(name)) return { stage: EFFECT, label: name };
         if (isHookName(name) && !FUNCTION_HOOKS.has(name) && !VARIABLE_HOOKS.has(name))
           return { stage: STATE, label: name };
@@ -106,15 +107,15 @@ function classifyStatement(stmt) {
     default:
       return null;
   }
-}
+};
 
-function returnsJsx(fn) {
+const returnsJsx = (fn) => {
   let found = false;
   const visit = (node) => {
     if (!node || found || typeof node.type !== "string") return;
     if (node.type === "ReturnStatement") {
-      const a = node.argument;
-      if (a && /^JSX/.test(unwrapJsxHost(a).type)) found = true;
+      const argument = node.argument;
+      if (argument && /^JSX/.test(unwrapJsxHost(argument).type)) found = true;
       return;
     }
     if (node.type === "BlockStatement") node.body.forEach(visit);
@@ -125,28 +126,28 @@ function returnsJsx(fn) {
   };
   visit(fn.body);
   return found;
-}
+};
 
-function unwrapJsxHost(node) {
+const unwrapJsxHost = (node) => {
   // `return cond ? <A/> : <B/>` and `return (<A/>)` still count; look one level into conditionals/logical.
   if (node.type === "ConditionalExpression") {
     return /^JSX/.test(node.consequent.type) ? node.consequent : node.alternate;
   }
   if (node.type === "LogicalExpression") return node.right;
   return node;
-}
+};
 
-function functionName(node) {
+const functionName = (node) => {
   if (node.type === "FunctionDeclaration") return node.id ? node.id.name : null;
   let parent = node.parent;
   // memo(() => ...) / forwardRef(function ...)
   if (parent && parent.type === "CallExpression") {
-    const n = calleeName(parent);
-    if (n === "memo" || n === "forwardRef") parent = parent.parent;
+    const callee = calleeName(parent);
+    if (callee === "memo" || callee === "forwardRef") parent = parent.parent;
   }
   if (parent && parent.type === "VariableDeclarator" && parent.id.type === "Identifier") return parent.id.name;
   return null;
-}
+};
 
 /** @type {import("eslint").Rule.RuleModule} */
 const rule = {
@@ -162,11 +163,11 @@ const rule = {
         "{{current}} ({{currentStage}}) must come before {{previous}} ({{previousStage}}). Order inside components/hooks: state → variables → functions → effects → early returns → return.",
     },
   },
-  create(context) {
+  create: (context) => {
     const filename = context.filename ?? context.getFilename();
     const isTsx = /\.(tsx|jsx)$/.test(filename);
 
-    function check(node) {
+    const check = (node) => {
       if (!node.body || node.body.type !== "BlockStatement") return;
       const name = functionName(node);
       if (!name) return;
@@ -176,24 +177,24 @@ const rule = {
 
       let highest = null;
       for (const stmt of node.body.body) {
-        const c = classifyStatement(stmt);
-        if (!c) continue;
-        if (highest && c.stage < highest.stage) {
+        const classified = classifyStatement(stmt);
+        if (!classified) continue;
+        if (highest && classified.stage < highest.stage) {
           context.report({
             node: stmt,
             messageId: "order",
             data: {
-              current: c.label,
-              currentStage: STAGE_LABEL[c.stage],
+              current: classified.label,
+              currentStage: STAGE_LABEL[classified.stage],
               previous: highest.label,
               previousStage: STAGE_LABEL[highest.stage],
             },
           });
-        } else if (!highest || c.stage > highest.stage) {
-          highest = c;
+        } else if (!highest || classified.stage > highest.stage) {
+          highest = classified;
         }
       }
-    }
+    };
 
     return {
       FunctionDeclaration: check,

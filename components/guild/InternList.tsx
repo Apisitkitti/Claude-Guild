@@ -8,7 +8,7 @@ const INTERN_CHIP: Record<InternRow["act"], { cls: string; label: () => string }
   handup: { cls: "c-seal pulse", label: () => m.intern_handup() },
 };
 
-export function InternList({ list }: { list: InternRow[] }) {
+export const InternList = ({ list }: { list: InternRow[] }) => {
   return (
     <ul className="interns">
       {list.map((i) => {
@@ -35,4 +35,4 @@ export function InternList({ list }: { list: InternRow[] }) {
       })}
     </ul>
   );
-}
+};

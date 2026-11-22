@@ -3,7 +3,7 @@ import { addEvent, isForeignOrigin } from "@/lib/store";
 
 const MAX_BODY = BYTES_PER_MB; // bytes
 
-async function readLimited(req: Request, limit: number): Promise<string | null> {
+const readLimited = async (req: Request, limit: number): Promise<string | null> => {
   const declared = Number(req.headers.get("content-length"));
   if (declared > limit) return null;
   if (!req.body) return "";
@@ -21,9 +21,9 @@ async function readLimited(req: Request, limit: number): Promise<string | null> 
     chunks.push(value);
   }
   return Buffer.concat(chunks).toString("utf8");
-}
+};
 
-export async function POST(req: Request) {
+export const POST = async (req: Request) => {
   if (isForeignOrigin(req)) return new Response("forbidden", { status: 403 });
   // Requiring application/json forces a CORS preflight for cross-origin browser requests (which we never allow).
   if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
@@ -42,4 +42,4 @@ export async function POST(req: Request) {
   }
   addEvent(evt as Record<string, unknown>);
   return new Response(null, { status: 204 });
-}
+};

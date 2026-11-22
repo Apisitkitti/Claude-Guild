@@ -4,33 +4,37 @@ import type { OfficeRef } from "../types";
 
 const MAX_QUERY_CHARS = 80;
 
-export type SessionFilter = { fq: string; fStray: boolean; saveFilter: (query: string, hideStray: boolean) => void };
+export type SessionFilter = {
+  filterQuery: string;
+  fStray: boolean;
+  saveFilter: (query: string, hideStray: boolean) => void;
+};
 
 /** Session filter: restore once, push to the engine, persist. */
-export function useSessionFilter(officeRef: OfficeRef, mounted: boolean) {
-  const [fq, setFq] = useState("");
+export const useSessionFilter = (officeRef: OfficeRef, mounted: boolean) => {
+  const [filterQuery, setFilterQuery] = useState("");
   const [fStray, setFStray] = useState(false);
   const saveFilter = (query: string, hideStray: boolean) => {
-    setFq(query);
+    setFilterQuery(query);
     setFStray(hideStray);
     try {
       localStorage.setItem("guild.filter", JSON.stringify({ query, hideStray }));
     } catch {}
   };
   useEffect(() => {
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       try {
-        const j = JSON.parse(localStorage.getItem("guild.filter") ?? "null");
-        if (j && typeof j === "object") {
-          if (typeof j.query === "string") setFq(j.query.slice(0, MAX_QUERY_CHARS));
-          if (j.hideStray === true) setFStray(true);
+        const stored = JSON.parse(localStorage.getItem("guild.filter") ?? "null");
+        if (stored && typeof stored === "object") {
+          if (typeof stored.query === "string") setFilterQuery(stored.query.slice(0, MAX_QUERY_CHARS));
+          if (stored.hideStray === true) setFStray(true);
         }
       } catch {}
     }, 0);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, []);
   useEffect(() => {
-    officeRef.current?.setFilter({ query: fq, hideStray: fStray });
-  }, [fq, fStray, mounted, officeRef]);
-  return { fq, fStray, setFq, saveFilter };
-}
+    officeRef.current?.setFilter({ query: filterQuery, hideStray: fStray });
+  }, [filterQuery, fStray, mounted, officeRef]);
+  return { filterQuery, fStray, setFilterQuery, saveFilter };
+};

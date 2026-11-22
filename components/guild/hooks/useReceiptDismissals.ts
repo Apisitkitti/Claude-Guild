@@ -15,51 +15,54 @@ interface Cleared {
 
 const EMPTY: Cleared = { before: 0, ids: [] };
 
-function readCleared(): Cleared {
+const readCleared = (): Cleared => {
   try {
-    const v = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
-    if (!v || typeof v !== "object") return EMPTY;
-    const before = typeof v.before === "number" && Number.isFinite(v.before) ? v.before : 0;
-    const ids = Array.isArray(v.ids) ? v.ids.filter((x: unknown): x is string => typeof x === "string") : [];
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
+    if (!stored || typeof stored !== "object") return EMPTY;
+    const before = typeof stored.before === "number" && Number.isFinite(stored.before) ? stored.before : 0;
+    const ids = Array.isArray(stored.ids) ? stored.ids.filter((x: unknown): x is string => typeof x === "string") : [];
     return { before, ids: ids.slice(-MAX_DISMISSED_IDS) };
   } catch {
     return EMPTY;
   }
-}
+};
 
-function writeCleared(v: Cleared) {
+const writeCleared = (cleared: Cleared) => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(v));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cleared));
   } catch {}
-}
+};
 
 /**
  * Receipts the viewer has cleared, kept in this browser only (the server copy is untouched and still expires after 2 h).
  * Restored after mount to stay hydration-safe.
  */
-export function useReceiptDismissals(rows: ReceiptRow[]) {
+export const useReceiptDismissals = (rows: ReceiptRow[]) => {
   const [cleared, setCleared] = useState<Cleared>(EMPTY);
 
   const visible = useMemo(() => {
     const ids = new Set(cleared.ids);
-    return rows.filter((r) => r.closedAt > cleared.before && !ids.has(r.id));
+    return rows.filter((row) => row.closedAt > cleared.before && !ids.has(row.id));
   }, [rows, cleared]);
 
-  const update = useCallback((next: (c: Cleared) => Cleared) => {
-    setCleared((c) => {
-      const n = next(c);
-      writeCleared(n);
-      return n;
+  const update = useCallback((change: (current: Cleared) => Cleared) => {
+    setCleared((current) => {
+      const next = change(current);
+      writeCleared(next);
+      return next;
     });
   }, []);
   const dismiss = useCallback(
     (id: string) =>
-      update((c) => ({ before: c.before, ids: [...c.ids.filter((x) => x !== id), id].slice(-MAX_DISMISSED_IDS) })),
+      update((current) => ({
+        before: current.before,
+        ids: [...current.ids.filter((other) => other !== id), id].slice(-MAX_DISMISSED_IDS),
+      })),
     [update],
   );
   const clearAll = useCallback(() => {
-    const newest = rows.reduce((m, r) => Math.max(m, r.closedAt), 0);
-    update((c) => ({ before: Math.max(c.before, newest), ids: [] }));
+    const newest = rows.reduce((latest, row) => Math.max(latest, row.closedAt), 0);
+    update((current) => ({ before: Math.max(current.before, newest), ids: [] }));
   }, [rows, update]);
 
   useEffect(() => {
@@ -67,4 +70,4 @@ export function useReceiptDismissals(rows: ReceiptRow[]) {
   }, []);
 
   return { visible, dismiss, clearAll };
-}
+};

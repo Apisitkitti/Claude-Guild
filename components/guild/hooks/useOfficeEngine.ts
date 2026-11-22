@@ -5,7 +5,7 @@ import { EMPTY_VIEW, Office, type OfficeView } from "@/lib/office/engine";
 const noopSub = () => () => {};
 
 /** Creates the canvas engine once and mirrors its view into React state. */
-export function useOfficeEngine(canvasRef: RefObject<HTMLCanvasElement | null>) {
+export const useOfficeEngine = (canvasRef: RefObject<HTMLCanvasElement | null>) => {
   const officeRef = useRef<Office | null>(null);
   const mounted = useSyncExternalStore(
     noopSub,
@@ -14,14 +14,14 @@ export function useOfficeEngine(canvasRef: RefObject<HTMLCanvasElement | null>) 
   );
   const [view, setView] = useState<OfficeView>(EMPTY_VIEW);
   useEffect(() => {
-    const o = new Office(canvasRef.current!);
-    officeRef.current = o;
-    o.subscribe(setView);
-    o.start();
+    const office = new Office(canvasRef.current!);
+    officeRef.current = office;
+    office.subscribe(setView);
+    office.start();
     return () => {
-      o.stop();
+      office.stop();
       officeRef.current = null;
     };
   }, [canvasRef]);
   return { officeRef, view, mounted };
-}
+};

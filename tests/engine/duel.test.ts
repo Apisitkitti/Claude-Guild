@@ -20,7 +20,7 @@ import {
   newDuelScript,
   type Duel,
 } from "@/lib/office/engine";
-import { DUEL_HALF, HALL_W, W, SPOT_COLS, SPOT_ROWS, duelMidOfDesks } from "@/lib/office/layout";
+import { DUEL_HALF, HALL_W, WORLD_W, SPOT_COLS, SPOT_ROWS, duelMidOfDesks } from "@/lib/office/layout";
 
 import { emp, ev, newOffice, seat, sid, stubStorage, tick } from "./helpers";
 
@@ -34,22 +34,22 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const msg = (a: string, b: string, level: "overlap" | "clash", file = "src/a.ts"): TerritoryMsg => ({
+const msg = (sessionA: string, sessionB: string, level: "overlap" | "clash", file = "src/a.ts"): TerritoryMsg => ({
   claims: [
-    { sid: a, files: [file, "x.ts"] },
-    { sid: b, files: [file] },
+    { sid: sessionA, files: [file, "x.ts"] },
+    { sid: sessionB, files: [file] },
   ],
-  conflicts: [{ file, sids: [a, b], level, since: 1 }],
+  conflicts: [{ file, sids: [sessionA, sessionB], level, since: 1 }],
 });
 
-function two() {
-  const o = newOffice();
-  const a = sid(),
-    b = sid();
-  seat(o, a, { cwd: "/w/alpha" });
-  seat(o, b, { cwd: "/w/beta" });
-  return { o, a, b };
-}
+const two = () => {
+  const office = newOffice();
+  const sessionA = sid(),
+    sessionB = sid();
+  seat(office, sessionA, { cwd: "/w/alpha" });
+  seat(office, sessionB, { cwd: "/w/beta" });
+  return { o: office, a: sessionA, b: sessionB };
+};
 
 describe("territory duel", () => {
   it("starts on a NEW clash: both walk (DUEL), fight, then return to SEATED at their spots", () => {
@@ -62,21 +62,21 @@ describe("territory duel", () => {
     expect(o.duels).toHaveLength(1);
     expect(emp(o, a).state).toBe("DUEL");
     expect(emp(o, b).state).toBe("DUEL");
-    expect(o.getView().roster.find((r) => r.id === a)).toBeTruthy();
+    expect(o.getView().roster.find((row) => row.id === a)).toBeTruthy();
     tick(o, 2.5);
     expect(o.duels[0].phase).toBe("fight");
     expect(emp(o, a).facing * emp(o, b).facing).toBe(-1);
     tick(o, 5.5);
     tick(o, 5);
     expect(o.duels).toHaveLength(0);
-    for (const [id, p] of [
+    for (const [id, spot] of [
       [a, sa],
       [b, sb],
     ] as const) {
-      const e = emp(o, id);
-      expect(e.state).toBe("SEATED");
-      expect(e.duel).toBeNull();
-      expect([e.x, e.y]).toEqual([p.x, p.y]);
+      const employee = emp(o, id);
+      expect(employee.state).toBe("SEATED");
+      expect(employee.duel).toBeNull();
+      expect([employee.x, employee.y]).toEqual([spot.x, spot.y]);
     }
   });
 
@@ -134,13 +134,13 @@ describe("territory duel", () => {
     expect(o.isSettled({ file: "src/b.ts", level: "clash" })).toBe(false);
     expect(o.isSettled(clash)).toBe(false); // pruned once the old clash is gone
 
-    const t = two();
-    t.o.setTerritory(msg(t.a, t.b, "clash"));
-    tick(t.o, 2.5);
-    t.o.event(ev(t.a, "PermissionRequest", { tool_name: "Bash" }));
-    tick(t.o, 8);
-    expect(t.o.duels).toHaveLength(0);
-    expect(t.o.isSettled(clash)).toBe(false);
+    const pair = two();
+    pair.o.setTerritory(msg(pair.a, pair.b, "clash"));
+    tick(pair.o, 2.5);
+    pair.o.event(ev(pair.a, "PermissionRequest", { tool_name: "Bash" }));
+    tick(pair.o, 8);
+    expect(pair.o.duels).toHaveLength(0);
+    expect(pair.o.isSettled(clash)).toBe(false);
   });
 
   it("Stop during a duel: finishes the duel, then goes to the tavern", () => {
@@ -211,37 +211,37 @@ describe("territory duel", () => {
     const { o, a, b } = two();
     o.event(ev(b, "PostToolUseFailure", { tool_name: "Edit", tool_input: { file_path: "/w/beta/a.ts" } }));
     o.setTerritory(msg(a, b, "clash"));
-    const d = o.duels[0];
-    const winnerId = d.winner === 0 ? d.l : d.r;
+    const duel = o.duels[0];
+    const winnerId = duel.winner === 0 ? duel.l : duel.r;
     expect(winnerId).toBe(a);
   });
 
   it("server `failer` decides the winner even when the territory message arrives BEFORE the failure event", () => {
     for (const loser of [0, 1]) {
       const { o, a, b } = two();
-      const m = msg(a, b, "clash");
-      m.conflicts[0].failer = loser === 0 ? a : b;
-      o.setTerritory(m); // no PostToolUseFailure seen yet
+      const message = msg(a, b, "clash");
+      message.conflicts[0].failer = loser === 0 ? a : b;
+      o.setTerritory(message); // no PostToolUseFailure seen yet
       o.event(
         ev(loser === 0 ? a : b, "PostToolUseFailure", { tool_name: "Edit", tool_input: { file_path: "/w/x/a.ts" } }),
       ); // arrives after
-      const d = o.duels[0];
-      expect(d.failer).toBe(loser === 0 ? a : b);
-      expect(d.winner === 0 ? d.l : d.r).toBe(loser === 0 ? b : a);
+      const duel = o.duels[0];
+      expect(duel.failer).toBe(loser === 0 ? a : b);
+      expect(duel.winner === 0 ? duel.l : duel.r).toBe(loser === 0 ? b : a);
       tick(o, 3.5);
-      expect(d.winner === 0 ? d.l : d.r).toBe(loser === 0 ? b : a);
+      expect(duel.winner === 0 ? duel.l : duel.r).toBe(loser === 0 ? b : a);
     }
   });
 
   it("without a server failer, a failure seen during the fight still decides the winner at the flourish", () => {
     const { o, a, b } = two();
     o.setTerritory(msg(a, b, "clash"));
-    const d = o.duels[0];
-    const early = d.winner === 0 ? d.l : d.r;
+    const duel = o.duels[0];
+    const early = duel.winner === 0 ? duel.l : duel.r;
     o.event(ev(early, "PostToolUseFailure", { tool_name: "Edit", tool_input: { file_path: "/w/x/a.ts" } }));
     tick(o, 2.8 + 7.4);
-    expect(d.flourished).toBe(true);
-    expect(d.winner === 0 ? d.l : d.r).not.toBe(early);
+    expect(duel.flourished).toBe(true);
+    expect(duel.winner === 0 ? duel.l : duel.r).not.toBe(early);
   });
 
   it("rate limit: one duel per pair per 60s", () => {
@@ -258,10 +258,10 @@ describe("territory duel", () => {
   });
 
   it("at most 2 duels at once, and nobody is in two", () => {
-    const o = newOffice();
+    const office = newOffice();
     const ids = [sid(), sid(), sid(), sid(), sid(), sid()];
-    for (const id of ids) seat(o, id);
-    o.setTerritory({
+    for (const id of ids) seat(office, id);
+    office.setTerritory({
       claims: [],
       conflicts: [
         { file: "a.ts", sids: [ids[0], ids[1]], level: "clash", since: 1 },
@@ -269,8 +269,8 @@ describe("territory duel", () => {
         { file: "c.ts", sids: [ids[4], ids[5]], level: "clash", since: 1 },
       ],
     });
-    expect(o.duels).toHaveLength(2);
-    const inDuel = o.duels.flatMap((d) => [d.l, d.r]);
+    expect(office.duels).toHaveLength(2);
+    const inDuel = office.duels.flatMap((duel) => [duel.l, duel.r]);
     expect(new Set(inDuel).size).toBe(4);
   });
 
@@ -290,24 +290,27 @@ describe("territory duel", () => {
   });
 
   it("skips adventurers that are not seated", () => {
-    const o = newOffice();
-    const a = sid(),
-      b = sid();
-    seat(o, a);
-    o.event(ev(b, "SessionStart")); // b is still walking in
-    expect(emp(o, b).state).toBe("ENTERING");
-    o.setTerritory(msg(a, b, "clash"));
-    expect(o.duels).toHaveLength(0);
-    expect(emp(o, a).state).toBe("SEATED");
-    o.setTerritory({ claims: [], conflicts: [] }); // the clash ends before b sits down: it never duels afterwards
-    tick(o, 20);
-    expect(o.duels).toHaveLength(0);
+    const office = newOffice();
+    const sessionA = sid(),
+      sessionB = sid();
+    seat(office, sessionA);
+    office.event(ev(sessionB, "SessionStart")); // b is still walking in
+    expect(emp(office, sessionB).state).toBe("ENTERING");
+    office.setTerritory(msg(sessionA, sessionB, "clash"));
+    expect(office.duels).toHaveLength(0);
+    expect(emp(office, sessionA).state).toBe("SEATED");
+    office.setTerritory({ claims: [], conflicts: [] }); // the clash ends before b sits down: it never duels afterwards
+    tick(office, 20);
+    expect(office.duels).toHaveLength(0);
     // a drinking adventurer does not duel either
-    const c = sid();
-    seat(o, c);
-    emp(o, c).state = "DRINK";
-    o.setTerritory({ claims: [], conflicts: [{ file: "z.ts", sids: [a, c], level: "clash", since: 1 }] });
-    expect(o.duels).toHaveLength(0);
+    const sessionC = sid();
+    seat(office, sessionC);
+    emp(office, sessionC).state = "DRINK";
+    office.setTerritory({
+      claims: [],
+      conflicts: [{ file: "z.ts", sids: [sessionA, sessionC], level: "clash", since: 1 }],
+    });
+    expect(office.duels).toHaveLength(0);
   });
 
   it("an opponent that leaves mid-duel does not strand the other", () => {
@@ -366,36 +369,39 @@ describe("territory duel", () => {
   });
 
   it("camp (overflow) adventurers duel in place, without walking", () => {
-    const o = newOffice();
+    const office = newOffice();
     const ids = Array.from({ length: 10 }, () => sid());
-    for (const id of ids) seat(o, id);
-    const camp = ids.map((id) => emp(o, id)).filter((e) => e.deskIdx < 0);
+    for (const id of ids) seat(office, id);
+    const camp = ids.map((id) => emp(office, id)).filter((employee) => employee.deskIdx < 0);
     expect(camp.length).toBeGreaterThanOrEqual(2);
-    const [p, q] = camp;
-    o.setTerritory({ claims: [], conflicts: [{ file: "q.ts", sids: [p.id, q.id], level: "clash", since: 1 }] });
-    expect(o.duels).toHaveLength(1);
-    expect(o.duels[0].walk).toBe(false);
-    expect(p.state).toBe("SEATED");
-    tick(o, 6);
-    expect(o.duels).toHaveLength(0);
+    const [campA, campB] = camp;
+    office.setTerritory({
+      claims: [],
+      conflicts: [{ file: "q.ts", sids: [campA.id, campB.id], level: "clash", since: 1 }],
+    });
+    expect(office.duels).toHaveLength(1);
+    expect(office.duels[0].walk).toBe(false);
+    expect(campA.state).toBe("SEATED");
+    tick(office, 6);
+    expect(office.duels).toHaveLength(0);
   });
 });
 
 describe("territory duel: second pair after an older clash", () => {
   it("a second clash (cleric/ranger) duels while the older clash (mage/cleric) is still re-sent", () => {
-    const o = newOffice();
+    const office = newOffice();
     const cwd = "/Users/demo/realm";
     const other = sid(),
       mage = sid("m"),
       cleric = sid("c"),
       ranger = sid("r");
-    seat(o, other, { cwd });
-    seat(o, mage, { cwd });
-    seat(o, cleric, { cwd });
-    seat(o, ranger, { cwd });
-    emp(o, mage).look.cls = "mage";
-    emp(o, cleric).look.cls = "cleric";
-    emp(o, ranger).look.cls = "ranger";
+    seat(office, other, { cwd });
+    seat(office, mage, { cwd });
+    seat(office, cleric, { cwd });
+    seat(office, ranger, { cwd });
+    emp(office, mage).look.cls = "mage";
+    emp(office, cleric).look.cls = "cleric";
+    emp(office, ranger).look.cls = "ranger";
     const tool = (id: string, name: string, file: string, tid: string, extra: Record<string, unknown> = {}) =>
       ev(id, name, {
         cwd,
@@ -413,50 +419,50 @@ describe("territory duel: second pair after an older clash", () => {
       { sid: ranger, files: [f2] },
     ];
 
-    o.event(tool(cleric, "PreToolUse", f1, "g1"));
-    o.setTerritory({ claims, conflicts: [{ ...c1, level: "overlap", failer: undefined }] });
-    o.event(tool(mage, "PreToolUse", f1, "m1"));
-    o.setTerritory({ claims, conflicts: [c1] });
-    o.event(tool(mage, "PostToolUseFailure", f1, "m1"));
-    expect(o.duels).toHaveLength(1);
-    tick(o, 20);
-    expect(o.duels).toHaveLength(0);
-    expect(emp(o, cleric).state).toBe("SEATED");
+    office.event(tool(cleric, "PreToolUse", f1, "g1"));
+    office.setTerritory({ claims, conflicts: [{ ...c1, level: "overlap", failer: undefined }] });
+    office.event(tool(mage, "PreToolUse", f1, "m1"));
+    office.setTerritory({ claims, conflicts: [c1] });
+    office.event(tool(mage, "PostToolUseFailure", f1, "m1"));
+    expect(office.duels).toHaveLength(1);
+    tick(office, 20);
+    expect(office.duels).toHaveLength(0);
+    expect(emp(office, cleric).state).toBe("SEATED");
 
     const ov2 = { file: "src/arrows.ts", sids: [ranger, cleric], level: "overlap" as const, since: 2 };
-    o.event(tool(ranger, "PreToolUse", f2, "a1"));
-    o.setTerritory({ claims, conflicts: [c1, ov2] });
-    o.event(tool(cleric, "PreToolUse", f2, "h2"));
+    office.event(tool(ranger, "PreToolUse", f2, "a1"));
+    office.setTerritory({ claims, conflicts: [c1, ov2] });
+    office.event(tool(cleric, "PreToolUse", f2, "h2"));
     const cl2 = { ...ov2, level: "clash" as const, failer: cleric };
-    o.setTerritory({ claims, conflicts: [c1, cl2] });
-    o.event(tool(cleric, "PostToolUseFailure", f2, "h2"));
-    expect(o.duels).toHaveLength(1);
-    expect(emp(o, cleric).state).toBe("DUEL");
-    expect(emp(o, ranger).state).toBe("DUEL");
-    expect(o.duels[0].winner).toBe(emp(o, o.duels[0].l).id === cleric ? 1 : 0);
+    office.setTerritory({ claims, conflicts: [c1, cl2] });
+    office.event(tool(cleric, "PostToolUseFailure", f2, "h2"));
+    expect(office.duels).toHaveLength(1);
+    expect(emp(office, cleric).state).toBe("DUEL");
+    expect(emp(office, ranger).state).toBe("DUEL");
+    expect(office.duels[0].winner).toBe(emp(office, office.duels[0].l).id === cleric ? 1 : 0);
   });
 
   it("a clash while a participant is still walking in duels as soon as both are seated; an older clash re-sent does not retrigger", () => {
-    const o = newOffice();
+    const office = newOffice();
     const cwd = "/Users/demo/realm";
     const other = sid(),
       mage = sid("m"),
       cleric = sid("c"),
       ranger = sid("r");
-    seat(o, other, { cwd });
-    seat(o, mage, { cwd });
-    seat(o, cleric, { cwd });
+    seat(office, other, { cwd });
+    seat(office, mage, { cwd });
+    seat(office, cleric, { cwd });
     const c1 = { file: "src/spells.ts", sids: [mage, cleric], level: "clash" as const, since: 1, failer: mage };
     const claims = [
       { sid: mage, files: ["src/spells.ts"] },
       { sid: cleric, files: ["src/spells.ts", "src/arrows.ts"] },
     ];
-    o.setTerritory({ claims, conflicts: [c1] });
-    tick(o, 20);
-    expect(o.duels).toHaveLength(0);
+    office.setTerritory({ claims, conflicts: [c1] });
+    tick(office, 20);
+    expect(office.duels).toHaveLength(0);
     // the ranger has only just arrived (still ENTERING) when its clash with the cleric is reported
-    o.event(ev(ranger, "SessionStart", { cwd }));
-    o.event(
+    office.event(ev(ranger, "SessionStart", { cwd }));
+    office.event(
       ev(ranger, "PreToolUse", {
         cwd,
         tool_name: "Write",
@@ -465,8 +471,8 @@ describe("territory duel: second pair after an older clash", () => {
       }),
     );
     const c2 = { file: "src/arrows.ts", sids: [cleric, ranger], level: "clash" as const, since: 2, failer: cleric };
-    o.setTerritory({ claims, conflicts: [c2, c1] });
-    o.event(
+    office.setTerritory({ claims, conflicts: [c2, c1] });
+    office.event(
       ev(cleric, "PreToolUse", {
         cwd,
         tool_name: "Edit",
@@ -474,7 +480,7 @@ describe("territory duel: second pair after an older clash", () => {
         tool_use_id: "h2",
       }),
     );
-    o.event(
+    office.event(
       ev(cleric, "PostToolUseFailure", {
         cwd,
         tool_name: "Edit",
@@ -482,22 +488,22 @@ describe("territory duel: second pair after an older clash", () => {
         tool_use_id: "h2",
       }),
     );
-    expect(emp(o, ranger).state).toBe("ENTERING");
-    expect(o.duels).toHaveLength(0);
-    for (let i = 0; i < 400 && emp(o, ranger).state !== "SEATED"; i++) {
-      o.setTerritory({ claims, conflicts: [c2, c1] });
-      tick(o, 0.1);
-      if (o.duels.length) break;
+    expect(emp(office, ranger).state).toBe("ENTERING");
+    expect(office.duels).toHaveLength(0);
+    for (let i = 0; i < 400 && emp(office, ranger).state !== "SEATED"; i++) {
+      office.setTerritory({ claims, conflicts: [c2, c1] });
+      tick(office, 0.1);
+      if (office.duels.length) break;
     }
-    tick(o, 0.2);
-    expect(o.duels).toHaveLength(1);
-    expect([o.duels[0].l, o.duels[0].r].sort()).toEqual([cleric, ranger].sort());
-    expect(emp(o, mage).state).toBe("SEATED"); // the old mage/cleric clash never retriggers
-    tick(o, 20);
-    expect(o.duels).toHaveLength(0);
-    o.setTerritory({ claims, conflicts: [c2, c1] });
-    tick(o, 1);
-    expect(o.duels).toHaveLength(0); // same pair is on cooldown, nobody else re-duels
+    tick(office, 0.2);
+    expect(office.duels).toHaveLength(1);
+    expect([office.duels[0].l, office.duels[0].r].sort()).toEqual([cleric, ranger].sort());
+    expect(emp(office, mage).state).toBe("SEATED"); // the old mage/cleric clash never retriggers
+    tick(office, 20);
+    expect(office.duels).toHaveLength(0);
+    office.setTerritory({ claims, conflicts: [c2, c1] });
+    tick(office, 1);
+    expect(office.duels).toHaveLength(0); // same pair is on cooldown, nobody else re-duels
   });
 });
 
@@ -541,68 +547,68 @@ describe("duel choreography", () => {
   it("hp: the loser ends at 0, the winner keeps pips, for both outcomes and every kind", () => {
     for (const kind of ["sword", "orb", "arrows", "magic_sword", "arrow_sword", "arrow_magic"] as const) {
       for (const winner of [0, 1] as const) {
-        const d = fake({ kind, winner, agg: kind === "sword" || kind === "orb" || kind === "arrows" ? 0 : 1 });
-        const a = newDuelScript(),
-          b = newDuelScript();
-        for (let u = 0; u <= DUEL_FIGHT; u += 0.05) {
-          duelScript(d, 0, u, a);
-          duelScript(d, 1, u, b);
-          expect(a.hp).toBeLessThanOrEqual(DUEL_PIPS);
-          expect(b.hp).toBeGreaterThanOrEqual(0);
+        const duel = fake({ kind, winner, agg: kind === "sword" || kind === "orb" || kind === "arrows" ? 0 : 1 });
+        const sessionA = newDuelScript(),
+          sessionB = newDuelScript();
+        for (let time = 0; time <= DUEL_FIGHT; time += 0.05) {
+          duelScript(duel, 0, time, sessionA);
+          duelScript(duel, 1, time, sessionB);
+          expect(sessionA.hp).toBeLessThanOrEqual(DUEL_PIPS);
+          expect(sessionB.hp).toBeGreaterThanOrEqual(0);
         }
-        duelScript(d, 0, DUEL_FLOURISH + 0.5, a);
-        duelScript(d, 1, DUEL_FLOURISH + 0.5, b);
-        const [w, l] = winner === 0 ? [a, b] : [b, a];
-        expect(l.hp).toBe(0);
-        expect(w.hp).toBeGreaterThan(0);
-        expect(l.ko).toBe(true);
-        expect(l.pose).toBe("hurt");
-        expect(w.pose).toBe("cheer");
+        duelScript(duel, 0, DUEL_FLOURISH + 0.5, sessionA);
+        duelScript(duel, 1, DUEL_FLOURISH + 0.5, sessionB);
+        const [winnerId, loserId] = winner === 0 ? [sessionA, sessionB] : [sessionB, sessionA];
+        expect(loserId.hp).toBe(0);
+        expect(winnerId.hp).toBeGreaterThan(0);
+        expect(loserId.ko).toBe(true);
+        expect(loserId.pose).toBe("hurt");
+        expect(winnerId.pose).toBe("cheer");
       }
     }
   });
 
   it("early exchanges drop both sides evenly (no commitment to the winner)", () => {
     for (const winner of [0, 1] as const) {
-      const d = fake({ kind: "orb", styleL: "magic", styleR: "magic", winner });
-      const a = newDuelScript(),
-        b = newDuelScript();
-      duelScript(d, 0, DUEL_FINAL_AT - 0.01, a);
-      duelScript(d, 1, DUEL_FINAL_AT - 0.01, b);
-      expect(a.hp).toBe(b.hp);
-      expect(a.hp).toBeGreaterThan(0);
+      const duel = fake({ kind: "orb", styleL: "magic", styleR: "magic", winner });
+      const sessionA = newDuelScript(),
+        sessionB = newDuelScript();
+      duelScript(duel, 0, DUEL_FINAL_AT - 0.01, sessionA);
+      duelScript(duel, 1, DUEL_FINAL_AT - 0.01, sessionB);
+      expect(sessionA.hp).toBe(sessionB.hp);
+      expect(sessionA.hp).toBeGreaterThan(0);
     }
   });
 
   it("is deterministic and defenders are knocked back during the recoil", () => {
-    const d = fake();
-    const a = newDuelScript(),
-      b = newDuelScript(),
+    const duel = fake();
+    const sessionA = newDuelScript(),
+      sessionB = newDuelScript(),
       a2 = newDuelScript();
-    const u = DUEL_INTRO + DUEL_IMPACT + 0.25; // exchange 0: left attacks right
-    duelScript(d, 0, u, a);
-    duelScript(d, 0, u, a2);
-    duelScript(d, 1, u, b);
-    expect(a2).toEqual(a);
-    expect(a.atk).toBe(0);
-    expect(a.dx).toBeGreaterThan(20); // dashed forward
-    expect(b.dx).toBeGreaterThanOrEqual(DUEL_KNOCK - 2); // right defender pushed right (away)
-    expect(b.pose).toBe("hurt");
+    const time = DUEL_INTRO + DUEL_IMPACT + 0.25; // exchange 0: left attacks right
+    duelScript(duel, 0, time, sessionA);
+    duelScript(duel, 0, time, a2);
+    duelScript(duel, 1, time, sessionB);
+    expect(a2).toEqual(sessionA);
+    expect(sessionA.atk).toBe(0);
+    expect(sessionA.dx).toBeGreaterThan(20); // dashed forward
+    expect(sessionB.dx).toBeGreaterThanOrEqual(DUEL_KNOCK - 2); // right defender pushed right (away)
+    expect(sessionB.pose).toBe("hurt");
     // final blow: the loser is thrown farther and sinks
-    duelScript(d, 1, DUEL_FINAL_AT + 1.3, b);
-    expect(b.dx).toBeGreaterThanOrEqual(11);
-    expect(b.dy).toBeGreaterThan(0);
+    duelScript(duel, 1, DUEL_FINAL_AT + 1.3, sessionB);
+    expect(sessionB.dx).toBeGreaterThanOrEqual(11);
+    expect(sessionB.dy).toBeGreaterThan(0);
   });
 
   it("fighters never overlap during the choreography", () => {
     for (const kind of ["sword", "arrow_sword"] as const) {
-      const d = fake({ kind, styleR: kind === "sword" ? "sword" : "arrow", agg: kind === "sword" ? 0 : 1 });
-      const a = newDuelScript(),
-        b = newDuelScript();
-      for (let u = 0; u <= DUEL_FIGHT; u += 0.02) {
-        duelScript(d, 0, u, a);
-        duelScript(d, 1, u, b);
-        const sep = 2 * DUEL_HALF + b.dx - a.dx;
+      const duel = fake({ kind, styleR: kind === "sword" ? "sword" : "arrow", agg: kind === "sword" ? 0 : 1 });
+      const sessionA = newDuelScript(),
+        sessionB = newDuelScript();
+      for (let time = 0; time <= DUEL_FIGHT; time += 0.02) {
+        duelScript(duel, 0, time, sessionA);
+        duelScript(duel, 1, time, sessionB);
+        const sep = 2 * DUEL_HALF + sessionB.dx - sessionA.dx;
         expect(sep).toBeGreaterThanOrEqual(16 + 4);
       }
     }
@@ -611,17 +617,17 @@ describe("duel choreography", () => {
   it("the loser of a live duel is the failer's side", () => {
     for (const loser of [0, 1]) {
       const { o, a, b } = two();
-      const m = msg(a, b, "clash");
-      m.conflicts[0].failer = loser === 0 ? a : b;
-      o.setTerritory(m);
-      const d = o.duels[0];
+      const message = msg(a, b, "clash");
+      message.conflicts[0].failer = loser === 0 ? a : b;
+      o.setTerritory(message);
+      const duel = o.duels[0];
       tick(o, 2.8 + DUEL_FINAL_AT + 0.2);
-      expect(d.decided).toBe(true);
+      expect(duel.decided).toBe(true);
       const lid = loser === 0 ? a : b;
-      expect(d.winner === 0 ? d.r : d.l).toBe(lid);
-      const s = newDuelScript();
-      duelScript(d, d.winner === 0 ? 1 : 0, DUEL_FLOURISH + 0.1, s);
-      expect(s.hp).toBe(0);
+      expect(duel.winner === 0 ? duel.r : duel.l).toBe(lid);
+      const script = newDuelScript();
+      duelScript(duel, duel.winner === 0 ? 1 : 0, DUEL_FLOURISH + 0.1, script);
+      expect(script.hp).toBe(0);
     }
   });
 });
@@ -650,10 +656,10 @@ describe("duel fixes", () => {
     ...over,
   });
   it("the right-hand attacker's script carries the projectile (fly), the defender's does not", () => {
-    const d = fk();
-    const u = DUEL_INTRO + DUEL_IMPACT - DUEL_DASH / 2;
-    const s0 = duelScript(d, 0, u, newDuelScript()),
-      s1 = duelScript(d, 1, u, newDuelScript());
+    const duel = fk();
+    const time = DUEL_INTRO + DUEL_IMPACT - DUEL_DASH / 2;
+    const s0 = duelScript(duel, 0, time, newDuelScript()),
+      s1 = duelScript(duel, 1, time, newDuelScript());
     expect(s0.atk).toBe(1);
     expect(s1.fly).toBeGreaterThan(0);
     expect(s1.fly).toBeLessThan(1);
@@ -661,44 +667,47 @@ describe("duel fixes", () => {
   });
 
   it("hit-stop freezes the defender's frame", () => {
-    const d = fk({ styleL: "sword", styleR: "sword", kind: "sword", agg: 0 });
-    const a = duelScript(d, 1, DUEL_INTRO + DUEL_IMPACT + 0.01, newDuelScript());
-    const b = duelScript(d, 1, DUEL_INTRO + DUEL_IMPACT + 0.07, newDuelScript());
-    expect(a.stop && b.stop).toBe(true);
-    expect([a.frame, a.dx]).toEqual([b.frame, b.dx]);
+    const duel = fk({ styleL: "sword", styleR: "sword", kind: "sword", agg: 0 });
+    const sessionA = duelScript(duel, 1, DUEL_INTRO + DUEL_IMPACT + 0.01, newDuelScript());
+    const sessionB = duelScript(duel, 1, DUEL_INTRO + DUEL_IMPACT + 0.07, newDuelScript());
+    expect(sessionA.stop && sessionB.stop).toBe(true);
+    expect([sessionA.frame, sessionA.dx]).toEqual([sessionB.frame, sessionB.dx]);
   });
 
   it("every walking desk pair keeps fighters + K.O. knock-back inside [HALL_W, W]", () => {
-    const m = { x: 0, y: 0 };
-    let n = 0;
-    for (let a = 0; a < 8; a++)
-      for (let b = a + 1; b < 8; b++) {
-        const ax = SPOT_COLS[a % 4],
-          ay = SPOT_ROWS[(a / 4) | 0],
-          bx = SPOT_COLS[b % 4],
-          by = SPOT_ROWS[(b / 4) | 0];
+    const scratch = { x: 0, y: 0 };
+    let counter = 0;
+    for (let deskA = 0; deskA < 8; deskA++)
+      for (let deskB = deskA + 1; deskB < 8; deskB++) {
+        const ax = SPOT_COLS[deskA % 4],
+          ay = SPOT_ROWS[(deskA / 4) | 0],
+          bx = SPOT_COLS[deskB % 4],
+          by = SPOT_ROWS[(deskB / 4) | 0];
         if (Math.hypot(ax - bx, ay - by) > 130) continue;
-        duelMidOfDesks(a, b, m);
-        n++;
-        expect(m.x - DUEL_HALF - DUEL_KNOCK_KO - 8).toBeGreaterThanOrEqual(HALL_W);
-        expect(m.x + DUEL_HALF + DUEL_KNOCK_KO + 8).toBeLessThanOrEqual(W);
+        duelMidOfDesks(deskA, deskB, scratch);
+        counter++;
+        expect(scratch.x - DUEL_HALF - DUEL_KNOCK_KO - 8).toBeGreaterThanOrEqual(HALL_W);
+        expect(scratch.x + DUEL_HALF + DUEL_KNOCK_KO + 8).toBeLessThanOrEqual(WORLD_W);
       }
-    expect(n).toBeGreaterThan(8);
+    expect(counter).toBeGreaterThan(8);
   });
 
   it("a bystander in the movement band turns a walking duel into a still one", () => {
-    const o = newOffice();
-    const a = sid(),
+    const office = newOffice();
+    const sessionA = sid(),
       mid = sid(),
-      b = sid();
-    seat(o, a);
-    seat(o, mid);
-    seat(o, b);
-    expect([emp(o, a).deskIdx, emp(o, mid).deskIdx, emp(o, b).deskIdx]).toEqual([0, 1, 2]);
-    o.setTerritory({ claims: [], conflicts: [{ file: "x.ts", sids: [a, b], level: "clash", since: 1 }] });
-    expect(o.duels).toHaveLength(1);
-    expect(o.duels[0].walk).toBe(false);
-    expect(o.duels[0].still).toBe(true);
-    expect(emp(o, a).state).toBe("SEATED");
+      sessionB = sid();
+    seat(office, sessionA);
+    seat(office, mid);
+    seat(office, sessionB);
+    expect([emp(office, sessionA).deskIdx, emp(office, mid).deskIdx, emp(office, sessionB).deskIdx]).toEqual([0, 1, 2]);
+    office.setTerritory({
+      claims: [],
+      conflicts: [{ file: "x.ts", sids: [sessionA, sessionB], level: "clash", since: 1 }],
+    });
+    expect(office.duels).toHaveLength(1);
+    expect(office.duels[0].walk).toBe(false);
+    expect(office.duels[0].still).toBe(true);
+    expect(emp(office, sessionA).state).toBe("SEATED");
   });
 });

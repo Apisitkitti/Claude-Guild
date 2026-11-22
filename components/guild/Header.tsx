@@ -14,7 +14,7 @@ const LOCALE_BUTTONS: { locale: Locale; label: string }[] = [
   { locale: "en", label: "EN" },
 ];
 
-export function Header({
+export const Header = ({
   mode,
   conn,
   note,
@@ -41,12 +41,12 @@ export function Header({
   full: boolean;
   collapsed: boolean;
   officeRef: OfficeRef;
-  onSwitchMode: (m: Mode) => void;
+  onSwitchMode: (mode: Mode) => void;
   onTogglePause: () => void;
-  onSetSpeed: (n: number) => void;
+  onSetSpeed: (speed: number) => void;
   onToggleFull: () => void;
   onToggleCollapsed: () => void;
-}) {
+}) => {
   const bump = useTreasuryBump(treasury);
   const { perm: notifyPerm, on: notifyOn, toggle: toggleNotify } = notify;
   const locale = getLocale();
@@ -88,9 +88,9 @@ export function Header({
           <button onClick={() => officeRef.current?.testHand()}>{m.header_test_hand()}</button>
           <button onClick={onTogglePause}>{paused ? m.header_resume() : m.header_pause()}</button>
           <div className="seg">
-            {SPEED_STEPS.map((n) => (
-              <button key={n} className={speed === n ? "on" : ""} onClick={() => onSetSpeed(n)}>
-                {n}x
+            {SPEED_STEPS.map((step) => (
+              <button key={step} className={speed === step ? "on" : ""} onClick={() => onSetSpeed(step)}>
+                {step}x
               </button>
             ))}
           </div>
@@ -110,15 +110,15 @@ export function Header({
         </button>
       )}
       <div className="seg" role="group" aria-label={m.header_language()}>
-        {LOCALE_BUTTONS.map((b) => (
+        {LOCALE_BUTTONS.map((button) => (
           <button
-            key={b.locale}
-            lang={b.locale}
-            className={locale === b.locale ? "on" : ""}
-            aria-pressed={locale === b.locale}
-            onClick={() => setLocale(b.locale)}
+            key={button.locale}
+            lang={button.locale}
+            className={locale === button.locale ? "on" : ""}
+            aria-pressed={locale === button.locale}
+            onClick={() => setLocale(button.locale)}
           >
-            {b.label}
+            {button.label}
           </button>
         ))}
       </div>
@@ -130,4 +130,4 @@ export function Header({
       </button>
     </header>
   );
-}
+};

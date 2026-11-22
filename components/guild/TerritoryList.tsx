@@ -4,38 +4,38 @@ import { m } from "@/paraglide/messages";
 import { SectionHeading } from "./Section";
 import type { OfficeRef } from "./types";
 
-function ConflictItem({
-  c,
+const ConflictItem = ({
+  conflict,
   onSelect,
   onDismiss,
 }: {
-  c: ConflictRow;
+  conflict: ConflictRow;
   onSelect: (id: string) => void;
   onDismiss: () => void;
-}) {
-  const clash = c.level === "clash";
+}) => {
+  const clash = conflict.level === "clash";
   return (
     <li className={`conflict ${clash ? "clash" : "overlap"}`}>
       <div className="chead">
-        <span className="cfile" title={c.file}>
-          {c.file}
+        <span className="cfile" title={conflict.file}>
+          {conflict.file}
         </span>
         <button
           type="button"
           className="cdismiss"
           onClick={onDismiss}
-          aria-label={m.terr_dismiss_label({ file: c.file })}
+          aria-label={m.terr_dismiss_label({ file: conflict.file })}
           title={m.terr_dismiss_title()}
         >
           ✕
         </button>
       </div>
       <div className="cwho">
-        {c.names.map((n, i) => (
-          <span key={c.sids[i]}>
+        {conflict.names.map((name, i) => (
+          <span key={conflict.sids[i]}>
             {i > 0 && <span className="vs"> vs </span>}
-            <button type="button" className="cname" onClick={() => onSelect(c.sids[i])}>
-              {n}
+            <button type="button" className="cname" onClick={() => onSelect(conflict.sids[i])}>
+              {name}
             </button>
           </span>
         ))}
@@ -45,9 +45,9 @@ function ConflictItem({
       </span>
     </li>
   );
-}
+};
 
-export function TerritoryList({
+export const TerritoryList = ({
   conflicts,
   hidden,
   onToggle,
@@ -57,7 +57,7 @@ export function TerritoryList({
   hidden: boolean;
   onToggle: () => void;
   officeRef: OfficeRef;
-}) {
+}) => {
   return (
     <>
       <SectionHeading id="terr" hidden={hidden} onToggle={onToggle} count={conflicts.length}>
@@ -66,12 +66,12 @@ export function TerritoryList({
       <div className="terrsec" id="sec-terr" hidden={hidden}>
         <ul className="conflicts">
           {conflicts.length === 0 && <li className="empty">{m.terr_empty()}</li>}
-          {conflicts.map((c) => (
+          {conflicts.map((conflict) => (
             <ConflictItem
-              key={c.key}
-              c={c}
+              key={conflict.key}
+              conflict={conflict}
               onSelect={(id) => officeRef.current?.select(id)}
-              onDismiss={() => officeRef.current?.dismissConflict(c.key)}
+              onDismiss={() => officeRef.current?.dismissConflict(conflict.key)}
             />
           ))}
         </ul>
@@ -79,4 +79,4 @@ export function TerritoryList({
       </div>
     </>
   );
-}
+};

@@ -2,9 +2,9 @@ import { m } from "@/paraglide/messages";
 
 import type { AttentionMsgRow, Employee, HookEvt, Office, ReceiptMsgRow } from "./engine";
 
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
-const randInt = (a: number, b: number) => Math.floor(rand(a, b + 1));
-const pick = <T>(a: readonly T[]): T => a[Math.floor(Math.random() * a.length)];
+const rand = (min: number, max: number) => min + Math.random() * (max - min);
+const randInt = (min: number, max: number) => Math.floor(rand(min, max + 1));
+const pick = <T>(items: readonly T[]): T => items[Math.floor(Math.random() * items.length)];
 
 const HEX_RADIX = 16;
 const HEX_LEN = 8;
@@ -17,8 +17,8 @@ interface Range {
   min: number;
   max: number;
 }
-const span = (r: Range) => rand(r.min, r.max);
-const spanInt = (r: Range) => randInt(r.min, r.max);
+const span = (range: Range) => rand(range.min, range.max);
+const spanInt = (range: Range) => randInt(range.min, range.max);
 
 // ---- demo pacing: tool mix weights ----
 const W_READ = 25;
@@ -137,23 +137,23 @@ const WEIGHTS: [string, number][] = [
   ["TodoWrite", W_TODO],
   ["mcp__linear__list_issues", W_SMALL],
 ];
-const TOTAL = WEIGHTS.reduce((s, w) => s + w[1], 0);
+const TOTAL = WEIGHTS.reduce((sum, entry) => sum + entry[1], 0);
 
-function pickTool(): string {
-  let r = Math.random() * TOTAL;
-  for (const [n, w] of WEIGHTS) {
-    if ((r -= w) <= 0) return n;
+const pickTool = (): string => {
+  let roll = Math.random() * TOTAL;
+  for (const [toolName, weight] of WEIGHTS) {
+    if ((roll -= weight) <= 0) return toolName;
   }
   return "Read";
-}
+};
 
-function toolInput(tool: string, project: string, cwd: string): Record<string, unknown> {
-  const f = cwd + "/" + pick(FILES[project] ?? FILES.portfolio);
+const toolInput = (tool: string, project: string, cwd: string): Record<string, unknown> => {
+  const file = cwd + "/" + pick(FILES[project] ?? FILES.portfolio);
   switch (tool) {
     case "Read":
     case "Edit":
     case "Write":
-      return { file_path: f };
+      return { file_path: file };
     case "Grep":
       return { pattern: pick(["useEffect", "TODO", "handleSubmit", "export default"]) };
     case "Glob":
@@ -169,7 +169,7 @@ function toolInput(tool: string, project: string, cwd: string): Record<string, u
     default:
       return {};
   }
-}
+};
 
 type Gen = Generator<number, void, void>;
 
@@ -197,10 +197,10 @@ export class Simulator {
       bestN = Infinity;
     for (let i = 0; i < live.length; i++) {
       for (let j = i + 1; j < live.length; j++) {
-        const n =
+        const dist =
           (this.pairSeen.get([live[i].look.cls, live[j].look.cls].sort().join("+")) ?? 0) + Math.random() * PAIR_JITTER;
-        if (n < bestN) {
-          bestN = n;
+        if (dist < bestN) {
+          bestN = dist;
           best = [live[i], live[j]];
         }
       }
@@ -212,36 +212,36 @@ export class Simulator {
   private *territory(): Gen {
     yield span(TERR_START_DELAY);
     for (;;) {
-      const live = [...this.o.employees.values()].filter((e) => e.state === "SEATED" && this.active.has(e.id));
+      const live = [...this.o.employees.values()].filter((emp) => emp.state === "SEATED" && this.active.has(emp.id));
       if (live.length >= 2) {
-        const [a, b] = this.pickPair(live);
-        const key = [a.look.cls, b.look.cls].sort().join("+");
+        const [first, second] = this.pickPair(live);
+        const key = [first.look.cls, second.look.cls].sort().join("+");
         this.pairSeen.set(key, (this.pairSeen.get(key) ?? 0) + 1);
-        const project = this.active.get(a.id) ?? "portfolio";
+        const project = this.active.get(first.id) ?? "portfolio";
         const file = pick(FILES[project] ?? FILES.portfolio);
-        const mk = (n: number) => Array.from({ length: n }, (_, i) => (i === 0 ? file : `src/fake${i}.ts`));
+        const mk = (count: number) => Array.from({ length: count }, (_, i) => (i === 0 ? file : `src/fake${i}.ts`));
         const claims = [
-          { sid: a.id, files: mk(spanInt(TERR_OVERLAP_FILES)) },
-          { sid: b.id, files: mk(spanInt(TERR_CLASH_FILES)) },
+          { sid: first.id, files: mk(spanInt(TERR_OVERLAP_FILES)) },
+          { sid: second.id, files: mk(spanInt(TERR_CLASH_FILES)) },
         ];
         const msg = (level: "overlap" | "clash") => ({
           claims,
-          conflicts: [{ file, sids: [a.id, b.id], level, since: Date.now() }],
+          conflicts: [{ file, sids: [first.id, second.id], level, since: Date.now() }],
         });
         this.o.setTerritory(msg("overlap"));
         const total = span(TERR_TOTAL);
         let spent = 0;
         if (Math.random() < TERR_CLASH_CHANCE) {
-          const w = span(TERR_CLASH_AFTER);
-          yield w;
-          spent = w;
+          const wait = span(TERR_CLASH_AFTER);
+          yield wait;
+          spent = wait;
           // b's edit fails on the file a holds: a keeps the land (and wins the duel)
           this.emit({
-            session_id: b.id,
-            cwd: b.cwd,
+            session_id: second.id,
+            cwd: second.cwd,
             hook_event_name: "PostToolUseFailure",
             tool_name: "Edit",
-            tool_input: { file_path: b.cwd + "/" + file },
+            tool_input: { file_path: second.cwd + "/" + file },
             error: "File has been modified since read",
           });
           this.o.setTerritory(msg("clash"));
@@ -261,24 +261,24 @@ export class Simulator {
     if (rows) this.demoRows = rows;
     const out: AttentionMsgRow[] = [];
     const seen = new Set<string>();
-    for (const e of this.o.employees.values()) {
-      if (e.state !== "SEATED" || e.act !== "handup" || !this.active.has(e.id)) continue;
-      seen.add(e.id);
-      let since = this.permSince.get(e.id);
+    for (const emp of this.o.employees.values()) {
+      if (emp.state !== "SEATED" || emp.act !== "handup" || !this.active.has(emp.id)) continue;
+      seen.add(emp.id);
+      let since = this.permSince.get(emp.id);
       if (since === undefined) {
         since = Date.now();
-        this.permSince.set(e.id, since);
+        this.permSince.set(emp.id, since);
       }
       out.push({
-        key: `${e.id}|permission|${since}`,
-        sid: e.id,
+        key: `${emp.id}|permission|${since}`,
+        sid: emp.id,
         kind: "permission",
         since,
       });
     }
     for (const id of [...this.permSince.keys()]) if (!seen.has(id)) this.permSince.delete(id);
-    for (const r of this.demoRows) out.push(r);
-    const sig = out.map((r) => `${r.key}|${r.count ?? ""}`).join("\n");
+    for (const row of this.demoRows) out.push(row);
+    const sig = out.map((row) => `${row.key}|${row.count ?? ""}`).join("\n");
     if (sig === this.attnSig) return;
     this.attnSig = sig;
     this.o.setAttention(out);
@@ -295,22 +295,23 @@ export class Simulator {
   private *attention(): Gen {
     yield span(ATTN_START_DELAY);
     for (;;) {
-      const live = () => [...this.o.employees.values()].filter((e) => e.state === "SEATED" && this.active.has(e.id));
-      let l = live();
-      if (l.length) {
-        const a = pick(l);
+      const live = () =>
+        [...this.o.employees.values()].filter((emp) => emp.state === "SEATED" && this.active.has(emp.id));
+      let candidates = live();
+      if (candidates.length) {
+        const first = pick(candidates);
         const t0 = Date.now();
         const cmd = pick(["npm test", "npx tsc --noEmit", "pnpm build"]);
-        for (let n = LOOP_FIRST; n <= LOOP_LAST; n++) {
+        for (let step = LOOP_FIRST; step <= LOOP_LAST; step++) {
           this.pushAttention([
             {
-              key: `${a.id}|loop|demo`,
-              sid: a.id,
+              key: `${first.id}|loop|demo`,
+              sid: first.id,
               kind: "loop",
               since: t0,
               tool: "Bash",
               target: cmd,
-              count: n,
+              count: step,
               error: "Error: expected 3 but received 2",
             },
           ]);
@@ -319,13 +320,13 @@ export class Simulator {
         this.pushAttention([]);
       }
       yield span(ATTN_GAP);
-      l = live();
-      if (l.length) {
-        const b = pick(l);
+      candidates = live();
+      if (candidates.length) {
+        const second = pick(candidates);
         this.pushAttention([
           {
-            key: `${b.id}|asked|demo`,
-            sid: b.id,
+            key: `${second.id}|asked|demo`,
+            sid: second.id,
             kind: "asked",
             since: Date.now(),
             tail: m.demo_asked_tail(),
@@ -388,7 +389,7 @@ export class Simulator {
     if (this.demoReceipts.length) this.o.setReceipts(this.demoReceipts);
     for (;;) {
       yield span(RECEIPT_INTERVAL);
-      const live = [...this.o.employees.values()].filter((e) => e.state === "SEATED" && this.active.has(e.id));
+      const live = [...this.o.employees.values()].filter((emp) => emp.state === "SEATED" && this.active.has(emp.id));
       if (!live.length) continue;
       this.demoReceipts = [this.makeReceipt(pick(live).id, Date.now()), ...this.demoReceipts].slice(0, RECEIPT_KEEP);
       this.o.setReceipts(this.demoReceipts);
@@ -401,7 +402,7 @@ export class Simulator {
 
   addSession() {
     const used = new Set(this.active.values());
-    const free = PROJECTS.filter((p) => !used.has(p));
+    const free = PROJECTS.filter((candidate) => !used.has(candidate));
     const project = free.length ? pick(free) : pick(PROJECTS);
     const id = hex8() + "-" + hex8().slice(0, HEX_SHORT_LEN);
     this.active.set(id, project);
@@ -410,11 +411,11 @@ export class Simulator {
 
   update() {
     const clock = this.o.clock;
-    for (const r of [...this.runners]) {
-      if (clock >= r.wake) {
-        const n = r.gen.next();
-        if (n.done) this.runners.splice(this.runners.indexOf(r), 1);
-        else r.wake = clock + n.value;
+    for (const runner of [...this.runners]) {
+      if (clock >= runner.wake) {
+        const next = runner.gen.next();
+        if (next.done) this.runners.splice(this.runners.indexOf(runner), 1);
+        else runner.wake = clock + next.value;
       }
     }
     if (this.active.size === 0) this.addSession();
@@ -442,11 +443,11 @@ export class Simulator {
     send("SessionStart", { source: "startup" });
     yield span(STARTUP_DELAY);
     const prompts = spanInt(PROMPT_COUNT);
-    for (let p = 0; p < prompts; p++) {
+    for (let promptIdx = 0; promptIdx < prompts; promptIdx++) {
       send("UserPromptSubmit", { prompt: "do the thing" });
       yield span(PROMPT_PAUSE);
       const steps = spanInt(STEP_COUNT);
-      for (let s = 0; s < steps; s++) {
+      for (let stepIdx = 0; stepIdx < steps; stepIdx++) {
         used += spanInt(CONTEXT_GROWTH);
         if (used > limit * CONTEXT_COMPACT_AT || Math.random() < CONTEXT_COMPACT_CHANCE) {
           used = spanInt(CONTEXT_AFTER_COMPACT);
@@ -496,8 +497,8 @@ export class Simulator {
     yield INTERN_START_DELAY;
     if (!alive()) return;
     send("SubagentStart");
-    const n = spanInt(INTERN_STEPS);
-    for (let k = 0; k < n; k++) {
+    const steps = spanInt(INTERN_STEPS);
+    for (let k = 0; k < steps; k++) {
       yield span(INTERN_STEP_DELAY);
       if (!alive()) return;
       const tool = pick(["Read", "Grep"]);

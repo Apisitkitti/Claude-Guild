@@ -1,11 +1,11 @@
 import { isForeignOrigin, snapshot, subscribe } from "@/lib/store";
 
-export function GET(req: Request) {
+export const GET = (req: Request) => {
   if (isForeignOrigin(req)) return new Response("forbidden", { status: 403 });
   const encoder = new TextEncoder();
   let unsubscribe = () => {};
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start: (controller) => {
       const send = (chunk: string) => controller.enqueue(encoder.encode(chunk));
       send(`event: snapshot\ndata: ${JSON.stringify(snapshot())}\n\n`);
       const off = subscribe(send);
@@ -17,7 +17,7 @@ export function GET(req: Request) {
       };
       req.signal.addEventListener("abort", unsubscribe);
     },
-    cancel() {
+    cancel: () => {
       unsubscribe();
     },
   });
@@ -29,4 +29,4 @@ export function GET(req: Request) {
       "X-Accel-Buffering": "no",
     },
   });
-}
+};

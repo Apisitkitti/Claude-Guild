@@ -14,7 +14,7 @@ const noopSub = () => () => {};
 const forcedDemoNow = () => new URLSearchParams(window.location.search).has("demo");
 
 /** Live/Demo mode state plus the effect that wires the engine to the SSE stream or the simulator. */
-export function useDataSource(officeRef: OfficeRef, mounted: boolean, prevClashRef: RefObject<Set<string> | null>) {
+export const useDataSource = (officeRef: OfficeRef, mounted: boolean, prevClashRef: RefObject<Set<string> | null>) => {
   const speedRef = useRef(1);
   const forcedDemo = useSyncExternalStore(noopSub, forcedDemoNow, () => false);
   const [chosen, setChosen] = useState<Mode | null>(null);
@@ -25,62 +25,63 @@ export function useDataSource(officeRef: OfficeRef, mounted: boolean, prevClashR
 
   const mode: Mode = chosen ?? (forcedDemo ? "demo" : "live");
 
-  const switchMode = (m: Mode) => {
-    if (m === mode) return;
+  const switchMode = (next: Mode) => {
+    if (next === mode) return;
     setNote("");
     setConn("connecting");
     setPaused(false);
     officeRef.current?.setPaused(false);
-    setChosen(m);
+    setChosen(next);
   };
   const togglePause = () => {
-    const p = !paused;
-    setPaused(p);
-    officeRef.current?.setPaused(p);
+    const nextPaused = !paused;
+    setPaused(nextPaused);
+    officeRef.current?.setPaused(nextPaused);
   };
   const setSpeedBoth = useCallback(
-    (n: number) => {
-      setSpeed(n);
-      speedRef.current = n;
-      officeRef.current?.setSpeed(n);
+    (value: number) => {
+      setSpeed(value);
+      speedRef.current = value;
+      officeRef.current?.setSpeed(value);
     },
     [officeRef],
   );
 
   useEffect(() => {
-    const o = officeRef.current;
-    if (!o || !mounted) return;
-    o.clear();
+    const office = officeRef.current;
+    if (!office || !mounted) return;
+    office.clear();
     prevClashRef.current = null;
     if (mode === "demo") {
-      o.setSpeed(speedRef.current);
-      o.attachSim(new Simulator(o));
-      return () => o.attachSim(null);
+      office.setSpeed(speedRef.current);
+      office.attachSim(new Simulator(office));
+      return () => office.attachSim(null);
     }
-    o.setSpeed(1);
+    office.setSpeed(1);
     let opened = false;
     let errored = false;
     const live = connectLive({
-      onSnapshot: (s) => {
-        o.loadSnapshot(s);
+      onSnapshot: (snapshot) => {
+        office.loadSnapshot(snapshot);
         // baseline for clash notifications: whatever the first snapshot already contains
         if (prevClashRef.current === null)
           prevClashRef.current = new Set(
-            o
+            office
               .conflictRows()
-              .filter((c) => c.level === "clash")
-              .map((c) => c.key),
+              .filter((conflict) => conflict.level === "clash")
+              .map((conflict) => conflict.key),
           );
       },
-      onEvent: (e) => o.event(e),
-      onTerritory: (m) => o.setTerritory(m),
-      onAttention: (rows) => o.setAttention(rows),
-      onReceipts: (rows) => o.setReceipts(rows),
-      onContext: (m) => {
-        if (m && typeof m.session_id === "string") o.setContext(m.session_id, m.used, m.limit, !!m.limitGuessed);
+      onEvent: (event) => office.event(event),
+      onTerritory: (territory) => office.setTerritory(territory),
+      onAttention: (rows) => office.setAttention(rows),
+      onReceipts: (rows) => office.setReceipts(rows),
+      onContext: (context) => {
+        if (context && typeof context.session_id === "string")
+          office.setContext(context.session_id, context.used, context.limit, !!context.limitGuessed);
       },
-      onStatus: (s) => {
-        if (s === "open") {
+      onStatus: (status) => {
+        if (status === "open") {
           opened = true;
           setConn("connected");
         } else {
@@ -109,4 +110,4 @@ export function useDataSource(officeRef: OfficeRef, mounted: boolean, prevClashR
   }, [mode, mounted, officeRef, prevClashRef]);
 
   return { mode, conn, note, speed, paused, switchMode, togglePause, setSpeed: setSpeedBoth };
-}
+};

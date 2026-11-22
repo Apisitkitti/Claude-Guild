@@ -5,72 +5,72 @@ import { agoText } from "./format";
 import { useReceiptDismissals } from "./hooks/useReceiptDismissals";
 import { SectionHeading } from "./Section";
 
-function ReceiptItem({
-  r,
+const ReceiptItem = ({
+  receipt,
   now,
   selected,
   onSelect,
   onDismiss,
 }: {
-  r: ReceiptRow;
+  receipt: ReceiptRow;
   now: number;
   selected: boolean;
   onSelect: () => void;
   onDismiss: () => void;
-}) {
-  const chips: [string, string, number, string][] = [
-    ["📝", m.receipt_label_files(), r.files, m.receipt_hint_files()],
-    ["✅", m.receipt_label_recovered(), r.recovered, m.receipt_hint_recovered()],
-    ["📦", m.receipt_label_commits(), r.commits, m.receipt_hint_commits()],
-    ["↩", m.receipt_label_amends(), r.amends, m.receipt_hint_amends()],
-    ["☑", m.receipt_label_tasks(), r.tasks, m.receipt_hint_tasks()],
+}) => {
+  const chips: { icon: string; label: string; count: number; hint: string }[] = [
+    { icon: "📝", label: m.receipt_label_files(), count: receipt.files, hint: m.receipt_hint_files() },
+    { icon: "✅", label: m.receipt_label_recovered(), count: receipt.recovered, hint: m.receipt_hint_recovered() },
+    { icon: "📦", label: m.receipt_label_commits(), count: receipt.commits, hint: m.receipt_hint_commits() },
+    { icon: "↩", label: m.receipt_label_amends(), count: receipt.amends, hint: m.receipt_hint_amends() },
+    { icon: "☑", label: m.receipt_label_tasks(), count: receipt.tasks, hint: m.receipt_hint_tasks() },
   ];
-  const sum = receiptSummary(r);
+  const sum = receiptSummary(receipt);
   return (
-    <li className={`rcpt ${r.verdict}${selected ? " hl" : ""}`}>
+    <li className={`rcpt ${receipt.verdict}${selected ? " hl" : ""}`}>
       <button
         type="button"
         className="rsel"
         onClick={onSelect}
-        disabled={!r.live}
-        title={`${sum || m.receipt_verdict_none()} · ${m.receipt_calls({ calls: r.calls })} · ${m.receipt_per_hook()}${r.live ? "" : ` · ${m.receipt_left_guild()}`}`}
+        disabled={!receipt.live}
+        title={`${sum || m.receipt_verdict_none()} · ${m.receipt_calls({ calls: receipt.calls })} · ${m.receipt_per_hook()}${receipt.live ? "" : ` · ${m.receipt_left_guild()}`}`}
       >
         <span className="rhead">
           <b>
-            {r.tag} <span className="rproj">{r.project}</span>
+            {receipt.tag} <span className="rproj">{receipt.project}</span>
           </b>
-          <span className={`rverdict ${r.verdict}`}>{receiptVerdictText(r.verdict)}</span>
+          <span className={`rverdict ${receipt.verdict}`}>{receiptVerdictText(receipt.verdict)}</span>
         </span>
         <span className="rchips">
           {chips
-            .filter((c) => c[2] > 0)
-            .map((c) => (
-              <span key={c[1]} className="rchip" title={c[3]}>
-                <span aria-hidden="true">{c[0]}</span> {c[1]} {c[2]}
+            .filter((chip) => chip.count > 0)
+            .map((chip) => (
+              <span key={chip.label} className="rchip" title={chip.hint}>
+                <span aria-hidden="true">{chip.icon}</span> {chip.label} {chip.count}
               </span>
             ))}
-          {sum === "" && <span className="rnone">{m.receipt_calls_none({ calls: r.calls })}</span>}
+          {sum === "" && <span className="rnone">{m.receipt_calls_none({ calls: receipt.calls })}</span>}
         </span>
         <span className="rage">
-          {agoText(r.closedAt, now)}
-          {r.squire > 0 ? ` · ${m.receipt_squires({ count: r.squire })}` : ""}
-          {r.staleRed && r.verdict !== "red" ? ` · ${m.receipt_stale_red()}` : ""}
+          {agoText(receipt.closedAt, now)}
+          {receipt.squire > 0 ? ` · ${m.receipt_squires({ count: receipt.squire })}` : ""}
+          {receipt.staleRed && receipt.verdict !== "red" ? ` · ${m.receipt_stale_red()}` : ""}
         </span>
       </button>
       <button
         type="button"
         className="rdismiss"
         onClick={onDismiss}
-        aria-label={m.receipt_dismiss_label({ tag: r.tag })}
+        aria-label={m.receipt_dismiss_label({ tag: receipt.tag })}
         title={m.receipt_dismiss_title()}
       >
         ✕
       </button>
     </li>
   );
-}
+};
 
-export function ReceiptList({
+export const ReceiptList = ({
   rows,
   now,
   selectedId,
@@ -84,7 +84,7 @@ export function ReceiptList({
   hidden: boolean;
   onToggle: () => void;
   onJump: (sid: string) => void;
-}) {
+}) => {
   const { visible, dismiss, clearAll } = useReceiptDismissals(rows);
   return (
     <>
@@ -101,14 +101,14 @@ export function ReceiptList({
         )}
         <ul className="rcpts">
           {visible.length === 0 && <li className="empty">{m.receipt_empty()}</li>}
-          {visible.map((r) => (
+          {visible.map((receipt) => (
             <ReceiptItem
-              key={r.id}
-              r={r}
-              now={now || r.closedAt}
-              selected={r.sid === selectedId}
-              onSelect={() => onJump(r.sid)}
-              onDismiss={() => dismiss(r.id)}
+              key={receipt.id}
+              receipt={receipt}
+              now={now || receipt.closedAt}
+              selected={receipt.sid === selectedId}
+              onSelect={() => onJump(receipt.sid)}
+              onDismiss={() => dismiss(receipt.id)}
             />
           ))}
         </ul>
@@ -116,4 +116,4 @@ export function ReceiptList({
       </div>
     </>
   );
-}
+};

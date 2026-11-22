@@ -9,7 +9,7 @@ import { Roster } from "./Roster";
 import { TerritoryList } from "./TerritoryList";
 import type { OfficeRef } from "./types";
 
-export function SidePanel({
+export const SidePanel = ({
   view,
   attention,
   receipts,
@@ -31,7 +31,7 @@ export function SidePanel({
   filter: SessionFilter;
   onJump: (sid: string) => void;
   officeRef: OfficeRef;
-}) {
+}) => {
   const [secHidden, toggleSec] = usePersistedFlags("office.sectionsHidden");
   return (
     <aside className="panel" hidden={collapsed}>
@@ -68,4 +68,4 @@ export function SidePanel({
       <QuestLog log={view.log} hiddenSet={hiddenSet} hidden={!!secHidden.log} onToggle={() => toggleSec("log")} />
     </aside>
   );
-}
+};

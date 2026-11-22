@@ -12,7 +12,7 @@ const NOTIFY_COOLDOWN_SECONDS = 30;
 export type Notify = { perm: NotificationPermission | "unsupported"; on: boolean; toggle: () => void };
 
 /** Desktop notifications for waiting adventurers (Live only) and new clashes, with a persisted opt-in. */
-export function useNotifications({
+export const useNotifications = ({
   officeRef,
   mode,
   view,
@@ -29,16 +29,16 @@ export function useNotifications({
   /** null until the first live snapshot has been applied (baseline); reset whenever the data source changes */
   prevClashRef: RefObject<Set<string> | null>;
   revealSelect: (id: string) => void;
-}): Notify {
+}): Notify => {
   const [perm, setPerm] = useState<NotificationPermission | "unsupported">("unsupported");
   const [on, setOn] = useState(false);
   const onRef = useRef(false);
   const prevWaiting = useRef<Set<string>>(new Set());
   const lastNotified = useRef<Map<string, number>>(new Map());
 
-  const saveNotify = (v: boolean) => {
+  const saveNotify = (enabled: boolean) => {
     try {
-      localStorage.setItem("guild.notify", v ? "1" : "0");
+      localStorage.setItem("guild.notify", enabled ? "1" : "0");
     } catch {}
   };
   const toggle = async () => {
@@ -49,10 +49,10 @@ export function useNotifications({
       return;
     }
     try {
-      const p =
+      const result =
         Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
-      setPerm(p);
-      const next = p === "granted";
+      setPerm(result);
+      const next = result === "granted";
       setOn(next);
       saveNotify(next);
     } catch {}
@@ -77,62 +77,67 @@ export function useNotifications({
     }
     const prev = prevClashRef.current;
     if (prev === null) return; // no baseline yet: pre-existing clashes never notify
-    const cur = new Set(clashes.map((c) => c.key));
-    prevClashRef.current = cur;
-    for (const k of [...lastNotified.current.keys()])
-      if (k.startsWith(CLASH_PREFIX) && !cur.has(k.slice(CLASH_PREFIX.length))) lastNotified.current.delete(k);
-    const fresh = clashes.filter((c) => !prev.has(c.key));
+    const current = new Set(clashes.map((conflict) => conflict.key));
+    prevClashRef.current = current;
+    for (const key of [...lastNotified.current.keys()])
+      if (key.startsWith(CLASH_PREFIX) && !current.has(key.slice(CLASH_PREFIX.length)))
+        lastNotified.current.delete(key);
+    const fresh = clashes.filter((conflict) => !prev.has(conflict.key));
     if (!fresh.length || !onRef.current || typeof Notification === "undefined" || !document.hidden) return;
     const now = Date.now();
-    for (const c of fresh.slice(0, 2)) {
-      const last = lastNotified.current.get(CLASH_PREFIX + c.key);
+    for (const conflict of fresh.slice(0, 2)) {
+      const last = lastNotified.current.get(CLASH_PREFIX + conflict.key);
       if (last !== undefined && now - last < NOTIFY_COOLDOWN_SECONDS * MS_PER_SECOND) continue;
-      lastNotified.current.set(CLASH_PREFIX + c.key, now);
+      lastNotified.current.set(CLASH_PREFIX + conflict.key, now);
       try {
-        const n = new Notification(m.notify_clash_title({ file: c.file }), {
-          body: c.names.join(" vs "),
-          tag: `guild-clash-${c.key}`,
+        const notification = new Notification(m.notify_clash_title({ file: conflict.file }), {
+          body: conflict.names.join(" vs "),
+          tag: `guild-clash-${conflict.key}`,
         });
-        n.onclick = () => {
+        notification.onclick = () => {
           window.focus();
-          officeRef.current?.select(c.sids[0]);
-          n.close();
+          officeRef.current?.select(conflict.sids[0]);
+          notification.close();
         };
       } catch {}
     }
   }, [clashes, mode, prevClashRef, officeRef]);
 
   useEffect(() => {
-    const cur = new Set<string>();
+    const current = new Set<string>();
     const fresh: WaitingRow[] = [];
-    for (const r of waiting) {
-      cur.add(r.id);
-      if (!prevWaiting.current.has(r.id)) fresh.push(r);
+    for (const row of waiting) {
+      current.add(row.id);
+      if (!prevWaiting.current.has(row.id)) fresh.push(row);
     }
-    prevWaiting.current = cur;
+    prevWaiting.current = current;
     for (const id of [...lastNotified.current.keys()])
-      if (!id.startsWith(CLASH_PREFIX) && !view.roster.some((r) => r.id === id) && !(view.hiddenIds ?? []).includes(id))
+      if (
+        !id.startsWith(CLASH_PREFIX) &&
+        !view.roster.some((row) => row.id === id) &&
+        !(view.hiddenIds ?? []).includes(id)
+      )
         lastNotified.current.delete(id);
     if (!fresh.length || !onRef.current || typeof Notification === "undefined") return;
     if (!document.hidden && document.hasFocus()) return;
     const now = Date.now();
-    for (const r of fresh) {
-      const last = lastNotified.current.get(r.id);
+    for (const row of fresh) {
+      const last = lastNotified.current.get(row.id);
       if (last !== undefined && now - last < NOTIFY_COOLDOWN_SECONDS * MS_PER_SECOND) continue;
-      lastNotified.current.set(r.id, now);
+      lastNotified.current.set(row.id, now);
       try {
-        const n = new Notification(m.notify_waiting_title({ project: r.project || r.tag }), {
-          body: `${r.tag}${r.status ? `: ${r.status}` : ""}`,
-          tag: `guild-${r.id}`,
+        const notification = new Notification(m.notify_waiting_title({ project: row.project || row.tag }), {
+          body: `${row.tag}${row.status ? `: ${row.status}` : ""}`,
+          tag: `guild-${row.id}`,
         });
-        n.onclick = () => {
+        notification.onclick = () => {
           window.focus();
-          revealSelect(r.id);
-          n.close();
+          revealSelect(row.id);
+          notification.close();
         };
       } catch {}
     }
   }, [waiting, view.roster, view.hiddenIds, revealSelect]);
 
   return { perm, on, toggle };
-}
+};

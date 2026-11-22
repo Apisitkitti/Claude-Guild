@@ -47,10 +47,10 @@ const argv = process.argv.slice(2);
 const flags = {};
 const pos = [];
 for (let i = 0; i < argv.length; i++) {
-  const a = argv[i];
-  if (a === "--help" || a === "-h") flags.help = true;
-  else if (a.startsWith("--")) flags[a.slice(2)] = argv[++i];
-  else pos.push(a);
+  const arg = argv[i];
+  if (arg === "--help" || arg === "-h") flags.help = true;
+  else if (arg.startsWith("--")) flags[arg.slice(2)] = argv[++i];
+  else pos.push(arg);
 }
 if (flags.help) {
   console.log(HELP);
@@ -61,10 +61,10 @@ const URL_BASE = (flags.url || process.env.OFFICE_URL || "http://localhost:5050"
 const SPEED = Math.max(MIN_SPEED, Number(flags.speed) || 1);
 const mode = pos[0] || "scenario";
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const rnd = (a, b) => a + Math.random() * (b - a);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const rnd = (min, max) => min + Math.random() * (max - min);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const delay = (a = 0.5, b = 4) => sleep((rnd(a, b) * MS_PER_SECOND) / SPEED);
+const delay = (minSeconds = 0.5, maxSeconds = 4) => sleep((rnd(minSeconds, maxSeconds) * MS_PER_SECOND) / SPEED);
 
 const PROJECTS = ["dragon-shop", "quest-qa", "rune-auth", "gold-split"];
 const FILES = [
@@ -84,18 +84,16 @@ const PROMPTS = [
 
 const live = new Map(); // session_id -> base fields
 
-function base(sid, cwd, name, extra = {}) {
-  return {
-    session_id: sid,
-    transcript_path: `/Users/dev/.claude/projects/${cwd.replace(/\//g, "-")}/${sid}.jsonl`,
-    cwd,
-    permission_mode: "default",
-    hook_event_name: name,
-    ...extra,
-  };
-}
+const base = (sid, cwd, name, extra = {}) => ({
+  session_id: sid,
+  transcript_path: `/Users/dev/.claude/projects/${cwd.replace(/\//g, "-")}/${sid}.jsonl`,
+  cwd,
+  permission_mode: "default",
+  hook_event_name: name,
+  ...extra,
+});
 
-async function send(payload) {
+const send = async (payload) => {
   let res;
   try {
     res = await fetch(`${URL_BASE}/events`, {
@@ -103,17 +101,19 @@ async function send(payload) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-  } catch (e) {
-    console.error(`error: cannot reach ${URL_BASE}/events (${e.cause?.code || e.message}). Is the server running?`);
+  } catch (error) {
+    console.error(
+      `error: cannot reach ${URL_BASE}/events (${error.cause?.code || error.message}). Is the server running?`,
+    );
     process.exit(1);
   }
   if (!res.ok) console.error(`warn: server replied ${res.status}`);
   const who = payload.agent_id ? ` [${payload.agent_type}]` : "";
   const tool = payload.tool_name ? ` ${payload.tool_name}` : "";
   console.log(`${payload.session_id.slice(0, LOG_SID_CHARS)} ${payload.hook_event_name}${tool}${who}`);
-}
+};
 
-function toolInput(tool) {
+const toolInput = (tool) => {
   switch (tool) {
     case "Read":
       return { file_path: pick(FILES) };
@@ -143,29 +143,29 @@ function toolInput(tool) {
     default:
       return { command: "echo hi" };
   }
-}
+};
 
-async function toolStep(s, tool, agent, dur = [PAUSE_MIN_S, TOOL_MAX_S]) {
+const toolStep = async (session, tool, agent, duration = [PAUSE_MIN_S, TOOL_MAX_S]) => {
   const id = "toolu_" + randomUUID().replace(/-/g, "").slice(0, TOOL_ID_CHARS);
   const extra = { tool_name: tool, tool_input: toolInput(tool), tool_use_id: id, ...(agent || {}) };
-  await send({ ...base(s.sid, s.cwd, "PreToolUse", extra) });
-  const t0 = Date.now();
-  await delay(dur[0], dur[1]);
+  await send({ ...base(session.sid, session.cwd, "PreToolUse", extra) });
+  const startedAt = Date.now();
+  await delay(duration[0], duration[1]);
   await send({
-    ...base(s.sid, s.cwd, "PostToolUse", {
+    ...base(session.sid, session.cwd, "PostToolUse", {
       ...extra,
       tool_response: {},
-      duration_ms: Math.round((Date.now() - t0) * SPEED),
+      duration_ms: Math.round((Date.now() - startedAt) * SPEED),
     }),
   });
-}
+};
 
-async function runSession(project) {
-  const s = { sid: randomUUID(), cwd: `/Users/dev/projects/${project}` };
-  live.set(s.sid, s);
-  await send(base(s.sid, s.cwd, "SessionStart", { source: "startup" }));
+const runSession = async (project) => {
+  const session = { sid: randomUUID(), cwd: `/Users/dev/projects/${project}` };
+  live.set(session.sid, session);
+  await send(base(session.sid, session.cwd, "SessionStart", { source: "startup" }));
   await delay(PAUSE_MIN_S, PAUSE_SHORT_MAX_S);
-  await send(base(s.sid, s.cwd, "UserPromptSubmit", { prompt: pick(PROMPTS) }));
+  await send(base(session.sid, session.cwd, "UserPromptSubmit", { prompt: pick(PROMPTS) }));
   await delay(PAUSE_MIN_S, 2);
 
   const steps = ["Read", "Grep", "Edit", "Bash", "WebSearch", "TaskCreate", "mcp__linear__list_issues", "Read", "Edit"]
@@ -177,7 +177,7 @@ async function runSession(project) {
   for (let i = 0; i < steps.length; i++) {
     if (i === permAt) {
       await send(
-        base(s.sid, s.cwd, "Notification", {
+        base(session.sid, session.cwd, "Notification", {
           message: "Claude needs your permission to use Bash",
           notification_type: "permission_prompt",
         }),
@@ -191,41 +191,42 @@ async function runSession(project) {
       };
       const id = "toolu_" + randomUUID().replace(/-/g, "").slice(0, TOOL_ID_CHARS);
       const extra = { tool_name: "Agent", tool_input: toolInput("Agent"), tool_use_id: id };
-      await send(base(s.sid, s.cwd, "PreToolUse", extra));
-      await send(base(s.sid, s.cwd, "SubagentStart", agent));
-      const n = 2 + Math.floor(rnd(0, 2));
-      for (let k = 0; k < n; k++) await toolStep(s, pick(["Read", "Grep"]), agent, [PAUSE_MIN_S, 2]);
-      await send(base(s.sid, s.cwd, "SubagentStop", { ...agent, stop_hook_active: false }));
-      await send(base(s.sid, s.cwd, "PostToolUse", { ...extra, tool_response: {}, duration_ms: 3000 }));
+      await send(base(session.sid, session.cwd, "PreToolUse", extra));
+      await send(base(session.sid, session.cwd, "SubagentStart", agent));
+      const internSteps = 2 + Math.floor(rnd(0, 2));
+      for (let step = 0; step < internSteps; step++)
+        await toolStep(session, pick(["Read", "Grep"]), agent, [PAUSE_MIN_S, 2]);
+      await send(base(session.sid, session.cwd, "SubagentStop", { ...agent, stop_hook_active: false }));
+      await send(base(session.sid, session.cwd, "PostToolUse", { ...extra, tool_response: {}, duration_ms: 3000 }));
     } else {
-      await toolStep(s, steps[i], null);
+      await toolStep(session, steps[i], null);
     }
     await delay(PAUSE_MIN_S, 2);
   }
-  await send(base(s.sid, s.cwd, "Stop", { stop_hook_active: false }));
+  await send(base(session.sid, session.cwd, "Stop", { stop_hook_active: false }));
   await delay(PAUSE_MIN_S, PAUSE_SHORT_MAX_S);
-  await endSession(s);
-}
+  await endSession(session);
+};
 
-async function endSession(s) {
-  if (!live.has(s.sid)) return;
-  live.delete(s.sid);
-  await send(base(s.sid, s.cwd, "SessionEnd", { reason: "prompt_input_exit" }));
-}
+const endSession = async (session) => {
+  if (!live.has(session.sid)) return;
+  live.delete(session.sid);
+  await send(base(session.sid, session.cwd, "SessionEnd", { reason: "prompt_input_exit" }));
+};
 
 if (mode === "scenario") {
-  const n = Math.max(1, parseInt(flags.sessions) || 2);
+  const sessionCount = Math.max(1, parseInt(flags.sessions) || 2);
   let stopping = false;
   process.on("SIGINT", async () => {
     if (stopping) process.exit(SIGINT_EXIT_CODE);
     stopping = true;
     console.log("\nSIGINT: ending live sessions...");
-    for (const s of [...live.values()]) await endSession(s);
+    for (const session of [...live.values()]) await endSession(session);
     process.exit(SIGINT_EXIT_CODE);
   });
   const projects = [...PROJECTS].sort(() => Math.random() - COIN_FLIP);
   await Promise.all(
-    Array.from({ length: n }, async (_, i) => {
+    Array.from({ length: sessionCount }, async (_, i) => {
       await sleep((i * SESSION_STAGGER_MS) / SPEED);
       await runSession(projects[i % projects.length]);
     }),

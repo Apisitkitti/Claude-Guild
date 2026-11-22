@@ -67,24 +67,24 @@ export interface Look {
   cls: AdvClass;
 }
 
-export function fnv1a(s: string): number {
-  let h = FNV_OFFSET_BASIS;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, FNV_PRIME) >>> 0;
+export const fnv1a = (text: string): number => {
+  let hash = FNV_OFFSET_BASIS;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME) >>> 0;
   }
-  return h >>> 0;
-}
+  return hash >>> 0;
+};
 
-export function lookFor(sessionId: string): Look {
-  const h = fnv1a(sessionId);
+export const lookFor = (sessionId: string): Look => {
+  const hash = fnv1a(sessionId);
   return {
-    hair: HAIRS[h % HAIRS.length],
-    shirt: PAL[SHIRTS[(h >>> HASH_SHIFT_SHIRT) % SHIRTS.length]],
-    skin: PAL[SKINS[(h >>> HASH_SHIFT_SKIN) % SKINS.length]],
-    cls: ADV_CLASSES[(h >>> HASH_SHIFT_CLASS) % ADV_CLASSES.length],
+    hair: HAIRS[hash % HAIRS.length],
+    shirt: PAL[SHIRTS[(hash >>> HASH_SHIFT_SHIRT) % SHIRTS.length]],
+    skin: PAL[SKINS[(hash >>> HASH_SHIFT_SKIN) % SKINS.length]],
+    cls: ADV_CLASSES[(hash >>> HASH_SHIFT_CLASS) % ADV_CLASSES.length],
   };
-}
+};
 
 /** Squire look (subagents). */
 export const INTERN_LOOK: Look = { hair: "#6e4a36", shirt: "#7a9a5a", skin: "#e8c9a0", cls: "warrior" };

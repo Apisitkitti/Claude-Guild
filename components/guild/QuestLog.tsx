@@ -4,7 +4,7 @@ import { m } from "@/paraglide/messages";
 import { hms, iconFor, kindLabel } from "./format";
 import { SectionHeading } from "./Section";
 
-export function QuestLog({
+export const QuestLog = ({
   log,
   hiddenSet,
   hidden,
@@ -14,7 +14,7 @@ export function QuestLog({
   hiddenSet: Set<string>;
   hidden: boolean;
   onToggle: () => void;
-}) {
+}) => {
   return (
     <>
       <SectionHeading id="log" hidden={hidden} onToggle={onToggle}>
@@ -22,20 +22,24 @@ export function QuestLog({
       </SectionHeading>
       <ul className="log" id="sec-log" hidden={hidden}>
         {log
-          .filter((l) => !l.sid || !hiddenSet.has(l.sid))
-          .map((l) => (
-            <li key={l.id} className={`${l.bad ? "bad " : ""}${l.intern ? "intern" : ""}`} title={l.text}>
-              <time>{hms(l.time)}</time>
-              <span className="dot" style={{ background: l.color }} />
-              <span className="ic">{iconFor(l.kind)}</span>
+          .filter((entry) => !entry.sid || !hiddenSet.has(entry.sid))
+          .map((entry) => (
+            <li
+              key={entry.id}
+              className={`${entry.bad ? "bad " : ""}${entry.intern ? "intern" : ""}`}
+              title={entry.text}
+            >
+              <time>{hms(entry.time)}</time>
+              <span className="dot" style={{ background: entry.color }} />
+              <span className="ic">{iconFor(entry.kind)}</span>
               <span className="tx">
-                <b>{l.tag}</b>
-                {l.intern ? <span className="ilab"> 🛡️ {l.internLabel} ›</span> : null} {kindLabel(l.kind)}
-                {l.detail ? <em> {l.detail}</em> : null}
+                <b>{entry.tag}</b>
+                {entry.intern ? <span className="ilab"> 🛡️ {entry.internLabel} ›</span> : null} {kindLabel(entry.kind)}
+                {entry.detail ? <em> {entry.detail}</em> : null}
               </span>
             </li>
           ))}
       </ul>
     </>
   );
-}
+};

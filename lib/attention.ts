@@ -88,18 +88,18 @@ export type AttentionEvent = {
   error?: unknown;
   is_interrupt?: unknown;
   last_assistant_message?: unknown;
-  [k: string]: unknown;
+  [key: string]: unknown;
 };
 
 // ---- helpers (exported for tests) ----
-function fnv(s: string): string {
-  let h = FNV_OFFSET_BASIS;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, FNV_PRIME) >>> 0;
+const fnv = (text: string): string => {
+  let hash = FNV_OFFSET_BASIS;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME) >>> 0;
   }
-  return h.toString(HEX_RADIX).padStart(HEX_BYTE_DIGITS, "0");
-}
+  return hash.toString(HEX_RADIX).padStart(HEX_BYTE_DIGITS, "0");
+};
 
 const TMP_PATH = /(?<=^|[\s'"`(=])(?:\/private)?\/(?:var\/folders|tmp)\/[^\s'"`)]*/g;
 /** numbers / durations that stand alone (not part of a word, path, `HEAD~1`, `a1.test.ts`) */
@@ -111,12 +111,12 @@ const ERR_MAX = 8000;
 const ISO_TS = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g;
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 
-const squash = (s: string) => s.replace(/\s+/g, " ").trim();
-const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+const squash = (text: string) => text.replace(/\s+/g, " ").trim();
+const cut = (text: string, maxChars: number) => (text.length > maxChars ? text.slice(0, maxChars - 1) + "…" : text);
 
 /** command with timestamps, tmp paths and digits stripped, so reruns compare equal */
-export function normalizeCommand(cmd: string): string {
-  return squash(
+export const normalizeCommand = (cmd: string): string =>
+  squash(
     cmd
       .replace(ANSI, "")
       .replace(TMP_PATH, "<tmp>")
@@ -124,10 +124,9 @@ export function normalizeCommand(cmd: string): string {
       .replace(LONE_DUR, "<dur>")
       .replace(LONE_NUM, "#"),
   );
-}
 
 /** error text with numbers, durations, hex ids and tmp paths stripped */
-export function normalizeError(err: string): string {
+export const normalizeError = (err: string): string => {
   const raw = err.length > ERR_MAX ? err.slice(0, ERR_MAX / 2) + "\n" + err.slice(-ERR_MAX / 2) : err;
   return squash(
     raw
@@ -140,61 +139,65 @@ export function normalizeError(err: string): string {
       .replace(/\d+(?:\.\d+)?\s?(?:ms|sec(?:onds?)?|s|m|min)\b/gi, "<dur>")
       .replace(/\d+/g, "#"),
   ).toLowerCase();
-}
+};
 
 /** first informative line of an error: skips blanks and bare "Exit code N" (falls back to it) */
-export function errorLine(err: string): string {
+export const errorLine = (err: string): string => {
   const lines = err.replace(ANSI, "").split("\n").map(squash).filter(Boolean);
-  const good = lines.find((l) => !BARE_EXIT.test(l));
+  const good = lines.find((line) => !BARE_EXIT.test(line));
   return cut(good ?? lines[0] ?? "", ERROR_CHARS);
-}
+};
 
-function stableJson(v: unknown, depth = 0): string {
-  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+const stableJson = (value: unknown, depth = 0): string => {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (depth >= STABLE_JSON_MAX_DEPTH) return "{…}";
-  if (Array.isArray(v))
+  if (Array.isArray(value))
     return (
       "[" +
-      v
+      value
         .slice(0, STABLE_JSON_MAX_ITEMS)
-        .map((x) => stableJson(x, depth + 1))
+        .map((item) => stableJson(item, depth + 1))
         .join(",") +
       "]"
     );
-  const o = v as Record<string, unknown>;
+  const obj = value as Record<string, unknown>;
   return (
     "{" +
-    Object.keys(o)
+    Object.keys(obj)
       .sort()
       .slice(0, STABLE_JSON_MAX_KEYS)
-      .map((k) => JSON.stringify(k) + ":" + stableJson(o[k], depth + 1))
+      .map((key) => JSON.stringify(key) + ":" + stableJson(obj[key], depth + 1))
       .join(",") +
     "}"
   );
-}
+};
 
 /** `fp` identifies "the same attempt"; `target` is the short human label (never the full input) */
-export function fingerprint(tool: string, input: unknown): { fp: string; target: string } {
-  const ti = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  if (tool === "Bash" && typeof ti.command === "string") {
+export const fingerprint = (tool: string, input: unknown): { fp: string; target: string } => {
+  const toolInput = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  if (tool === "Bash" && typeof toolInput.command === "string") {
     return {
-      fp: "Bash:" + fnv(normalizeCommand(ti.command)),
-      target: cut(squash(ti.command.split("\n")[0]), TARGET_CHARS),
+      fp: "Bash:" + fnv(normalizeCommand(toolInput.command)),
+      target: cut(squash(toolInput.command.split("\n")[0]), TARGET_CHARS),
     };
   }
   if (EDIT_TOOLS.has(tool)) {
     const file =
-      typeof ti.file_path === "string" ? ti.file_path : typeof ti.notebook_path === "string" ? ti.notebook_path : "";
-    const old = typeof ti.old_string === "string" ? ti.old_string : "";
-    const segs = file.split("/").filter(Boolean);
+      typeof toolInput.file_path === "string"
+        ? toolInput.file_path
+        : typeof toolInput.notebook_path === "string"
+          ? toolInput.notebook_path
+          : "";
+    const old = typeof toolInput.old_string === "string" ? toolInput.old_string : "";
+    const segments = file.split("/").filter(Boolean);
     return {
       fp: `${tool}:${fnv(file + "\0" + fnv(old))}`,
-      target: cut(segs.slice(-PATH_TAIL_SEGMENTS).join("/") || file, TARGET_CHARS),
+      target: cut(segments.slice(-PATH_TAIL_SEGMENTS).join("/") || file, TARGET_CHARS),
     };
   }
-  const json = stableJson(ti).slice(0, FINGERPRINT_JSON_CHARS);
+  const json = stableJson(toolInput).slice(0, FINGERPRINT_JSON_CHARS);
   return { fp: `${tool}:${fnv(json)}`, target: cut(json === "{}" ? "" : json, TARGET_CHARS) };
-}
+};
 
 const Q_END = /[?？]["'”’)\]`*_\s]*$/;
 const TH_END = /(?:ไหม|มั้ย|มั๊ย|หรือเปล่า|หรือไม่)(?:ครับ|คะ|ค่ะ|นะครับ|นะคะ|นะ)?[\s?？!.]*$/;
@@ -202,11 +205,16 @@ const TH_POLITE_Q = /(?:ครับ|คะ|ค่ะ)\s*[?？]\s*$/;
 const PHRASES = /would you like|should i\b|do you want|let me know/i;
 
 /** guess: does this final message leave a question for the user? */
-export function looksAsked(msg: string): boolean {
-  const t = msg.trim();
-  if (!t) return false;
-  return Q_END.test(t) || TH_END.test(t) || TH_POLITE_Q.test(t) || PHRASES.test(t.slice(-QUESTION_TAIL_CHARS));
-}
+export const looksAsked = (msg: string): boolean => {
+  const trimmed = msg.trim();
+  if (!trimmed) return false;
+  return (
+    Q_END.test(trimmed) ||
+    TH_END.test(trimmed) ||
+    TH_POLITE_Q.test(trimmed) ||
+    PHRASES.test(trimmed.slice(-QUESTION_TAIL_CHARS))
+  );
+};
 
 type Rec = { fp: string; ok: boolean; err: string; ts: number }; // err = hash of the normalized error
 type Loop = { fp: string; tool: string; target: string; count: number; error: string; since: number; last: number };
@@ -220,22 +228,22 @@ export class AttentionTracker {
   private ctx = new Map<string, { frac: number; since: number }>();
 
   private key(sid: string, agent: string): KeyState {
-    const k = sid + "\0" + agent;
-    let st = this.keys.get(k);
-    if (st)
-      this.keys.delete(k); // re-insert = most recently used
-    else st = { sid, agent, ring: [], ids: [], loop: null, touched: 0 };
-    this.keys.set(k, st);
+    const mapKey = sid + "\0" + agent;
+    let state = this.keys.get(mapKey);
+    if (state)
+      this.keys.delete(mapKey); // re-insert = most recently used
+    else state = { sid, agent, ring: [], ids: [], loop: null, touched: 0 };
+    this.keys.set(mapKey, state);
     if (this.keys.size > MAX_KEYS) this.keys.delete(this.keys.keys().next().value as string);
-    return st;
+    return state;
   }
 
   private resetSession(sid: string, agent?: string) {
-    for (const [k, st] of this.keys) {
-      if (st.sid !== sid) continue;
-      if (agent !== undefined && k !== sid + "\0" + agent) continue;
-      st.ring = [];
-      st.loop = null;
+    for (const [mapKey, state] of this.keys) {
+      if (state.sid !== sid) continue;
+      if (agent !== undefined && mapKey !== sid + "\0" + agent) continue;
+      state.ring = [];
+      state.loop = null;
     }
   }
 
@@ -258,7 +266,7 @@ export class AttentionTracker {
       this.resetSession(sid, agent || "main");
       if (agent) return; // only the main agent "finishes" for the user
       const msg = raw.last_assistant_message;
-      const d: Done =
+      const entry: Done =
         typeof msg === "string"
           ? {
               since: now,
@@ -266,9 +274,9 @@ export class AttentionTracker {
               tail: cut(squash(msg.slice(-TAIL_CHARS * 2)).slice(-TAIL_CHARS), TAIL_CHARS + 1),
             }
           : { since: now, asked: false };
-      if (d.tail === "") delete d.tail;
+      if (entry.tail === "") delete entry.tail;
       this.done.delete(sid);
-      this.done.set(sid, d);
+      this.done.set(sid, entry);
       if (this.done.size > MAX_DONE) this.done.delete(this.done.keys().next().value as string);
       return;
     }
@@ -277,36 +285,46 @@ export class AttentionTracker {
     if (!tool) return;
     const failed = name === "PostToolUseFailure";
     if (failed && raw.is_interrupt === true) return;
-    const st = this.key(sid, agent || "main");
-    st.touched = now;
+    const state = this.key(sid, agent || "main");
+    state.touched = now;
     const id = typeof raw.tool_use_id === "string" ? raw.tool_use_id : "";
     if (id) {
-      if (st.ids.includes(id)) return;
-      st.ids.push(id);
-      if (st.ids.length > MAX_IDS_PER_KEY) st.ids.shift();
+      if (state.ids.includes(id)) return;
+      state.ids.push(id);
+      if (state.ids.length > MAX_IDS_PER_KEY) state.ids.shift();
     }
     if (!failed) {
       if (EDIT_TOOLS.has(tool)) {
-        st.ring = [];
-        st.loop = null;
+        state.ring = [];
+        state.loop = null;
         return;
       }
       // the same attempt finally succeeded: its earlier failures no longer count
-      const { fp } = fingerprint(tool, raw.tool_input);
-      st.ring = st.ring.filter((r) => r.fp !== fp);
-      if (st.loop && st.loop.fp === fp) st.loop = null;
+      const { fp: attemptId } = fingerprint(tool, raw.tool_input);
+      state.ring = state.ring.filter((rec) => rec.fp !== attemptId);
+      if (state.loop && state.loop.fp === attemptId) state.loop = null;
       return;
     }
-    const { fp, target } = fingerprint(tool, raw.tool_input);
+    const { fp: attemptId, target } = fingerprint(tool, raw.tool_input);
     const errRaw = typeof raw.error === "string" ? raw.error : "";
     const err = fnv(normalizeError(errRaw));
-    st.ring.push({ fp, ok: false, err, ts: now });
-    if (st.ring.length > RING_SIZE) st.ring.shift();
-    const same = st.ring.filter((r) => !r.ok && r.fp === fp && r.err === err && now - r.ts <= LOOP_WINDOW_MS);
+    state.ring.push({ fp: attemptId, ok: false, err, ts: now });
+    if (state.ring.length > RING_SIZE) state.ring.shift();
+    const same = state.ring.filter(
+      (rec) => !rec.ok && rec.fp === attemptId && rec.err === err && now - rec.ts <= LOOP_WINDOW_MS,
+    );
     if (same.length >= LOOP_MIN_FAILS) {
-      st.loop = { fp, tool, target, count: same.length, error: errorLine(errRaw), since: same[0].ts, last: now };
-    } else if (st.loop && st.loop.fp === fp) {
-      st.loop = null; // same attempt now fails differently / window passed
+      state.loop = {
+        fp: attemptId,
+        tool,
+        target,
+        count: same.length,
+        error: errorLine(errRaw),
+        since: same[0].ts,
+        last: now,
+      };
+    } else if (state.loop && state.loop.fp === attemptId) {
+      state.loop = null; // same attempt now fails differently / window passed
     }
   }
 
@@ -322,8 +340,8 @@ export class AttentionTracker {
       this.ctx.delete(sid);
       return;
     }
-    const cur = this.ctx.get(sid);
-    this.ctx.set(sid, { frac, since: cur ? cur.since : now });
+    const current = this.ctx.get(sid);
+    this.ctx.set(sid, { frac, since: current ? current.since : now });
   }
 
   queue(now: number): AttentionRow[] {
@@ -331,74 +349,77 @@ export class AttentionTracker {
     const rank = new Map<AttentionRow, number>();
     for (const [sid, since] of this.waiting) {
       const stale = now - since >= PERM_STALE_MS;
-      const r: AttentionRow = {
+      const row: AttentionRow = {
         key: `${sid}|permission|${since}`,
         sid,
         kind: "permission",
         since,
         ...(stale ? { stale: true as const } : {}),
       };
-      if (stale) rank.set(r, STALE_PERM_RANK);
-      rows.push(r);
+      if (stale) rank.set(row, STALE_PERM_RANK);
+      rows.push(row);
     }
-    for (const st of this.keys.values()) {
-      const l = st.loop;
-      if (!l) continue;
+    for (const state of this.keys.values()) {
+      const loop = state.loop;
+      if (!loop) continue;
       rows.push({
-        key: `${st.sid}|loop|${st.agent}|${l.fp}`,
-        sid: st.sid,
+        key: `${state.sid}|loop|${state.agent}|${loop.fp}`,
+        sid: state.sid,
         kind: "loop",
-        since: l.since,
-        tool: l.tool,
-        ...(l.target ? { target: l.target } : {}),
-        count: l.count,
-        ...(l.error ? { error: l.error } : {}),
+        since: loop.since,
+        tool: loop.tool,
+        ...(loop.target ? { target: loop.target } : {}),
+        count: loop.count,
+        ...(loop.error ? { error: loop.error } : {}),
       });
     }
-    for (const [sid, d] of this.done) {
-      if (d.asked)
+    for (const [sid, entry] of this.done) {
+      if (entry.asked)
         rows.push({
-          key: `${sid}|asked|${d.since}`,
+          key: `${sid}|asked|${entry.since}`,
           sid,
           kind: "asked",
-          since: d.since,
-          ...(d.tail ? { tail: d.tail } : {}),
+          since: entry.since,
+          ...(entry.tail ? { tail: entry.tail } : {}),
         });
-      else rows.push({ key: `${sid}|done|${d.since}`, sid, kind: "done", since: d.since });
+      else rows.push({ key: `${sid}|done|${entry.since}`, sid, kind: "done", since: entry.since });
     }
-    for (const [sid, c] of this.ctx)
+    for (const [sid, pressure] of this.ctx)
       rows.push({
         key: `${sid}|context`,
         sid,
         kind: "context",
-        since: c.since,
-        pct: Math.round(c.frac * PERCENT),
+        since: pressure.since,
+        pct: Math.round(pressure.frac * PERCENT),
       });
-    const rk = (r: AttentionRow) => rank.get(r) ?? RANK[r.kind];
-    rows.sort((a, b) => rk(a) - rk(b) || a.since - b.since || (a.key < b.key ? -1 : 1));
+    const rankOf = (row: AttentionRow) => rank.get(row) ?? RANK[row.kind];
+    rows.sort(
+      (first, second) =>
+        rankOf(first) - rankOf(second) || first.since - second.since || (first.key < second.key ? -1 : 1),
+    );
     return rows.slice(0, MAX_ROWS);
   }
 
   /** drop stale state; true iff something was removed */
   sweep(now: number): boolean {
     let changed = false;
-    for (const [sid, d] of this.done)
-      if (now - d.since > DONE_STALE_MS) {
+    for (const [sid, entry] of this.done)
+      if (now - entry.since > DONE_STALE_MS) {
         this.done.delete(sid);
         changed = true;
       }
-    for (const [k, st] of this.keys) {
-      if (st.loop && now - st.loop.last > LOOP_STALE_MS) {
-        st.loop = null;
+    for (const [mapKey, state] of this.keys) {
+      if (state.loop && now - state.loop.last > LOOP_STALE_MS) {
+        state.loop = null;
         changed = true;
       }
-      if (!st.loop && now - st.touched > LOOP_STALE_MS) this.keys.delete(k);
+      if (!state.loop && now - state.touched > LOOP_STALE_MS) this.keys.delete(mapKey);
     }
     return changed;
   }
 
   dropSession(sid: string): void {
-    for (const [k, st] of this.keys) if (st.sid === sid) this.keys.delete(k);
+    for (const [mapKey, state] of this.keys) if (state.sid === sid) this.keys.delete(mapKey);
     this.done.delete(sid);
     this.waiting.delete(sid);
     this.ctx.delete(sid);

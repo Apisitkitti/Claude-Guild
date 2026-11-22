@@ -16,20 +16,19 @@ const TAIL_BYTES = TAIL_BYTES_KB * BYTES_PER_KB;
 const DEFAULT_LIMIT = 200_000;
 const GUESSED_LIMIT = 1_000_000;
 
-async function baseDir(): Promise<string | null> {
+const baseDir = async (): Promise<string | null> => {
   try {
     const root = await realpath(process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude"));
     return path.join(root, "projects") + path.sep;
   } catch {
     return null;
   }
-}
+};
 
-function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
-}
+const positiveNumber = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 
-export async function readContext(transcriptPath: unknown): Promise<ContextRead> {
+export const readContext = async (transcriptPath: unknown): Promise<ContextRead> => {
   try {
     if (typeof transcriptPath !== "string" || !transcriptPath || transcriptPath.includes("\0")) return null;
     const base = await baseDir();
@@ -41,10 +40,10 @@ export async function readContext(transcriptPath: unknown): Promise<ContextRead>
     let text: string;
     let offset: number;
     try {
-      const st = await fh.stat();
-      if (!st.isFile()) return null;
-      const length = Math.min(st.size, TAIL_BYTES);
-      offset = st.size - length;
+      const fileStat = await fh.stat();
+      if (!fileStat.isFile()) return null;
+      const length = Math.min(fileStat.size, TAIL_BYTES);
+      offset = fileStat.size - length;
       const buf = Buffer.alloc(length);
       const { bytesRead } = await fh.read(buf, 0, length, offset);
       text = buf.subarray(0, bytesRead).toString("utf8");
@@ -52,9 +51,9 @@ export async function readContext(transcriptPath: unknown): Promise<ContextRead>
       await fh.close();
     }
     if (offset > 0) {
-      const nl = text.indexOf("\n");
-      if (nl < 0) return null;
-      text = text.slice(nl + 1);
+      const newline = text.indexOf("\n");
+      if (newline < 0) return null;
+      text = text.slice(newline + 1);
     }
 
     const lines = text.split("\n");
@@ -77,9 +76,12 @@ export async function readContext(transcriptPath: unknown): Promise<ContextRead>
       if (!obj || typeof obj !== "object" || obj.type !== "assistant" || obj.isSidechain === true) continue;
       const msg = obj.message as { model?: unknown; usage?: Record<string, unknown> } | undefined;
       if (!msg || typeof msg !== "object" || msg.model === "<synthetic>") continue;
-      const u = msg.usage;
-      if (!u || typeof u !== "object") continue;
-      const used = num(u.input_tokens) + num(u.cache_read_input_tokens) + num(u.cache_creation_input_tokens);
+      const usage = msg.usage;
+      if (!usage || typeof usage !== "object") continue;
+      const used =
+        positiveNumber(usage.input_tokens) +
+        positiveNumber(usage.cache_read_input_tokens) +
+        positiveNumber(usage.cache_creation_input_tokens);
       const envLimit = Number(process.env.CLAUDE_OFFICE_CTX_LIMIT);
       let limit = Number.isFinite(envLimit) && envLimit > 0 ? envLimit : DEFAULT_LIMIT;
       let limitGuessed = false;
@@ -93,4 +95,4 @@ export async function readContext(transcriptPath: unknown): Promise<ContextRead>
   } catch {
     return null;
   }
-}
+};

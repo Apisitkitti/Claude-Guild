@@ -6,8 +6,8 @@ import type { RpgRow } from "./types";
 
 const MAX_HEARTS = 10;
 
-export function Stats({ p }: { p: RpgRow }) {
-  const { xp, xpNext, hp, hpMax, gold, kills } = p;
+export const Stats = ({ rpg }: { rpg: RpgRow }) => {
+  const { xp, xpNext, hp, hpMax, gold, kills } = rpg;
   const showXp = isNum(xp) && isNum(xpNext) && xpNext > 0;
   const showHp = isNum(hp) && isNum(hpMax) && hpMax > 0;
   const pct = showXp ? Math.max(0, Math.min(PERCENT, (xp / xpNext) * PERCENT)) : 0;
@@ -47,4 +47,4 @@ export function Stats({ p }: { p: RpgRow }) {
       </div>
     </div>
   );
-}
+};

@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState, type RefObject } from "react";
 
 /** Side-panel collapsed flag, persisted in localStorage. */
-export function usePanelCollapsed() {
+export const usePanelCollapsed = () => {
   const [collapsed, setCollapsed] = useState(false);
   const toggleCollapsed = useCallback(() => {
-    setCollapsed((c) => {
+    setCollapsed((current) => {
       try {
-        localStorage.setItem("office.panelCollapsed", c ? "0" : "1");
+        localStorage.setItem("office.panelCollapsed", current ? "0" : "1");
       } catch {}
-      return !c;
+      return !current;
     });
   }, []);
   useEffect(() => {
@@ -19,9 +19,9 @@ export function usePanelCollapsed() {
     });
   }, []);
   return [collapsed, toggleCollapsed] as const;
-}
+};
 
-export function useFullscreen(appRef: RefObject<HTMLElement | null>) {
+export const useFullscreen = (appRef: RefObject<HTMLElement | null>) => {
   const [full, setFull] = useState(false);
   const toggleFull = useCallback(() => {
     try {
@@ -35,4 +35,4 @@ export function useFullscreen(appRef: RefObject<HTMLElement | null>) {
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
   return [full, toggleFull] as const;
-}
+};

@@ -1,17 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const readContext = vi.fn();
-vi.mock("@/lib/transcript", () => ({ readContext: (p: unknown) => readContext(p) }));
+vi.mock("@/lib/transcript", () => ({ readContext: (file: unknown) => readContext(file) }));
 
 type StoreMod = typeof import("../lib/store");
-let m: StoreMod;
+let storeModule: StoreMod;
 let sent: string[];
 let unsub: () => void;
 
 const ctx = (used: number) => ({ used, limit: 200000, limitGuessed: false });
 const ev = (session_id: string, hook_event_name: string, extra: Record<string, unknown> = {}) =>
-  m.addEvent({ session_id, hook_event_name, transcript_path: `/t/${session_id}.jsonl`, ...extra });
-const contexts = () => sent.filter((c) => c.startsWith("event: context")).map((c) => JSON.parse(c.split("data: ")[1]));
+  storeModule.addEvent({ session_id, hook_event_name, transcript_path: `/t/${session_id}.jsonl`, ...extra });
+const contexts = () =>
+  sent.filter((frame) => frame.startsWith("event: context")).map((frame) => JSON.parse(frame.split("data: ")[1]));
 const flush = async () => {
   await vi.advanceTimersByTimeAsync(600);
 };
@@ -22,9 +23,9 @@ beforeEach(async () => {
   readContext.mockReset();
   (globalThis as { __claudeOffice?: unknown }).__claudeOffice = undefined;
   vi.resetModules();
-  m = await import("../lib/store");
+  storeModule = await import("../lib/store");
   sent = [];
-  unsub = m.subscribe((c) => sent.push(c));
+  unsub = storeModule.subscribe((frame) => sent.push(frame));
 });
 afterEach(() => {
   unsub();
@@ -55,7 +56,7 @@ describe("store context", () => {
     readContext.mockResolvedValue(ctx(42));
     ev("s1", "SessionStart");
     await flush();
-    expect(m.snapshot().sessions[0].context).toEqual(ctx(42));
+    expect(storeModule.snapshot().sessions[0].context).toEqual(ctx(42));
   });
 
   it("PreCompact resets context and broadcasts null", async () => {
@@ -63,7 +64,7 @@ describe("store context", () => {
     ev("s1", "SessionStart");
     await flush();
     ev("s1", "PreCompact");
-    expect(m.snapshot().sessions[0].context).toBeNull();
+    expect(storeModule.snapshot().sessions[0].context).toBeNull();
     expect(contexts().at(-1)).toMatchObject({ session_id: "s1", used: null, limit: null });
     await flush();
     expect(readContext).toHaveBeenCalledTimes(1); // PreCompact schedules no read
@@ -75,9 +76,9 @@ describe("store context", () => {
     await flush();
     readContext.mockResolvedValueOnce(ctx(7));
     ev("s1", "SessionStart", { source: "compact" });
-    expect(m.snapshot().sessions[0].context).toBeNull();
+    expect(storeModule.snapshot().sessions[0].context).toBeNull();
     await flush();
-    expect(m.snapshot().sessions[0].context).toEqual(ctx(7));
+    expect(storeModule.snapshot().sessions[0].context).toEqual(ctx(7));
   });
 
   it("a compacted read result keeps context null", async () => {
@@ -87,32 +88,32 @@ describe("store context", () => {
     readContext.mockResolvedValueOnce({ compacted: true });
     ev("s1", "Stop");
     await flush();
-    expect(m.snapshot().sessions[0].context).toBeNull();
+    expect(storeModule.snapshot().sessions[0].context).toBeNull();
     expect(contexts().at(-1)).toMatchObject({ used: null });
   });
 
   it("drops a stale in-flight result after a reset", async () => {
     let resolve!: (v: unknown) => void;
-    readContext.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    readContext.mockReturnValueOnce(new Promise((done) => (resolve = done)));
     ev("s1", "SessionStart");
     await flush(); // read now in flight
     ev("s1", "PreCompact");
     resolve(ctx(999));
     await vi.advanceTimersByTimeAsync(0);
-    expect(m.snapshot().sessions[0].context).toBeNull();
-    expect(contexts().some((c) => c.used === 999)).toBe(false);
+    expect(storeModule.snapshot().sessions[0].context).toBeNull();
+    expect(contexts().some((frame) => frame.used === 999)).toBe(false);
   });
 
   it("drops an in-flight result superseded by a newer schedule", async () => {
     let resolve!: (v: unknown) => void;
-    readContext.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    readContext.mockReturnValueOnce(new Promise((done) => (resolve = done)));
     ev("s1", "SessionStart");
     await flush();
     readContext.mockResolvedValueOnce(ctx(2));
     ev("s1", "Stop");
     resolve(ctx(1));
     await flush();
-    expect(m.snapshot().sessions[0].context).toEqual(ctx(2));
+    expect(storeModule.snapshot().sessions[0].context).toEqual(ctx(2));
   });
 
   it("SessionEnd clears the pending timer", async () => {
@@ -120,15 +121,15 @@ describe("store context", () => {
     ev("s1", "SessionEnd");
     await flush();
     expect(readContext).not.toHaveBeenCalled();
-    expect(m.snapshot().sessions).toHaveLength(0);
+    expect(storeModule.snapshot().sessions).toHaveLength(0);
   });
 
   it("caps sessions, dropping the least recently seen", () => {
     for (let i = 0; i < 205; i++) {
       vi.setSystemTime(1_000_000 + i);
-      m.addEvent({ session_id: `s${i}`, hook_event_name: "Notification" });
+      storeModule.addEvent({ session_id: `s${i}`, hook_event_name: "Notification" });
     }
-    const ids = m.snapshot().sessions.map((s) => s.session_id);
+    const ids = storeModule.snapshot().sessions.map((snapshot) => snapshot.session_id);
     expect(ids).toHaveLength(200);
     expect(ids).not.toContain("s0");
     expect(ids).toContain("s204");
@@ -136,11 +137,11 @@ describe("store context", () => {
 
   it("limits concurrent reads to 4, re-scheduling the rest", async () => {
     const resolvers: ((v: unknown) => void)[] = [];
-    readContext.mockImplementation(() => new Promise((r) => resolvers.push(r)));
+    readContext.mockImplementation(() => new Promise((done) => resolvers.push(done)));
     for (let i = 0; i < 6; i++) ev(`s${i}`, "SessionStart");
     await flush();
     expect(readContext).toHaveBeenCalledTimes(4);
-    resolvers.splice(0).forEach((r) => r(ctx(1)));
+    resolvers.splice(0).forEach((row) => row(ctx(1)));
     await flush();
     await flush();
     expect(readContext).toHaveBeenCalledTimes(6);
@@ -152,28 +153,28 @@ describe("store waiting flag", () => {
     readContext.mockResolvedValue(null);
     ev("w1", "SessionStart");
     ev("w1", "PreToolUse");
-    expect(m.snapshot().sessions[0].waiting).toBe(false);
+    expect(storeModule.snapshot().sessions[0].waiting).toBe(false);
     ev("w1", "PermissionRequest");
-    expect(m.snapshot().sessions[0].waiting).toBe(true);
+    expect(storeModule.snapshot().sessions[0].waiting).toBe(true);
     ev("w1", "PostToolUse");
-    expect(m.snapshot().sessions[0].waiting).toBe(false);
+    expect(storeModule.snapshot().sessions[0].waiting).toBe(false);
   });
 
   it("ignores squire permission requests and sets waiting on permission_prompt notifications", () => {
     readContext.mockResolvedValue(null);
     ev("w2", "SessionStart");
     ev("w2", "PermissionRequest", { agent_id: "sq1" });
-    expect(m.snapshot().sessions[0].waiting).toBe(false);
+    expect(storeModule.snapshot().sessions[0].waiting).toBe(false);
     ev("w2", "Notification", { notification_type: "permission_prompt" });
-    expect(m.snapshot().sessions[0].waiting).toBe(true);
+    expect(storeModule.snapshot().sessions[0].waiting).toBe(true);
   });
 });
 
 describe("store territory", () => {
   const territories = () =>
-    sent.filter((c) => c.startsWith("event: territory")).map((c) => JSON.parse(c.split("data: ")[1]));
+    sent.filter((frame) => frame.startsWith("event: territory")).map((frame) => JSON.parse(frame.split("data: ")[1]));
   const edit = (sid: string, file: string, name = "PreToolUse") =>
-    m.addEvent({
+    storeModule.addEvent({
       session_id: sid,
       hook_event_name: name,
       tool_name: "Edit",
@@ -202,24 +203,26 @@ describe("store territory", () => {
     edit("t2", "/p/a.ts");
     sent.length = 0;
     edit("t2", "/p/a.ts", "PostToolUseFailure");
-    const iTerr = sent.findIndex((c) => c.startsWith("event: territory"));
-    const iEvt = sent.findIndex((c) => c.includes("PostToolUseFailure") && !c.startsWith("event: territory"));
+    const iTerr = sent.findIndex((frame) => frame.startsWith("event: territory"));
+    const iEvt = sent.findIndex(
+      (frame) => frame.includes("PostToolUseFailure") && !frame.startsWith("event: territory"),
+    );
     expect(iTerr).toBeGreaterThanOrEqual(0);
     expect(iTerr).toBeLessThan(iEvt);
     expect(JSON.parse(sent[iTerr].split("data: ")[1]).conflicts).toMatchObject([{ level: "clash", failer: "t2" }]);
   });
 
   it("includes territory in the snapshot and releases on SessionEnd", () => {
-    expect(m.snapshot().territory).toEqual({ claims: [], conflicts: [] });
+    expect(storeModule.snapshot().territory).toEqual({ claims: [], conflicts: [] });
     ev("t1", "SessionStart");
     edit("t1", "/p/a.ts");
-    expect(m.snapshot().territory.claims).toEqual([{ sid: "t1", files: ["a.ts"] }]);
+    expect(storeModule.snapshot().territory.claims).toEqual([{ sid: "t1", files: ["a.ts"] }]);
     ev("t1", "SessionEnd");
-    expect(m.snapshot().territory.claims).toEqual([]);
+    expect(storeModule.snapshot().territory.claims).toEqual([]);
     expect(territories().at(-1)).toEqual({ claims: [], conflicts: [] });
-    const n = territories().length;
+    const count = territories().length;
     edit("t1", "/p/b.ts"); // late event after SessionEnd must not re-claim
-    expect(territories()).toHaveLength(n);
+    expect(territories()).toHaveLength(count);
   });
 
   it("sweep timer expires old claims and broadcasts", async () => {
@@ -233,8 +236,8 @@ describe("store territory", () => {
 describe("store attention (Lookout Bell)", () => {
   const frames = () =>
     sent
-      .filter((c) => c.startsWith("event: attention"))
-      .map((c) => JSON.parse(c.split("data: ")[1]) as { kind: string; sid: string }[]);
+      .filter((frame) => frame.startsWith("event: attention"))
+      .map((frame) => JSON.parse(frame.split("data: ")[1]) as { kind: string; sid: string }[]);
   const failBash = (sid: string, i: number) =>
     ev(sid, "PostToolUseFailure", {
       tool_name: "Bash",
@@ -248,8 +251,8 @@ describe("store attention (Lookout Bell)", () => {
     ev("a1", "SessionStart");
     for (let i = 0; i < 3; i++) failBash("a1", i);
     const last = frames().at(-1)!;
-    expect(last.map((r) => r.kind)).toEqual(["loop"]);
-    expect(m.snapshot().attention.map((r) => r.kind)).toEqual(["loop"]);
+    expect(last.map((row) => row.kind)).toEqual(["loop"]);
+    expect(storeModule.snapshot().attention.map((row) => row.kind)).toEqual(["loop"]);
     ev("a1", "UserPromptSubmit");
     expect(frames().at(-1)).toEqual([]);
   });
@@ -258,46 +261,46 @@ describe("store attention (Lookout Bell)", () => {
     readContext.mockResolvedValue(null);
     ev("a2", "SessionStart");
     ev("a2", "Stop", { last_assistant_message: "ใช้ Prisma ไหมครับ?" });
-    expect(m.snapshot().attention[0]).toMatchObject({ kind: "asked", sid: "a2" });
-    expect(JSON.stringify(m.snapshot().events)).not.toContain("Prisma");
+    expect(storeModule.snapshot().attention[0]).toMatchObject({ kind: "asked", sid: "a2" });
+    expect(JSON.stringify(storeModule.snapshot().events)).not.toContain("Prisma");
   });
 
   it("permission waits become rows with waitingSince and clear on activity", () => {
     readContext.mockResolvedValue(null);
     ev("a3", "SessionStart");
     ev("a3", "PermissionRequest");
-    const s = m.snapshot();
-    expect(s.sessions[0].waitingSince).toEqual(expect.any(Number));
-    expect(s.attention[0]).toMatchObject({ kind: "permission", sid: "a3" });
+    const snapshot = storeModule.snapshot();
+    expect(snapshot.sessions[0].waitingSince).toEqual(expect.any(Number));
+    expect(snapshot.attention[0]).toMatchObject({ kind: "permission", sid: "a3" });
     ev("a3", "PostToolUse");
-    expect(m.snapshot().attention).toEqual([]);
-    expect(m.snapshot().sessions[0].waitingSince).toBeNull();
+    expect(storeModule.snapshot().attention).toEqual([]);
+    expect(storeModule.snapshot().sessions[0].waitingSince).toBeNull();
   });
 
   it("context >= 85% adds a row; SessionEnd drops the session's rows", async () => {
     readContext.mockResolvedValue(ctx(180000));
     ev("a4", "SessionStart");
     await flush();
-    expect(m.snapshot().attention.map((r) => r.kind)).toContain("context");
+    expect(storeModule.snapshot().attention.map((row) => row.kind)).toContain("context");
     ev("a4", "SessionEnd");
-    expect(m.snapshot().attention).toEqual([]);
+    expect(storeModule.snapshot().attention).toEqual([]);
   });
 
   it("a guessed context limit never raises the context row", async () => {
     readContext.mockResolvedValue({ used: 190000, limit: 200000, limitGuessed: true });
     ev("a6", "SessionStart");
     await flush();
-    expect(m.snapshot().attention.map((r) => r.kind)).not.toContain("context");
+    expect(storeModule.snapshot().attention.map((row) => row.kind)).not.toContain("context");
   });
 
   it("sweep timer expires old done rows", async () => {
     readContext.mockResolvedValue(null);
     ev("a5", "SessionStart");
     ev("a5", "Stop", { last_assistant_message: "ok" });
-    expect(m.snapshot().attention).toHaveLength(1);
+    expect(storeModule.snapshot().attention).toHaveLength(1);
     ev("a5b", "SessionStart");
     await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
-    expect(m.snapshot().attention).toEqual([]);
+    expect(storeModule.snapshot().attention).toEqual([]);
   });
 });
 
@@ -319,11 +322,13 @@ describe("store redaction (no secret is stored, broadcast or kept as tracker tex
       tool_name: "Write",
       tool_input: { file_path: "/w/.env", content: `PASSWORD=hunter2\nDB=postgres://app:s3cr3t@db/x\n${SECRET}` },
     });
-    const blob = JSON.stringify(m.snapshot()) + sent.join("");
+    const blob = JSON.stringify(storeModule.snapshot()) + sent.join("");
     for (const leak of [SECRET, "eyJhbGci", "hunter22", "hunter2", "p4ss", "abc999", "s3cr3t", "zzz"])
       expect(blob).not.toContain(leak);
     expect(blob).toContain("‹redacted›");
-    expect(m.snapshot().events.at(-2)!.tool_input).toMatchObject({ command: expect.stringContaining("curl -H") });
+    expect(storeModule.snapshot().events.at(-2)!.tool_input).toMatchObject({
+      command: expect.stringContaining("curl -H"),
+    });
   });
 
   it("attention loop rows (SSE + snapshot) never carry the secret that failed 3 times", () => {
@@ -336,8 +341,10 @@ describe("store redaction (no secret is stored, broadcast or kept as tracker tex
         error: `401 for Authorization: ${BEARER} key ${SECRET}`,
         tool_use_id: "f" + i,
       });
-    expect(m.snapshot().attention.map((r) => r.kind)).toEqual(["loop"]);
-    const blob = JSON.stringify(m.snapshot().attention) + sent.filter((c) => c.startsWith("event: attention")).join("");
+    expect(storeModule.snapshot().attention.map((row) => row.kind)).toEqual(["loop"]);
+    const blob =
+      JSON.stringify(storeModule.snapshot().attention) +
+      sent.filter((frame) => frame.startsWith("event: attention")).join("");
     expect(blob).not.toMatch(/eyJhbGci|sk-proj/);
     expect(blob).toContain("curl");
   });
@@ -346,9 +353,9 @@ describe("store redaction (no secret is stored, broadcast or kept as tracker tex
     readContext.mockResolvedValue(null);
     ev("x3", "SessionStart");
     ev("x3", "Stop", { last_assistant_message: `Set GITHUB_TOKEN=ghp_${"a1B2c3D4e5".repeat(4)} ok?` });
-    const blob = JSON.stringify(m.snapshot().attention) + sent.join("");
+    const blob = JSON.stringify(storeModule.snapshot().attention) + sent.join("");
     expect(blob).not.toContain("ghp_");
-    expect(m.snapshot().attention[0]).toMatchObject({ kind: "asked" });
+    expect(storeModule.snapshot().attention[0]).toMatchObject({ kind: "asked" });
   });
 
   it("a payload that makes redaction itself blow up is reduced to identifiers, not leaked", () => {
@@ -356,25 +363,26 @@ describe("store redaction (no secret is stored, broadcast or kept as tracker tex
     const evil: Record<string, unknown> = { session_id: "x4", hook_event_name: "PreToolUse", tool_name: "Bash" };
     Object.defineProperty(evil, "tool_input", {
       enumerable: true,
-      get() {
+      get: () => {
         throw new Error("boom");
       },
     });
-    expect(() => m.addEvent(evil)).not.toThrow();
-    expect(m.snapshot().events.at(-1)).toMatchObject({ session_id: "x4", tool_name: "Bash" });
+    expect(() => storeModule.addEvent(evil)).not.toThrow();
+    expect(storeModule.snapshot().events.at(-1)).toMatchObject({ session_id: "x4", tool_name: "Bash" });
   });
 });
 
 describe("store receipts (Receipt Ledger)", () => {
   const frames = () =>
     sent
-      .filter((c) => c.startsWith("event: receipts"))
+      .filter((frame) => frame.startsWith("event: receipts"))
       .map(
-        (c) => JSON.parse(c.split("data: ")[1]) as { sid: string; verdict: string; files: number; commits: number }[],
+        (frame) =>
+          JSON.parse(frame.split("data: ")[1]) as { sid: string; verdict: string; files: number; commits: number }[],
       );
-  const turnOf = (sid: string, n: number) => {
+  const turnOf = (sid: string, count: number) => {
     ev(sid, "UserPromptSubmit", { cwd: "/w/guild" });
-    for (let i = 0; i < n; i++)
+    for (let i = 0; i < count; i++)
       ev(sid, "PostToolUse", {
         tool_name: "Edit",
         tool_input: { file_path: `/w/guild/f${i}.ts` },
@@ -391,7 +399,7 @@ describe("store receipts (Receipt Ledger)", () => {
 
   it("snapshot starts with an empty ledger; Stop closes the turn, broadcasts a receipts frame", () => {
     readContext.mockResolvedValue(null);
-    expect(m.snapshot().receipts).toEqual([]);
+    expect(storeModule.snapshot().receipts).toEqual([]);
     ev("r1", "SessionStart");
     turnOf("r1", 2);
     expect(frames()).toEqual([]); // open turns are not published
@@ -399,7 +407,7 @@ describe("store receipts (Receipt Ledger)", () => {
     expect(frames().at(-1)).toEqual([
       expect.objectContaining({ sid: "r1", files: 2, commits: 1, verdict: "done", project: "guild" }),
     ]);
-    expect(m.snapshot().receipts).toEqual(frames().at(-1));
+    expect(storeModule.snapshot().receipts).toEqual(frames().at(-1));
   });
 
   it("broadcasts only when the ledger changes", () => {
@@ -407,10 +415,10 @@ describe("store receipts (Receipt Ledger)", () => {
     ev("r2", "SessionStart");
     turnOf("r2", 1);
     ev("r2", "Stop");
-    const n = frames().length;
+    const count = frames().length;
     ev("r2", "Notification");
     ev("r2", "PreToolUse", { tool_name: "Read" });
-    expect(frames()).toHaveLength(n);
+    expect(frames()).toHaveLength(count);
   });
 
   it("receipts survive SessionEnd and a stale sweep, then expire after 2h", async () => {
@@ -419,12 +427,12 @@ describe("store receipts (Receipt Ledger)", () => {
     turnOf("r3", 1);
     ev("r3", "Stop");
     ev("r3", "SessionEnd");
-    expect(m.snapshot().sessions).toEqual([]);
-    expect(m.snapshot().receipts).toHaveLength(1);
+    expect(storeModule.snapshot().sessions).toEqual([]);
+    expect(storeModule.snapshot().receipts).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
-    expect(m.snapshot().receipts).toHaveLength(1);
+    expect(storeModule.snapshot().receipts).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
-    expect(m.snapshot().receipts).toEqual([]);
+    expect(storeModule.snapshot().receipts).toEqual([]);
     expect(frames().at(-1)).toEqual([]);
   });
 
@@ -434,8 +442,8 @@ describe("store receipts (Receipt Ledger)", () => {
     turnOf("r4", 1);
     ev("r4", "Stop");
     await vi.advanceTimersByTimeAsync(11 * 60 * 1000);
-    expect(m.snapshot().sessions).toEqual([]);
-    expect(m.snapshot().receipts).toHaveLength(1);
+    expect(storeModule.snapshot().sessions).toEqual([]);
+    expect(storeModule.snapshot().receipts).toHaveLength(1);
   });
 
   it("ledger frames and snapshot carry counters only (no command / file text)", () => {
@@ -455,7 +463,9 @@ describe("store receipts (Receipt Ledger)", () => {
       cwd: "/w/guild",
     });
     ev("r5", "Stop");
-    const blob = JSON.stringify(m.snapshot().receipts) + sent.filter((c) => c.startsWith("event: receipts")).join("");
+    const blob =
+      JSON.stringify(storeModule.snapshot().receipts) +
+      sent.filter((frame) => frame.startsWith("event: receipts")).join("");
     expect(blob).not.toMatch(/TOP-SECRET|private subject|git commit/);
   });
 
@@ -477,6 +487,6 @@ describe("store receipts (Receipt Ledger)", () => {
       cwd: "/w/guild",
     });
     ev("r6", "Stop");
-    expect(m.snapshot().receipts[0]).toMatchObject({ recovered: 1, verdict: "done" });
+    expect(storeModule.snapshot().receipts[0]).toMatchObject({ recovered: 1, verdict: "done" });
   });
 });

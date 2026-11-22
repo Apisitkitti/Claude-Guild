@@ -15,80 +15,82 @@ afterEach(() => {
 });
 
 const row = (
-  s: string,
+  sessionId: string,
   kind: AttentionMsgRow["kind"] = "loop",
   extra: Partial<AttentionMsgRow> = {},
-): AttentionMsgRow => ({ key: `${s}|${kind}|x`, sid: s, kind, since: 1, ...extra });
+): AttentionMsgRow => ({ key: `${sessionId}|${kind}|x`, sid: sessionId, kind, since: 1, ...extra });
 
 describe("attention (engine)", () => {
   it("joins rows with known adventurers and drops unknown / malformed ones", () => {
-    const o = newOffice();
-    const a = sid();
-    seat(o, a, { cwd: "/w/alpha" });
-    o.setAttention([
-      row(a),
+    const office = newOffice();
+    const sessionId = sid();
+    seat(office, sessionId, { cwd: "/w/alpha" });
+    office.setAttention([
+      row(sessionId),
       row("ghost"),
       { nope: 1 } as unknown as AttentionMsgRow,
-      row(a, "bogus" as AttentionMsgRow["kind"]),
+      row(sessionId, "bogus" as AttentionMsgRow["kind"]),
     ]);
-    const rows = o.getView().attention!;
+    const rows = office.getView().attention!;
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ sid: a, project: "alpha", kind: "loop" });
-    o.setAttention(null);
-    expect(o.getView().attention).toEqual([]);
+    expect(rows[0]).toMatchObject({ sid: sessionId, project: "alpha", kind: "loop" });
+    office.setAttention(null);
+    expect(office.getView().attention).toEqual([]);
   });
   it("loop rows mark the session berserk; dismissal hides row + berserk until the row disappears", () => {
-    const o = newOffice();
-    const a = sid();
-    seat(o, a);
-    o.setAttention([row(a, "loop", { tool: "Bash", count: 3 })]);
-    expect(o.loopIds.has(a)).toBe(true);
-    expect(o.bellRinging()).toBe(true);
-    o.dismissAttention(`${a}|loop|x`);
-    expect(o.getView().attention).toEqual([]);
-    expect(o.loopIds.has(a)).toBe(false);
-    expect(o.bellRinging()).toBe(false);
-    o.setAttention([row(a, "loop")]); // same fingerprint still looping: stays dismissed
-    expect(o.getView().attention).toEqual([]);
-    o.setAttention([]); // loop ended
-    o.setAttention([row(a, "loop")]); // loops again
-    expect(o.getView().attention).toHaveLength(1);
+    const office = newOffice();
+    const sessionId = sid();
+    seat(office, sessionId);
+    office.setAttention([row(sessionId, "loop", { tool: "Bash", count: 3 })]);
+    expect(office.loopIds.has(sessionId)).toBe(true);
+    expect(office.bellRinging()).toBe(true);
+    office.dismissAttention(`${sessionId}|loop|x`);
+    expect(office.getView().attention).toEqual([]);
+    expect(office.loopIds.has(sessionId)).toBe(false);
+    expect(office.bellRinging()).toBe(false);
+    office.setAttention([row(sessionId, "loop")]); // same fingerprint still looping: stays dismissed
+    expect(office.getView().attention).toEqual([]);
+    office.setAttention([]); // loop ended
+    office.setAttention([row(sessionId, "loop")]); // loops again
+    expect(office.getView().attention).toHaveLength(1);
   });
   it("bell only rings for permission / loop / asked", () => {
-    const o = newOffice();
-    const a = sid();
-    seat(o, a);
-    o.setAttention([row(a, "context"), row(a, "done")]);
-    expect(o.bellRinging()).toBe(false);
-    o.setAttention([row(a, "asked")]);
-    expect(o.bellRinging()).toBe(true);
+    const office = newOffice();
+    const sessionId = sid();
+    seat(office, sessionId);
+    office.setAttention([row(sessionId, "context"), row(sessionId, "done")]);
+    expect(office.bellRinging()).toBe(false);
+    office.setAttention([row(sessionId, "asked")]);
+    expect(office.bellRinging()).toBe(true);
   });
   it("loads the queue from a snapshot", () => {
-    const o = newOffice();
-    const a = sid();
-    o.loadSnapshot({ sessions: [{ session_id: a, cwd: "/w/x" }], attention: [row(a, "asked")] });
-    expect(o.getView().attention).toHaveLength(1);
+    const office = newOffice();
+    const sessionId = sid();
+    office.loadSnapshot({ sessions: [{ session_id: sessionId, cwd: "/w/x" }], attention: [row(sessionId, "asked")] });
+    expect(office.getView().attention).toHaveLength(1);
   });
   describe("setAttention validation of the data fields", () => {
     const view = (rows: unknown[]) => {
-      const o = newOffice();
-      const a = sid();
-      seat(o, a);
-      o.setAttention(rows.map((r) => ({ ...row(a, "loop"), ...(r as object) })) as AttentionMsgRow[]);
-      return o.getView().attention!;
+      const office = newOffice();
+      const sessionId = sid();
+      seat(office, sessionId);
+      office.setAttention(
+        rows.map((override) => ({ ...row(sessionId, "loop"), ...(override as object) })) as AttentionMsgRow[],
+      );
+      return office.getView().attention!;
     };
     it("caps string lengths", () => {
-      const [r] = view([
+      const [first] = view([
         { tool: "t".repeat(500), target: "x".repeat(500), error: "e".repeat(500), tail: "a".repeat(500) },
       ]);
-      expect(r.tool).toHaveLength(80);
-      expect(r.target).toHaveLength(120);
-      expect(r.error).toHaveLength(200);
-      expect(r.tail).toHaveLength(200);
+      expect(first.tool).toHaveLength(80);
+      expect(first.target).toHaveLength(120);
+      expect(first.error).toHaveLength(200);
+      expect(first.tail).toHaveLength(200);
     });
     it("drops non-string or empty strings", () => {
-      const [r] = view([{ tool: 5, target: { a: 1 }, error: null, tail: "" }]);
-      for (const k of ["tool", "target", "error", "tail"]) expect(r).not.toHaveProperty(k);
+      const [first] = view([{ tool: 5, target: { a: 1 }, error: null, tail: "" }]);
+      for (const k of ["tool", "target", "error", "tail"]) expect(first).not.toHaveProperty(k);
     });
     it("loop count is floored, never negative, and 0 when missing or not a number", () => {
       expect(view([{ count: 4.9 }])[0].count).toBe(4);
@@ -106,8 +108,8 @@ describe("attention (engine)", () => {
     });
     it("stale is kept only when exactly true", () => {
       expect(view([{ kind: "permission", stale: true }])[0].stale).toBe(true);
-      for (const v of [false, 1, "true", undefined])
-        expect(view([{ kind: "permission", stale: v }])[0]).not.toHaveProperty("stale");
+      for (const value of [false, 1, "true", undefined])
+        expect(view([{ kind: "permission", stale: value }])[0]).not.toHaveProperty("stale");
     });
   });
   it("nextAttentionId cycles through distinct sessions and wraps", () => {

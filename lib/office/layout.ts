@@ -1,5 +1,5 @@
-export const W = 384;
-export const H = 216;
+export const WORLD_W = 384;
+export const WORLD_H = 216;
 export const CH_W = 16;
 export const CH_H = 24;
 /** `wait` (seconds): pause when this waypoint is reached. */
@@ -52,8 +52,8 @@ export const MON_DX = 22;
 
 export const spotOf = (i: number): Pt => ({ x: SPOT_COLS[i % GRID_COLS], y: SPOT_ROWS[(i / GRID_COLS) | 0] });
 export const monsterSpot = (i: number): Pt => {
-  const s = spotOf(i);
-  return { x: s.x + MON_DX, y: s.y };
+  const spot = spotOf(i);
+  return { x: spot.x + MON_DX, y: spot.y };
 };
 /** Camp: 3 rows x 14; beyond that everyone stacks on the last slot (render shows a +N badge). */
 export const CAMP_COLS = 14;
@@ -63,9 +63,9 @@ const CAMP_X0 = 152;
 const CAMP_Y0 = 206;
 const CAMP_DX = 16;
 const CAMP_DY = 12;
-export const standSlot = (n: number): Pt => {
-  const m = Math.min(Math.max(0, n), CAMP_MAX - 1);
-  return { x: CAMP_X0 + CAMP_DX * (m % CAMP_COLS), y: CAMP_Y0 - CAMP_DY * ((m / CAMP_COLS) | 0) };
+export const standSlot = (slot: number): Pt => {
+  const capped = Math.min(Math.max(0, slot), CAMP_MAX - 1);
+  return { x: CAMP_X0 + CAMP_DX * (capped % CAMP_COLS), y: CAMP_Y0 - CAMP_DY * ((capped / CAMP_COLS) | 0) };
 };
 export const seatPoint = (desk: number, slot: number): Pt => (desk >= 0 ? spotOf(desk) : standSlot(Math.max(0, slot)));
 const SQUIRE_0_DX = -15;
@@ -74,36 +74,38 @@ const SQUIRE_1_DY = -9;
 const CAMP_SQUIRE_DX = 8;
 const TAVERN_COUNT = TAVERN_SPOTS.length;
 /** Squire (intern) standing point: just behind / left of the adventurer. */
-export const squirePoint = (desk: number, k: number): Pt => {
-  const s = spotOf(desk);
-  return k === 0 ? { x: s.x + SQUIRE_0_DX, y: s.y + 2 } : { x: s.x + SQUIRE_1_DX, y: s.y + SQUIRE_1_DY };
+export const squirePoint = (desk: number, index: number): Pt => {
+  const spot = spotOf(desk);
+  return index === 0
+    ? { x: spot.x + SQUIRE_0_DX, y: spot.y + 2 }
+    : { x: spot.x + SQUIRE_1_DX, y: spot.y + SQUIRE_1_DY };
 };
 /** Squire point for a camp (overflow) adventurer: tight, beside the adventurer. */
-export const campSquirePoint = (slot: number, k: number): Pt => {
-  const s = standSlot(slot);
-  return { x: s.x + (k === 0 ? -CAMP_SQUIRE_DX : CAMP_SQUIRE_DX), y: s.y + 1 };
+export const campSquirePoint = (slot: number, index: number): Pt => {
+  const spot = standSlot(slot);
+  return { x: spot.x + (index === 0 ? -CAMP_SQUIRE_DX : CAMP_SQUIRE_DX), y: spot.y + 1 };
 };
 export const tavernSpot = (order: number): Pt => TAVERN_SPOTS[((order % TAVERN_COUNT) + TAVERN_COUNT) % TAVERN_COUNT];
 
-function dedupe(pts: Pt[]): Pt[] {
+const dedupe = (pts: Pt[]): Pt[] => {
   const out: Pt[] = [];
-  for (const p of pts) {
-    const l = out[out.length - 1];
-    if (!l || l.x !== p.x || l.y !== p.y) out.push(p);
-    else if (p.wait) l.wait = p.wait;
+  for (const point of pts) {
+    const last = out[out.length - 1];
+    if (!last || last.x !== point.x || last.y !== point.y) out.push(point);
+    else if (point.wait) last.wait = point.wait;
   }
   return out;
-}
+};
 
 /** seat -> point just outside the gate (first point = seat). */
-function seatToGate(desk: number, slot: number): Pt[] {
-  const s = seatPoint(desk, slot);
-  if (desk >= 0) return [s, { x: s.x, y: ROAD_Y }, { ...GATE_OUT }];
-  return [s, { x: GATE_OUT.x, y: s.y }, { ...GATE_OUT }];
-}
+const seatToGate = (desk: number, slot: number): Pt[] => {
+  const spot = seatPoint(desk, slot);
+  if (desk >= 0) return [spot, { x: spot.x, y: ROAD_Y }, { ...GATE_OUT }];
+  return [spot, { x: GATE_OUT.x, y: spot.y }, { ...GATE_OUT }];
+};
 
 /** Full route door -> board (pause) -> gate -> seat (first point = DOOR). */
-export function routeIn(desk: number, slot: number): Pt[] {
+export const routeIn = (desk: number, slot: number): Pt[] => {
   const seatToG = seatToGate(desk, slot); // seat ... GATE_OUT
   const outside = [...seatToG].reverse(); // GATE_OUT ... seat
   return dedupe([
@@ -114,25 +116,25 @@ export function routeIn(desk: number, slot: number): Pt[] {
     { ...GATE_IN },
     ...outside,
   ]);
-}
+};
 
 /** camp slot -> battle spot via the branch road (excludes the start). */
-export function routePromote(x: number, y: number, desk: number): Pt[] {
-  const s = spotOf(desk);
-  return dedupe([{ x, y }, { x: GATE_OUT.x, y }, { ...GATE_OUT }, { x: s.x, y: ROAD_Y }, s]).slice(1);
-}
+export const routePromote = (x: number, y: number, desk: number): Pt[] => {
+  const spot = spotOf(desk);
+  return dedupe([{ x, y }, { x: GATE_OUT.x, y }, { ...GATE_OUT }, { x: spot.x, y: ROAD_Y }, spot]).slice(1);
+};
 
 /** seat -> tavern stand point (first point = seat). */
-export function routeToTavern(desk: number, slot: number, order: number): Pt[] {
-  const t = tavernSpot(order);
-  return dedupe([...seatToGate(desk, slot), { ...GATE_IN }, { x: t.x, y: GATE_Y }, t]);
-}
+export const routeToTavern = (desk: number, slot: number, order: number): Pt[] => {
+  const spot = tavernSpot(order);
+  return dedupe([...seatToGate(desk, slot), { ...GATE_IN }, { x: spot.x, y: GATE_Y }, spot]);
+};
 
 /** From wherever the character stands -> counter (turn in the quest, pause) -> door. Excludes the start. */
 const LOW_ROW_Y = 180; // below this the character is in the lower wilderness
 const UPPER_HALL_MARGIN = 10;
 const HALL_AISLE_X = 100;
-export function routeLeave(x: number, y: number): Pt[] {
+export const routeLeave = (x: number, y: number): Pt[] => {
   const pts: Pt[] = [];
   if (x >= HALL_W + 1) {
     pts.push(y > LOW_ROW_Y ? { x: GATE_OUT.x, y } : { x, y: ROAD_Y });
@@ -147,7 +149,7 @@ export function routeLeave(x: number, y: number): Pt[] {
   }
   pts.push({ ...COUNTER, wait: 1.4 }, { x: BOARD.x, y: GATE_Y }, { ...DOOR_IN }, { ...DOOR });
   return dedupe(pts);
-}
+};
 
 // ---- decor (render only) ----
 export const TORCHES: Pt[] = [
@@ -184,31 +186,32 @@ const PLOT_OFFSET_Y = 14;
 const DUEL_SIDEWAYS_DY = 10; // rows closer than this duel "sideways"
 const DUEL_SIDEWAYS_DROP = 14;
 /** Claimed-land patch around a battle spot. Grows with the number of held files (1-2 small, 3-5 medium, 6+ large). Pass `out` to avoid allocating. */
-export function plotRect(desk: number, claims: number, out: Rect = { x: 0, y: 0, w: 0, h: 0 }): Rect {
+export const plotRect = (desk: number, claims: number, out: Rect = { x: 0, y: 0, w: 0, h: 0 }): Rect => {
   const big = claims >= PLOT_LARGE_CLAIMS ? 2 : claims >= PLOT_MEDIUM_CLAIMS ? 1 : 0;
   out.x = SPOT_COLS[desk % GRID_COLS] - PLOT_OFFSET_X;
   out.y = SPOT_ROWS[(desk / GRID_COLS) | 0] - PLOT_OFFSET_Y;
   out.w = PLOT_W[big];
   out.h = PLOT_H[big];
   return out;
-}
+};
 /** Where two adventurers meet to duel (the contested flag stands here). Sideways rows duel just below the monsters. Pass `out` to avoid allocating. */
-export function duelMid(a: Pt, b: Pt, out: Pt = { x: 0, y: 0 }): Pt {
-  out.x = Math.round((a.x + b.x) / 2);
-  out.y = Math.round((a.y + b.y) / 2) + (Math.abs(a.y - b.y) < DUEL_SIDEWAYS_DY ? DUEL_SIDEWAYS_DROP : 0);
+export const duelMid = (first: Pt, second: Pt, out: Pt = { x: 0, y: 0 }): Pt => {
+  out.x = Math.round((first.x + second.x) / 2);
+  out.y =
+    Math.round((first.y + second.y) / 2) + (Math.abs(first.y - second.y) < DUEL_SIDEWAYS_DY ? DUEL_SIDEWAYS_DROP : 0);
   return out;
-}
+};
 /** duelMid for two battle spots, allocation-free. */
-export function duelMidOfDesks(da: number, db: number, out: Pt): Pt {
+export const duelMidOfDesks = (da: number, db: number, out: Pt): Pt => {
   const ax = SPOT_COLS[da % GRID_COLS],
     ay = SPOT_ROWS[(da / GRID_COLS) | 0],
     bx = SPOT_COLS[db % GRID_COLS],
     by = SPOT_ROWS[(db / GRID_COLS) | 0];
   // clamped so the fighters (+ the K.O. knock-back and a half sprite) never leave the playfield (same-column pairs sit at the edges)
-  out.x = Math.max(HALL_W + DUEL_EDGE, Math.min(W - DUEL_EDGE, Math.round((ax + bx) / 2)));
+  out.x = Math.max(HALL_W + DUEL_EDGE, Math.min(WORLD_W - DUEL_EDGE, Math.round((ax + bx) / 2)));
   out.y = Math.round((ay + by) / 2) + (Math.abs(ay - by) < DUEL_SIDEWAYS_DY ? DUEL_SIDEWAYS_DROP : 0);
   return out;
-}
+};
 /** Half the gap between two duellists (centre to the meeting point). Sprites are 16 wide, so the open gap is 2*(DUEL_HALF-8) = 40px:
  * room for a ~32px melee dash (sprites stay >= 8px apart at contact), the blade lock and projectiles in flight. */
 export const DUEL_HALF = 28;

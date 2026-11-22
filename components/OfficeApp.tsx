@@ -20,7 +20,7 @@ import { useSessionFilter } from "./guild/hooks/useSessionFilter";
 import { SidePanel } from "./guild/SidePanel";
 import { Stage } from "./guild/Stage";
 
-export default function OfficeApp() {
+const OfficeApp = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<HTMLDivElement>(null);
@@ -32,7 +32,7 @@ export default function OfficeApp() {
   const source = useDataSource(officeRef, mounted, prevClashRef);
   const { waiting, hiddenSet, conflicts, clashes, attention, receipts, bellN } = useDerivedView(view, source.mode);
   const filter = useSessionFilter(officeRef, mounted);
-  const revealSelect = useRevealSelect(officeRef, filter.setFq);
+  const revealSelect = useRevealSelect(officeRef, filter.setFilterQuery);
   const jumpTo = useKeyboardNav(attention, view.selectedId, revealSelect);
   const notify = useNotifications({ officeRef, mode: source.mode, view, waiting, clashes, prevClashRef, revealSelect });
   useDocumentTitle({ waitingN: waiting.length, clashN: clashes.length, bellN });
@@ -79,4 +79,6 @@ export default function OfficeApp() {
       </div>
     </div>
   );
-}
+};
+
+export default OfficeApp;

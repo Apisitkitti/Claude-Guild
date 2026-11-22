@@ -12,14 +12,14 @@ const load = (locale: string): Messages =>
 const dropSchema = ({ $schema: _schema, ...rest }: Messages) => rest;
 
 /** every `{param}` used in any variant of a message, sorted */
-function params(p: Pattern | string): string[] {
-  const texts = typeof p === "string" ? [p] : p.flatMap((v) => Object.values(v.match));
-  return [...new Set(texts.flatMap((t) => [...t.matchAll(/\{(\w+)\}/g)].map((m) => m[1])))].sort();
-}
+const params = (pattern: Pattern | string): string[] => {
+  const texts = typeof pattern === "string" ? [pattern] : pattern.flatMap((variant) => Object.values(variant.match));
+  return [...new Set(texts.flatMap((text) => [...text.matchAll(/\{(\w+)\}/g)].map((match) => match[1])))].sort();
+};
 
 describe("messages", () => {
-  const [base, ...others] = settings.locales.toSorted((a, b) =>
-    a === settings.baseLocale ? -1 : b === settings.baseLocale ? 1 : 0,
+  const [base, ...others] = settings.locales.toSorted((left, right) =>
+    left === settings.baseLocale ? -1 : right === settings.baseLocale ? 1 : 0,
   );
   const baseMessages = dropSchema(load(base));
 
@@ -39,9 +39,10 @@ describe("messages", () => {
           expect([key, params(messages[key])]).toEqual([key, params(baseMessages[key])]);
       });
       it("has no empty messages", () => {
-        for (const [key, p] of Object.entries(messages)) {
-          const texts = typeof p === "string" ? [p] : p.flatMap((v) => Object.values(v.match));
-          for (const t of texts) expect([key, t.trim() === ""]).toEqual([key, false]);
+        for (const [key, pattern] of Object.entries(messages)) {
+          const texts =
+            typeof pattern === "string" ? [pattern] : pattern.flatMap((variant) => Object.values(variant.match));
+          for (const text of texts) expect([key, text.trim() === ""]).toEqual([key, false]);
         }
       });
     });

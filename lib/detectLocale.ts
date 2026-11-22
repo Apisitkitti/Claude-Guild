@@ -1,11 +1,11 @@
 import { baseLocale, extractLocaleFromCookie, isLocale, type Locale } from "@/paraglide/runtime";
 
 /** Thai when the stored choice or the browser's first language is Thai; English for everything else. */
-export function pickLocale(stored: string | undefined, languages: readonly string[]): Locale {
+export const pickLocale = (stored: string | undefined, languages: readonly string[]): Locale => {
   if (stored !== undefined && isLocale(stored)) return stored;
   const first = languages[0]?.toLowerCase() ?? "";
   return first === baseLocale || first.startsWith(`${baseLocale}-`) ? baseLocale : "en";
-}
+};
 
 /**
  * The viewer's locale: the cookie written by the header toggle, else the browser language.

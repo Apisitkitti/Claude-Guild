@@ -13,11 +13,12 @@ const prevEnv = { dir: process.env.CLAUDE_CONFIG_DIR, lim: process.env.CLAUDE_OF
 
 const asst = (usage: Record<string, number> | undefined, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ type: "assistant", message: { model: "claude-x", usage }, ...extra });
-const used = (r: Awaited<ReturnType<typeof readContext>>) => (r && "used" in r ? r.used : undefined);
+const used = (result: Awaited<ReturnType<typeof readContext>>) =>
+  result && "used" in result ? result.used : undefined;
 const write = (name: string, lines: string[], dir = proj) => {
-  const p = path.join(dir, name);
-  writeFileSync(p, lines.join("\n") + "\n");
-  return p;
+  const file = path.join(dir, name);
+  writeFileSync(file, lines.join("\n") + "\n");
+  return file;
 };
 
 beforeAll(() => {
@@ -40,31 +41,31 @@ afterAll(() => {
 
 describe("readContext", () => {
   it("sums input + cache tokens from the latest assistant line", async () => {
-    const p = write("a.jsonl", [
+    const file = write("a.jsonl", [
       asst({ input_tokens: 1, cache_read_input_tokens: 1, cache_creation_input_tokens: 1 }),
       JSON.stringify({ type: "user", message: {} }),
       asst({ input_tokens: 10, cache_read_input_tokens: 2000, cache_creation_input_tokens: 300 }),
     ]);
-    expect(await readContext(p)).toEqual({ used: 2310, limit: 200000, limitGuessed: false });
+    expect(await readContext(file)).toEqual({ used: 2310, limit: 200000, limitGuessed: false });
   });
 
   it("treats missing fields as 0", async () => {
-    const p = write("m.jsonl", [asst({ input_tokens: 5 })]);
-    expect(used(await readContext(p))).toBe(5);
+    const file = write("m.jsonl", [asst({ input_tokens: 5 })]);
+    expect(used(await readContext(file))).toBe(5);
   });
 
   it("skips synthetic and sidechain lines", async () => {
-    const p = write("s.jsonl", [
+    const file = write("s.jsonl", [
       asst({ input_tokens: 100 }),
       JSON.stringify({ type: "assistant", message: { model: "<synthetic>", usage: { input_tokens: 999 } } }),
       asst({ input_tokens: 888 }, { isSidechain: true }),
     ]);
-    expect(used(await readContext(p))).toBe(100);
+    expect(used(await readContext(file))).toBe(100);
   });
 
   it("ignores malformed lines", async () => {
-    const p = write("bad.jsonl", [asst({ input_tokens: 42 }), "{not json", "", "[1,2"]);
-    expect(used(await readContext(p))).toBe(42);
+    const file = write("bad.jsonl", [asst({ input_tokens: 42 }), "{not json", "", "[1,2"]);
+    expect(used(await readContext(file))).toBe(42);
   });
 
   it("returns null when nothing usable", async () => {
@@ -93,14 +94,14 @@ describe("readContext", () => {
   });
 
   it("marks limit guessed as 1M when used exceeds 200k", async () => {
-    const p = write("big.jsonl", [asst({ input_tokens: 10, cache_read_input_tokens: 250000 })]);
-    expect(await readContext(p)).toEqual({ used: 250010, limit: 1_000_000, limitGuessed: true });
+    const file = write("big.jsonl", [asst({ input_tokens: 10, cache_read_input_tokens: 250000 })]);
+    expect(await readContext(file)).toEqual({ used: 250010, limit: 1_000_000, limitGuessed: true });
   });
 
   it("honors CLAUDE_OFFICE_CTX_LIMIT", async () => {
     process.env.CLAUDE_OFFICE_CTX_LIMIT = "500000";
-    const p = write("lim.jsonl", [asst({ input_tokens: 250000 })]);
-    expect(await readContext(p)).toEqual({ used: 250000, limit: 500000, limitGuessed: false });
+    const file = write("lim.jsonl", [asst({ input_tokens: 250000 })]);
+    expect(await readContext(file)).toEqual({ used: 250000, limit: 500000, limitGuessed: false });
   });
 
   it("reads only the tail window of a large file", async () => {
@@ -116,36 +117,36 @@ describe("readContext", () => {
   });
 
   it("ignores non-finite or non-positive CLAUDE_OFFICE_CTX_LIMIT", async () => {
-    const p = write("lim2.jsonl", [asst({ input_tokens: 10 })]);
-    for (const v of ["abc", "-5", "0", "Infinity"]) {
-      process.env.CLAUDE_OFFICE_CTX_LIMIT = v;
-      expect(await readContext(p)).toEqual({ used: 10, limit: 200000, limitGuessed: false });
+    const file = write("lim2.jsonl", [asst({ input_tokens: 10 })]);
+    for (const value of ["abc", "-5", "0", "Infinity"]) {
+      process.env.CLAUDE_OFFICE_CTX_LIMIT = value;
+      expect(await readContext(file)).toEqual({ used: 10, limit: 200000, limitGuessed: false });
     }
   });
 
   it("returns compacted after a compact_boundary with no later usage", async () => {
-    const p = write("c1.jsonl", [
+    const file = write("c1.jsonl", [
       asst({ input_tokens: 150000 }),
       JSON.stringify({ type: "system", subtype: "compact_boundary" }),
     ]);
-    expect(await readContext(p)).toEqual({ compacted: true });
+    expect(await readContext(file)).toEqual({ compacted: true });
   });
 
   it("returns compacted after an isCompactSummary line", async () => {
-    const p = write("c2.jsonl", [
+    const file = write("c2.jsonl", [
       asst({ input_tokens: 150000 }),
       JSON.stringify({ type: "system", subtype: "compact_boundary" }),
       JSON.stringify({ type: "user", isCompactSummary: true, message: {} }),
     ]);
-    expect(await readContext(p)).toEqual({ compacted: true });
+    expect(await readContext(file)).toEqual({ compacted: true });
   });
 
   it("uses usage that comes after a compact boundary", async () => {
-    const p = write("c3.jsonl", [
+    const file = write("c3.jsonl", [
       asst({ input_tokens: 150000 }),
       JSON.stringify({ type: "system", subtype: "compact_boundary" }),
       asst({ input_tokens: 5000 }),
     ]);
-    expect(await readContext(p)).toEqual({ used: 5000, limit: 200000, limitGuessed: false });
+    expect(await readContext(file)).toEqual({ used: 5000, limit: 200000, limitGuessed: false });
   });
 });

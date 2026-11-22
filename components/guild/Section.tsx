@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 /** Collapsible section heading; the body (with id `sec-<id>`) is rendered by the caller. */
-export function SectionHeading({
+export const SectionHeading = ({
   id,
   hidden,
   onToggle,
@@ -13,7 +13,7 @@ export function SectionHeading({
   onToggle: () => void;
   children: ReactNode;
   count?: number;
-}) {
+}) => {
   return (
     <h2>
       <button className="sec" onClick={onToggle} aria-expanded={!hidden} aria-controls={`sec-${id}`}>
@@ -27,4 +27,4 @@ export function SectionHeading({
       </button>
     </h2>
   );
-}
+};

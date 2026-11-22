@@ -25,8 +25,8 @@ const ACT_CHIP: Record<RosterAct, { cls: string; label: () => string }> = {
   leave: { cls: "c-grey", label: () => m.act_leave() },
 };
 
-export function RosterCard({
-  r,
+export const RosterCard = ({
+  row,
   highlighted,
   selected,
   flashing,
@@ -34,72 +34,72 @@ export function RosterCard({
   onToggleInterns,
   officeRef,
 }: {
-  r: RosterRow;
+  row: RosterRow;
   highlighted: boolean;
   selected: boolean;
   flashing: boolean;
   internsHidden: boolean;
   onToggleInterns: () => void;
   officeRef: OfficeRef;
-}) {
-  const chip = ACT_CHIP[r.act] ?? ACT_CHIP.thinking;
-  const p = r as RpgRow;
+}) => {
+  const chip = ACT_CHIP[row.act] ?? ACT_CHIP.thinking;
+  const rpg = row as RpgRow;
   return (
-    <li className={`card${highlighted ? " hl" : ""}${flashing ? " lvup" : ""}`} style={{ borderLeftColor: r.color }}>
+    <li className={`card${highlighted ? " hl" : ""}${flashing ? " lvup" : ""}`} style={{ borderLeftColor: row.color }}>
       <button
         type="button"
         className="csel"
-        onClick={() => officeRef.current?.select(r.id)}
+        onClick={() => officeRef.current?.select(row.id)}
         aria-pressed={selected}
-        aria-label={`${r.tag} ${r.project}: ${r.status}`}
-        title={r.status}
+        aria-label={`${row.tag} ${row.project}: ${row.status}`}
+        title={row.status}
       >
-        <Avatar look={r.look} />
+        <Avatar look={row.look} />
         <span className="who">
           <b>
-            {r.tag}
-            {r.look.cls ? <span className="cls">{classLabel(r.look.cls)}</span> : null}
-            {isNum(p.level) ? <span className="lv">Lv.{p.level}</span> : null}
+            {row.tag}
+            {row.look.cls ? <span className="cls">{classLabel(row.look.cls)}</span> : null}
+            {isNum(rpg.level) ? <span className="lv">Lv.{rpg.level}</span> : null}
           </b>
-          <span className="proj">{r.project}</span>
+          <span className="proj">{row.project}</span>
         </span>
         <span className={`chip ${chip.cls}`} title={chip.label()}>
           {chip.label()}
         </span>
       </button>
-      <Stats p={p} />
-      <Mana p={p} />
-      {(isNum(r.claims) || r.conflict) && (
+      <Stats rpg={rpg} />
+      <Mana rpg={rpg} />
+      {(isNum(row.claims) || row.conflict) && (
         <div className="terr">
-          {isNum(r.claims) && (
-            <span className="tb claims" title={m.card_claims_title({ count: r.claims })}>
-              🏳 {r.claims}
+          {isNum(row.claims) && (
+            <span className="tb claims" title={m.card_claims_title({ count: row.claims })}>
+              🏳 {row.claims}
             </span>
           )}
-          {r.conflict === "clash" && (
+          {row.conflict === "clash" && (
             <span className="tb clash" role="img" aria-label={m.card_clash_label()} title={m.card_clash_title()}>
               ⚔️
             </span>
           )}
-          {r.conflict === "overlap" && (
+          {row.conflict === "overlap" && (
             <span className="tb overlap" role="img" aria-label={m.card_overlap_label()} title={m.card_overlap_label()}>
               ⚔
             </span>
           )}
         </div>
       )}
-      {r.interns > 0 && (
+      {row.interns > 0 && (
         <button
           className="itoggle"
           aria-expanded={!internsHidden}
-          aria-label={m.card_interns({ count: r.interns })}
+          aria-label={m.card_interns({ count: row.interns })}
           title={m.card_interns_toggle()}
           onClick={onToggleInterns}
         >
-          {internsHidden ? "▸" : "▾"} {m.card_interns({ count: r.interns })}
+          {internsHidden ? "▸" : "▾"} {m.card_interns({ count: row.interns })}
         </button>
       )}
-      {r.interns > 0 && !internsHidden && <InternList list={r.internList} />}
+      {row.interns > 0 && !internsHidden && <InternList list={row.internList} />}
     </li>
   );
-}
+};

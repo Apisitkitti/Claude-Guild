@@ -8,7 +8,7 @@ import { RosterCard } from "./RosterCard";
 import { SectionHeading } from "./Section";
 import type { OfficeRef } from "./types";
 
-export function Roster({
+export const Roster = ({
   view,
   filter,
   hidden,
@@ -20,10 +20,10 @@ export function Roster({
   hidden: boolean;
   onToggle: () => void;
   officeRef: OfficeRef;
-}) {
+}) => {
   const [internHidden, toggleIntern] = usePersistedFlags("office.internsHidden");
   const lvFlash = useRosterFlash(view.roster);
-  const { fq, fStray, saveFilter } = filter;
+  const { filterQuery, fStray, saveFilter } = filter;
   return (
     <>
       <SectionHeading id="roster" hidden={hidden} onToggle={onToggle} count={view.roster.length}>
@@ -36,15 +36,20 @@ export function Roster({
           </span>
           <input
             type="search"
-            value={fq}
-            onChange={(e) => saveFilter(e.target.value, fStray)}
+            value={filterQuery}
+            onChange={(event) => saveFilter(event.target.value, fStray)}
             placeholder={m.roster_search_placeholder()}
             aria-label={m.roster_search_label()}
             maxLength={80}
           />
         </div>
         <label className="gtoggle" title={m.roster_stray_title()}>
-          <input type="checkbox" role="switch" checked={fStray} onChange={(e) => saveFilter(fq, e.target.checked)} />
+          <input
+            type="checkbox"
+            role="switch"
+            checked={fStray}
+            onChange={(event) => saveFilter(filterQuery, event.target.checked)}
+          />
           <span className="gtoggle-track" aria-hidden="true">
             <span className="gtoggle-knob" />
           </span>
@@ -58,19 +63,19 @@ export function Roster({
       </div>
       <ul className="roster" id="sec-roster" hidden={hidden}>
         {view.roster.length === 0 && <li className="empty">{m.roster_empty()}</li>}
-        {view.roster.map((r) => (
+        {view.roster.map((row) => (
           <RosterCard
-            key={r.id}
-            r={r}
-            highlighted={r.id === view.hoverId || r.id === view.selectedId}
-            selected={r.id === view.selectedId}
-            flashing={!!lvFlash[r.id]}
-            internsHidden={!!internHidden[r.id]}
-            onToggleInterns={() => toggleIntern(r.id)}
+            key={row.id}
+            row={row}
+            highlighted={row.id === view.hoverId || row.id === view.selectedId}
+            selected={row.id === view.selectedId}
+            flashing={!!lvFlash[row.id]}
+            internsHidden={!!internHidden[row.id]}
+            onToggleInterns={() => toggleIntern(row.id)}
             officeRef={officeRef}
           />
         ))}
       </ul>
     </>
   );
-}
+};

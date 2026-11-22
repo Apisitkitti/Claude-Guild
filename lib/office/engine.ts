@@ -3,9 +3,9 @@ import { m } from "@/paraglide/messages";
 import {
   DESK_COUNT,
   DUEL_HALF,
-  H,
+  WORLD_H,
   HALL_W,
-  W,
+  WORLD_W,
   CH_H,
   CH_W,
   DOOR,
@@ -347,7 +347,7 @@ export interface ConflictRow {
   level: "overlap" | "clash";
   since: number;
 }
-export const conflictKey = (c: { file: string; level: string }): string => `${c.file}|${c.level}`;
+export const conflictKey = (conflict: { file: string; level: string }): string => `${conflict.file}|${conflict.level}`;
 
 export type AttentionKind = "permission" | "loop" | "asked" | "context" | "done";
 /** a row of the server's Lookout Bell queue */
@@ -374,20 +374,21 @@ export interface AttentionRow extends AttentionMsgRow {
   project: string;
 }
 /** rows that make the bell ring (the tab title leaves permission out: the ❗ already counts it) */
-export function bellCount(rows: readonly { kind: AttentionKind }[], withPermission = true): number {
-  let n = 0;
-  for (const r of rows) if (r.kind === "loop" || r.kind === "asked" || (withPermission && r.kind === "permission")) n++;
-  return n;
-}
+export const bellCount = (rows: readonly { kind: AttentionKind }[], withPermission = true): number => {
+  let count = 0;
+  for (const row of rows)
+    if (row.kind === "loop" || row.kind === "asked" || (withPermission && row.kind === "permission")) count++;
+  return count;
+};
 const ATTN_KINDS: readonly string[] = ["permission", "loop", "asked", "context", "done"];
 /** ids of the next queue row after the selected one (wraps); first row when nothing in the queue is selected */
-export function nextAttentionId(rows: readonly { sid: string }[], selectedId: string | null): string | null {
+export const nextAttentionId = (rows: readonly { sid: string }[], selectedId: string | null): string | null => {
   const ids: string[] = [];
-  for (const r of rows) if (!ids.includes(r.sid)) ids.push(r.sid);
+  for (const row of rows) if (!ids.includes(row.sid)) ids.push(row.sid);
   if (!ids.length) return null;
   const i = selectedId ? ids.indexOf(selectedId) : -1;
   return ids[(i + 1) % ids.length];
-}
+};
 
 /** quest-log kinds made by the guild itself; the prefix keeps them from colliding with real tool / hook names */
 export const KIND_RECEIPT = "guild:receipt";
@@ -421,17 +422,23 @@ const MAX_RECEIPTS = 30;
 /** a receipt that closed this recently (and was not seen before) gets the 📜 bubble + quest-log line */
 const RECEIPT_FRESH_MS = 20_000;
 /** outcome counts as chips text in the viewer's language, e.g. "files 3 · recovered 1 · commit 1" (empty when nothing) */
-export function receiptSummary(r: Pick<ReceiptMsgRow, "files" | "recovered" | "commits" | "amends" | "tasks">): string {
-  const p: string[] = [];
-  if (r.files) p.push(`${m.receipt_label_files()} ${r.files}`);
-  if (r.recovered) p.push(`${m.receipt_label_recovered()} ${r.recovered}`);
-  if (r.commits) p.push(`${m.receipt_label_commits()} ${r.commits}`);
-  if (r.amends) p.push(`${m.receipt_label_amends()} ${r.amends}`);
-  if (r.tasks) p.push(`${m.receipt_label_tasks()} ${r.tasks}`);
-  return p.join(" · ");
-}
-export const receiptVerdictText = (v: ReceiptVerdict): string =>
-  v === "done" ? m.receipt_verdict_done() : v === "red" ? m.receipt_verdict_red() : m.receipt_verdict_none();
+export const receiptSummary = (
+  receipt: Pick<ReceiptMsgRow, "files" | "recovered" | "commits" | "amends" | "tasks">,
+): string => {
+  const parts: string[] = [];
+  if (receipt.files) parts.push(`${m.receipt_label_files()} ${receipt.files}`);
+  if (receipt.recovered) parts.push(`${m.receipt_label_recovered()} ${receipt.recovered}`);
+  if (receipt.commits) parts.push(`${m.receipt_label_commits()} ${receipt.commits}`);
+  if (receipt.amends) parts.push(`${m.receipt_label_amends()} ${receipt.amends}`);
+  if (receipt.tasks) parts.push(`${m.receipt_label_tasks()} ${receipt.tasks}`);
+  return parts.join(" · ");
+};
+export const receiptVerdictText = (verdict: ReceiptVerdict): string =>
+  verdict === "done"
+    ? m.receipt_verdict_done()
+    : verdict === "red"
+      ? m.receipt_verdict_red()
+      : m.receipt_verdict_none();
 
 export interface SnapshotMsg {
   attention?: AttentionMsgRow[];
@@ -567,32 +574,32 @@ const FX0 = newDuelScript(),
 const sstep = (x: number): number => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (SMOOTHSTEP_A - 2 * x));
 
 /** exchange index at fight time u: -1 face-off, 0..3 regular, 4 final, 5 flourish */
-export function duelExchangeAt(u: number): number {
-  if (u < DUEL_INTRO) return -1;
-  if (u >= DUEL_FLOURISH) return DUEL_EX_FLOURISH;
-  if (u >= DUEL_FINAL_AT) return DUEL_EXCHANGES;
-  return Math.min(DUEL_EXCHANGES - 1, Math.floor((u - DUEL_INTRO) / DUEL_EX));
-}
+export const duelExchangeAt = (elapsed: number): number => {
+  if (elapsed < DUEL_INTRO) return -1;
+  if (elapsed >= DUEL_FLOURISH) return DUEL_EX_FLOURISH;
+  if (elapsed >= DUEL_FINAL_AT) return DUEL_EXCHANGES;
+  return Math.min(DUEL_EXCHANGES - 1, Math.floor((elapsed - DUEL_INTRO) / DUEL_EX));
+};
 /** attacking side of exchange k (-1 = clash). Mixed kinds alternate who attacks, starting with `agg`; the last blow is the winner's. */
-function exAtk(d: Duel, k: number): number {
-  if (k >= DUEL_EXCHANGES) return d.winner;
-  if (k === DUEL_CLASH_EX && d.kind === "sword") return -1;
-  return (k & 1) === 0 ? d.agg : 1 - d.agg;
-}
-function duelHp(d: Duel, side: number, k: number, landed: boolean): number {
+const exAtk = (duel: Duel, exchange: number): number => {
+  if (exchange >= DUEL_EXCHANGES) return duel.winner;
+  if (exchange === DUEL_CLASH_EX && duel.kind === "sword") return -1;
+  return (exchange & 1) === 0 ? duel.agg : 1 - duel.agg;
+};
+const duelHp = (duel: Duel, side: number, exchange: number, landed: boolean): number => {
   let taken = 0;
-  const n = Math.min(k, DUEL_EXCHANGES);
-  for (let j = 0; j < n; j++) {
-    const a = exAtk(d, j);
-    if (a >= 0 && a !== side) taken++;
+  const capped = Math.min(exchange, DUEL_EXCHANGES);
+  for (let j = 0; j < capped; j++) {
+    const atk = exAtk(duel, j);
+    if (atk >= 0 && atk !== side) taken++;
   }
-  if (k < DUEL_EXCHANGES && landed) {
-    const a = exAtk(d, k);
-    if (a >= 0 && a !== side) taken++;
+  if (exchange < DUEL_EXCHANGES && landed) {
+    const atk = exAtk(duel, exchange);
+    if (atk >= 0 && atk !== side) taken++;
   }
-  if (k >= DUEL_EXCHANGES && (k > DUEL_EXCHANGES || landed) && side !== d.winner) return 0;
+  if (exchange >= DUEL_EXCHANGES && (exchange > DUEL_EXCHANGES || landed) && side !== duel.winner) return 0;
   return Math.max(0, DUEL_PIPS - taken);
-}
+};
 
 /**
  * The fight script: a pure, allocation-free function of (duel, side, fight time u). Writes into `o` (module scratch by default)
@@ -600,153 +607,155 @@ function duelHp(d: Duel, side: number, k: number, landed: boolean): number {
  * and shaking) -> both ease home. The sword-vs-sword exchange #2 is a blade lock. The final blow is the winner's; the loser is KO'd.
  * Only the final exchange and later read d.winner, so it can be decided at the start of the final blow.
  */
-export function duelScript(d: Duel, side: 0 | 1, u: number, o: DuelScript = DS_SCRATCH): DuelScript {
+export const duelScript = (duel: Duel, side: 0 | 1, elapsed: number, out: DuelScript = DS_SCRATCH): DuelScript => {
   const dir = side === 0 ? 1 : -1,
-    style = side === 0 ? d.styleL : d.styleR;
-  o.dx = 0;
-  o.dy = 0;
-  o.pose = style === "magic" ? "cast" : "attack";
-  o.frame = 0;
-  o.hp = DUEL_PIPS;
-  o.ex = -1;
-  o.q = 0;
-  o.atk = -1;
-  o.act = 0;
-  o.stage = 0;
-  o.fly = -1;
-  o.big = false;
-  o.ko = false;
-  o.hit = false;
-  o.stop = false;
-  if (u < DUEL_INTRO) {
-    if (u < DUEL_INTRO - DUEL_INTRO_IDLE_CUTOFF) {
-      o.pose = "idle";
-      o.frame = Math.floor(u * DUEL_IDLE_FPS) & 1;
+    style = side === 0 ? duel.styleL : duel.styleR;
+  out.dx = 0;
+  out.dy = 0;
+  out.pose = style === "magic" ? "cast" : "attack";
+  out.frame = 0;
+  out.hp = DUEL_PIPS;
+  out.ex = -1;
+  out.q = 0;
+  out.atk = -1;
+  out.act = 0;
+  out.stage = 0;
+  out.fly = -1;
+  out.big = false;
+  out.ko = false;
+  out.hit = false;
+  out.stop = false;
+  if (elapsed < DUEL_INTRO) {
+    if (elapsed < DUEL_INTRO - DUEL_INTRO_IDLE_CUTOFF) {
+      out.pose = "idle";
+      out.frame = Math.floor(elapsed * DUEL_IDLE_FPS) & 1;
     }
-    return o;
+    return out;
   }
-  if (u >= DUEL_FLOURISH) {
-    o.ex = 5;
-    o.q = u - DUEL_FLOURISH;
-    o.hp = duelHp(d, side, DUEL_EX_FLOURISH, true);
-    if (side === d.winner) {
-      o.pose = "cheer";
-      o.frame = Math.floor(u * DUEL_CHEER_FPS) & 1;
-      return o;
+  if (elapsed >= DUEL_FLOURISH) {
+    out.ex = 5;
+    out.q = elapsed - DUEL_FLOURISH;
+    out.hp = duelHp(duel, side, DUEL_EX_FLOURISH, true);
+    if (side === duel.winner) {
+      out.pose = "cheer";
+      out.frame = Math.floor(elapsed * DUEL_CHEER_FPS) & 1;
+      return out;
     }
-    const rec = sstep((u - (DUEL_FIGHT - DUEL_RECOVER)) / DUEL_RECOVER);
-    o.dx = Math.round(-dir * DUEL_KNOCK_KO * (1 - rec));
-    o.dy = Math.round(DUEL_KO_DROP * (1 - rec));
-    o.ko = rec < DUEL_KO_RECOVER_HALF;
-    o.pose = rec < DUEL_KO_RECOVER_HALF ? "hurt" : "idle";
-    o.frame = 1;
-    return o;
+    const rec = sstep((elapsed - (DUEL_FIGHT - DUEL_RECOVER)) / DUEL_RECOVER);
+    out.dx = Math.round(-dir * DUEL_KNOCK_KO * (1 - rec));
+    out.dy = Math.round(DUEL_KO_DROP * (1 - rec));
+    out.ko = rec < DUEL_KO_RECOVER_HALF;
+    out.pose = rec < DUEL_KO_RECOVER_HALF ? "hurt" : "idle";
+    out.frame = 1;
+    return out;
   }
-  const k = duelExchangeAt(u),
-    fin = k === DUEL_EXCHANGES;
-  const q = Math.max(0, fin ? u - DUEL_FINAL_AT : u - DUEL_INTRO - k * DUEL_EX);
+  const exchange = duelExchangeAt(elapsed),
+    fin = exchange === DUEL_EXCHANGES;
+  const phase = Math.max(0, fin ? elapsed - DUEL_FINAL_AT : elapsed - DUEL_INTRO - exchange * DUEL_EX);
   const imp = fin ? DUEL_IMPACT_FINAL : DUEL_IMPACT,
     stopLen = fin ? DUEL_STOP_FINAL : DUEL_STOP;
   const wind = imp - DUEL_DASH,
     rec = fin ? DUEL_REC_FINAL : DUEL_REC,
     ret = fin ? DUEL_RET_FINAL : DUEL_RET;
-  const stopped = q >= imp && q < imp + stopLen;
-  const q2 = q < imp ? q : stopped ? imp : q - stopLen; // game time: frozen during the hit-stop
-  const atk = exAtk(d, k);
-  o.ex = k;
-  o.q = q;
-  o.atk = atk;
-  o.big = fin;
-  o.stop = stopped;
-  o.stage = q < wind ? STAGE_WINDUP : q < imp ? STAGE_DASH : stopped ? STAGE_HITSTOP : STAGE_AFTERMATH;
-  o.hp = duelHp(d, side, k, q >= imp);
-  let fw = 0; // px toward the opponent
+  const stopped = phase >= imp && phase < imp + stopLen;
+  const q2 = phase < imp ? phase : stopped ? imp : phase - stopLen; // game time: frozen during the hit-stop
+  const atk = exAtk(duel, exchange);
+  out.ex = exchange;
+  out.q = phase;
+  out.atk = atk;
+  out.big = fin;
+  out.stop = stopped;
+  out.stage = phase < wind ? STAGE_WINDUP : phase < imp ? STAGE_DASH : stopped ? STAGE_HITSTOP : STAGE_AFTERMATH;
+  out.hp = duelHp(duel, side, exchange, phase >= imp);
+  let forward = 0; // px toward the opponent
   if (atk < 0) {
     // blade lock
-    o.act = 3;
-    o.pose = "attack";
+    out.act = 3;
+    out.pose = "attack";
     const reach = DUEL_CLASH_REACH,
       lockEnd = imp + CLASH_LOCK_S,
       shoveEnd = lockEnd + CLASH_SHOVE_S;
     if (q2 < wind) {
-      fw = -CLASH_BACKOFF * sstep(q2 / wind);
+      forward = -CLASH_BACKOFF * sstep(q2 / wind);
     } else if (q2 < imp) {
-      fw = -CLASH_BACKOFF + (reach + CLASH_BACKOFF) * sstep((q2 - wind) / DUEL_DASH);
-      o.frame = 1;
+      forward = -CLASH_BACKOFF + (reach + CLASH_BACKOFF) * sstep((q2 - wind) / DUEL_DASH);
+      out.frame = 1;
     } else if (q2 < lockEnd) {
-      fw = reach + (stopped ? 0 : ((Math.floor(q * CLASH_JITTER_HZ) + side) & 1) * 2 - 1);
-      o.frame = 1;
+      forward = reach + (stopped ? 0 : ((Math.floor(phase * CLASH_JITTER_HZ) + side) & 1) * 2 - 1);
+      out.frame = 1;
     } else if (q2 < shoveEnd) {
-      fw = reach - (reach + CLASH_RECOIL) * sstep((q2 - lockEnd) / CLASH_SHOVE_S);
-      o.pose = "hurt";
-    } else fw = -CLASH_RECOIL * (1 - sstep((q2 - shoveEnd) / CLASH_SETTLE_S));
+      forward = reach - (reach + CLASH_RECOIL) * sstep((q2 - lockEnd) / CLASH_SHOVE_S);
+      out.pose = "hurt";
+    } else forward = -CLASH_RECOIL * (1 - sstep((q2 - shoveEnd) / CLASH_SETTLE_S));
   } else if (side === atk) {
     const melee = style === "sword",
       back = fin ? DUEL_BACKOFF_FINAL : DUEL_BACKOFF;
-    o.act = melee ? 1 : 2;
+    out.act = melee ? 1 : 2;
     if (melee) {
-      if (q2 < wind) fw = -back * sstep(q2 / wind);
+      if (q2 < wind) forward = -back * sstep(q2 / wind);
       else if (q2 < imp) {
-        fw = -back + (DUEL_REACH + back) * sstep((q2 - wind) / DUEL_DASH);
-        o.frame = 1;
+        forward = -back + (DUEL_REACH + back) * sstep((q2 - wind) / DUEL_DASH);
+        out.frame = 1;
       } else if (q2 < imp + rec) {
-        fw = DUEL_REACH - 2 * sstep((q2 - imp) / rec);
-        o.frame = 1;
-      } else fw = (DUEL_REACH - 2) * (1 - sstep((q2 - imp - rec) / ret));
+        forward = DUEL_REACH - 2 * sstep((q2 - imp) / rec);
+        out.frame = 1;
+      } else forward = (DUEL_REACH - 2) * (1 - sstep((q2 - imp - rec) / ret));
     } else {
-      fw = q2 < wind ? -back * sstep(q2 / wind) : -back * (1 - sstep((q2 - wind) / DUEL_DASH));
-      if (q >= wind && q < imp) o.fly = (q - wind) / DUEL_DASH;
-      o.frame = style === "magic" ? (q2 >= wind && q2 < imp + rec ? 1 : 0) : q2 < wind ? 1 : 0;
+      forward = q2 < wind ? -back * sstep(q2 / wind) : -back * (1 - sstep((q2 - wind) / DUEL_DASH));
+      if (phase >= wind && phase < imp) out.fly = (phase - wind) / DUEL_DASH;
+      out.frame = style === "magic" ? (q2 >= wind && q2 < imp + rec ? 1 : 0) : q2 < wind ? 1 : 0;
     }
   } else {
     // defender
-    o.act = (side === 0 ? d.styleR : d.styleL) === "sword" ? 1 : 2;
-    const K = fin ? DUEL_KNOCK_KO : DUEL_KNOCK;
+    out.act = (side === 0 ? duel.styleR : duel.styleL) === "sword" ? 1 : 2;
+    const knock = fin ? DUEL_KNOCK_KO : DUEL_KNOCK;
     if (q2 >= imp) {
-      o.hit = true;
-      const away = q2 < imp + rec ? K * sstep((q2 - imp) / rec) : fin ? K : K * (1 - sstep((q2 - imp - rec) / ret));
-      fw = -away;
-      if (!stopped && q2 < imp + rec) fw += (Math.floor(q * DUEL_SHAKE_HZ) & 1) * 2 - 1; // shake
+      out.hit = true;
+      const away =
+        q2 < imp + rec ? knock * sstep((q2 - imp) / rec) : fin ? knock : knock * (1 - sstep((q2 - imp - rec) / ret));
+      forward = -away;
+      if (!stopped && q2 < imp + rec) forward += (Math.floor(phase * DUEL_SHAKE_HZ) & 1) * 2 - 1; // shake
       if (fin || q2 < imp + rec + DUEL_HURT_HOLD_S) {
-        o.pose = "hurt";
-        o.frame = fin && q2 >= imp + rec ? 1 : Math.floor(q2 * DUEL_HURT_FPS) & 1;
+        out.pose = "hurt";
+        out.frame = fin && q2 >= imp + rec ? 1 : Math.floor(q2 * DUEL_HURT_FPS) & 1;
       }
       if (fin) {
-        o.dy = Math.round(DUEL_KO_DROP * sstep((q2 - imp - DUEL_KO_DELAY_S) / DUEL_KO_FALL_S));
-        o.ko = q2 >= imp + rec * DUEL_KO_AT_REC;
+        out.dy = Math.round(DUEL_KO_DROP * sstep((q2 - imp - DUEL_KO_DELAY_S) / DUEL_KO_FALL_S));
+        out.ko = q2 >= imp + rec * DUEL_KO_AT_REC;
       }
     }
   }
-  o.dx = Math.round(fw * dir);
-  return o;
-}
+  out.dx = Math.round(forward * dir);
+  return out;
+};
 
 const POINT_SCRATCH: Pt = { x: 0, y: 0 };
 /** where this exchange's blow lands (the blade lock sits between the two; otherwise on the defender's front). Allocation-free. */
-export function duelContact(
-  L: { x: number; y: number },
-  R: { x: number; y: number },
-  s: DuelScript,
+export const duelContact = (
+  left: { x: number; y: number },
+  right: { x: number; y: number },
+  script: DuelScript,
   out: Pt = POINT_SCRATCH,
-): Pt {
-  if (s.atk < 0) {
-    out.x = (L.x + R.x) / 2;
-    out.y = (L.y + R.y) / 2 - DUEL_CLASH_CONTACT_LIFT;
+): Pt => {
+  if (script.atk < 0) {
+    out.x = (left.x + right.x) / 2;
+    out.y = (left.y + right.y) / 2 - DUEL_CLASH_CONTACT_LIFT;
     return out;
   }
-  const a = s.atk === 0 ? 1 : -1,
-    D = s.atk === 0 ? R : L;
-  out.x = D.x - a * (s.act === 1 ? DUEL_MELEE_CONTACT_DEPTH : DUEL_RANGED_CONTACT_DEPTH);
-  out.y = D.y - DUEL_CONTACT_LIFT;
+  const dir = script.atk === 0 ? 1 : -1,
+    defender = script.atk === 0 ? right : left;
+  out.x = defender.x - dir * (script.act === 1 ? DUEL_MELEE_CONTACT_DEPTH : DUEL_RANGED_CONTACT_DEPTH);
+  out.y = defender.y - DUEL_CONTACT_LIFT;
   return out;
-}
+};
 const DUEL_COOLDOWN = 60;
 /** a clash that could not duel yet (participant still walking in, etc.) keeps trying this long (sim seconds) */
 const DUEL_WAIT = 30;
 const GLARE_COOLDOWN = 60;
 /** two adventurers closer than this share a spot: no duel */
 const DUEL_MIN_DIST = 12;
-const pairKey = (a: string, b: string): string => (a < b ? a + "|" + b : b + "|" + a);
+const pairKey = (first: string, second: string): string =>
+  first < second ? first + "|" + second : second + "|" + first;
 const DUEL_MAX = 2;
 const DUEL_WALK_MAX = 130;
 const DUEL_RANGE_MAX = 200;
@@ -1046,40 +1055,41 @@ declare global {
 }
 
 const SPEED = 40;
-const h32 = (s: string): number => {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, FNV_PRIME) >>> 0;
+const h32 = (text: string): number => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME) >>> 0;
   }
-  return h >>> 0;
+  return hash >>> 0;
 };
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
+const rand = (min: number, max: number) => min + Math.random() * (max - min);
 
-const str = (v: unknown): string => (typeof v === "string" ? v : "");
-const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
-const base = (p: string) => {
-  const q = p.replace(/\/+$/, "");
-  const i = q.lastIndexOf("/");
-  return i >= 0 ? q.slice(i + 1) : q;
+const str = (value: unknown): string => (typeof value === "string" ? value : "");
+const obj = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+const base = (path: string) => {
+  const trimmed = path.replace(/\/+$/, "");
+  const i = trimmed.lastIndexOf("/");
+  return i >= 0 ? trimmed.slice(i + 1) : trimmed;
 };
-const trunc = (s: string, n: number) => {
-  const t = s.replace(/\s+/g, " ").trim();
-  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+const trunc = (text: string, max: number) => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? flat.slice(0, max - 1) + "…" : flat;
 };
 
-export function toolDetail(evt: HookEvt): string {
-  const ti = obj(evt.tool_input);
-  const file = str(ti.file_path) || str(ti.path) || str(ti.notebook_path);
+export const toolDetail = (evt: HookEvt): string => {
+  const input = obj(evt.tool_input);
+  const file = str(input.file_path) || str(input.path) || str(input.notebook_path);
   if (file) return base(file);
-  if (str(ti.command)) return trunc(str(ti.command), DETAIL_MAX);
-  if (str(ti.pattern)) return trunc(str(ti.pattern), DETAIL_MAX);
-  if (str(ti.url)) return trunc(str(ti.url).replace(/^https?:\/\//, ""), DETAIL_MAX);
-  if (str(ti.query)) return trunc(str(ti.query), DETAIL_MAX);
-  if (str(ti.description)) return trunc(str(ti.description), DETAIL_MAX);
-  if (str(ti.prompt)) return trunc(str(ti.prompt), DETAIL_MAX);
+  if (str(input.command)) return trunc(str(input.command), DETAIL_MAX);
+  if (str(input.pattern)) return trunc(str(input.pattern), DETAIL_MAX);
+  if (str(input.url)) return trunc(str(input.url).replace(/^https?:\/\//, ""), DETAIL_MAX);
+  if (str(input.query)) return trunc(str(input.query), DETAIL_MAX);
+  if (str(input.description)) return trunc(str(input.description), DETAIL_MAX);
+  if (str(input.prompt)) return trunc(str(input.prompt), DETAIL_MAX);
   return "";
-}
+};
 
 const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS"]);
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -1089,23 +1099,23 @@ const USER_WAIT_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode", "EnterPlanMo
 const MAX_PENDING = 16;
 const HANDUP_NOTIFS = new Set(["permission_prompt", "agent_needs_input", "elicitation_dialog"]);
 
-function projectOf(cwd: string | undefined): string {
-  const b = base(cwd ?? "");
-  return b || "unknown";
-}
+const projectOf = (cwd: string | undefined): string => {
+  const proj = base(cwd ?? "");
+  return proj || "unknown";
+};
 
-function internRow(it: Intern): InternRow {
+const internRow = (intern: Intern): InternRow => {
   return {
-    id: it.id,
-    label: it.label,
-    act: it.act,
-    tool: it.tool ?? "",
-    detail: it.detail ?? "",
-    count: it.count,
-    needsYou: it.act === "handup",
-    failed: !!it.failed,
+    id: intern.id,
+    label: intern.label,
+    act: intern.act,
+    tool: intern.tool ?? "",
+    detail: intern.detail ?? "",
+    count: intern.count,
+    needsYou: intern.act === "handup",
+    failed: !!intern.failed,
   };
-}
+};
 
 export class Office {
   readonly ctx: CanvasRenderingContext2D;
@@ -1232,23 +1242,23 @@ export class Office {
     try {
       const j = JSON.parse(ev.newValue) as { sessions?: Record<string, Saved>; treasury?: number };
       const now = Date.now();
-      for (const [id, v] of Object.entries(j.sessions ?? {})) {
-        if (!v || typeof v !== "object" || !(now - Number(v.seen) < PROGRESS_TTL)) continue;
-        const o = {
-          xp: Math.max(0, Number(v.xp) || 0),
-          lv: Math.max(1, Number(v.lv) || 1),
-          gold: Math.max(0, Number(v.gold) || 0),
-          kills: Math.max(0, Number(v.kills) || 0),
-          seen: Number(v.seen),
+      for (const [id, saved] of Object.entries(j.sessions ?? {})) {
+        if (!saved || typeof saved !== "object" || !(now - Number(saved.seen) < PROGRESS_TTL)) continue;
+        const entry = {
+          xp: Math.max(0, Number(saved.xp) || 0),
+          lv: Math.max(1, Number(saved.lv) || 1),
+          gold: Math.max(0, Number(saved.gold) || 0),
+          kills: Math.max(0, Number(saved.kills) || 0),
+          seen: Number(saved.seen),
         };
         const mine = this.progress[id];
         if (
           !mine ||
-          o.lv > mine.lv ||
-          (o.lv === mine.lv && o.xp > mine.xp) ||
-          (o.lv === mine.lv && o.xp === mine.xp && o.seen > mine.seen)
+          entry.lv > mine.lv ||
+          (entry.lv === mine.lv && entry.xp > mine.xp) ||
+          (entry.lv === mine.lv && entry.xp === mine.xp && entry.seen > mine.seen)
         ) {
-          this.progress[id] = o;
+          this.progress[id] = entry;
         }
       }
       this.treasury = Math.max(this.treasury, Math.max(0, Number(j.treasury) || 0));
@@ -1258,8 +1268,8 @@ export class Office {
   };
 
   constructor(readonly canvas: HTMLCanvasElement) {
-    canvas.width = W;
-    canvas.height = H;
+    canvas.width = WORLD_W;
+    canvas.height = WORLD_H;
     this.ctx = canvas.getContext("2d")!;
     this.ctx.imageSmoothingEnabled = false;
     this.loadProgress();
@@ -1267,14 +1277,14 @@ export class Office {
   }
 
   private initAmbient() {
-    const n = BUTTERFLY_MIN + Math.floor(Math.random() * BUTTERFLY_VARIANCE);
-    this.butterflies = Array.from({ length: n }, (_, i) => {
-      const x = rand(HALL_W + BUTTERFLY_MARGIN, W - BUTTERFLY_MARGIN),
+    const count = BUTTERFLY_MIN + Math.floor(Math.random() * BUTTERFLY_VARIANCE);
+    this.butterflies = Array.from({ length: count }, (_, i) => {
+      const x = rand(HALL_W + BUTTERFLY_MARGIN, WORLD_W - BUTTERFLY_MARGIN),
         y = rand(BUTTERFLY_Y_MIN, BUTTERFLY_Y_MAX);
       return { x, y, tx: x, ty: y, col: BF_COLORS[i % BF_COLORS.length], ph: rand(0, PHASE_MAX) };
     });
     this.fireflies = Array.from({ length: 12 }, () => {
-      const x = rand(HALL_W + FIREFLY_MARGIN, W - FIREFLY_MARGIN),
+      const x = rand(HALL_W + FIREFLY_MARGIN, WORLD_W - FIREFLY_MARGIN),
         y = rand(FIREFLY_Y_MIN, FIREFLY_Y_MAX);
       return { x, y, sx: x, sy: y, ph: rand(0, PHASE_MAX) };
     });
@@ -1282,8 +1292,8 @@ export class Office {
   }
 
   private scheduleRain(first = false) {
-    const a = this.demo ? (first ? RAIN_DEMO_FIRST_S : RAIN_DEMO_S) : first ? RAIN_FIRST_S : RAIN_S;
-    this.nextRain = this.ambT + rand(a, a * (this.demo ? RAIN_SPREAD_DEMO : RAIN_SPREAD));
+    const delay = this.demo ? (first ? RAIN_DEMO_FIRST_S : RAIN_DEMO_S) : first ? RAIN_FIRST_S : RAIN_S;
+    this.nextRain = this.ambT + rand(delay, delay * (this.demo ? RAIN_SPREAD_DEMO : RAIN_SPREAD));
     this.rainStart = -1;
   }
   startRain() {
@@ -1299,14 +1309,14 @@ export class Office {
       if (!raw) return;
       const j = JSON.parse(raw) as { sessions?: Record<string, Saved>; treasury?: number };
       const now = Date.now();
-      for (const [id, v] of Object.entries(j.sessions ?? {})) {
-        if (!v || typeof v !== "object" || !(now - Number(v.seen) < PROGRESS_TTL)) continue;
+      for (const [id, saved] of Object.entries(j.sessions ?? {})) {
+        if (!saved || typeof saved !== "object" || !(now - Number(saved.seen) < PROGRESS_TTL)) continue;
         this.progress[id] = {
-          xp: Math.max(0, Number(v.xp) || 0),
-          lv: Math.max(1, Number(v.lv) || 1),
-          gold: Math.max(0, Number(v.gold) || 0),
-          kills: Math.max(0, Number(v.kills) || 0),
-          seen: Number(v.seen),
+          xp: Math.max(0, Number(saved.xp) || 0),
+          lv: Math.max(1, Number(saved.lv) || 1),
+          gold: Math.max(0, Number(saved.gold) || 0),
+          kills: Math.max(0, Number(saved.kills) || 0),
+          seen: Number(saved.seen),
         };
       }
       this.treasury = Math.max(0, Number(j.treasury) || 0);
@@ -1322,29 +1332,29 @@ export class Office {
     this.progDirty = false;
     try {
       const now = Date.now();
-      for (const k of Object.keys(this.progress))
-        if (now - this.progress[k].seen > PROGRESS_TTL) delete this.progress[k];
+      for (const key of Object.keys(this.progress))
+        if (now - this.progress[key].seen > PROGRESS_TTL) delete this.progress[key];
       localStorage.setItem(PROGRESS_KEY, JSON.stringify({ sessions: this.progress, treasury: this.treasury }));
     } catch {
       /* quota / private mode */
     }
   }
 
-  private touch(e: Employee) {
+  private touch(emp: Employee) {
     if (this.demo) return;
-    this.progress[e.id] = { xp: e.xp, lv: e.lv, gold: e.gold, kills: e.kills, seen: Date.now() };
+    this.progress[emp.id] = { xp: emp.xp, lv: emp.lv, gold: emp.gold, kills: emp.kills, seen: Date.now() };
     this.progDirty = true;
   }
 
   private pxScale = 0;
   /** Resize backing store to s device px per logical px; drawing stays in logical coords. */
-  setPixelScale(s: number) {
-    const k = Math.max(1, Math.round(s));
-    if (k === this.pxScale) return;
-    this.pxScale = k;
-    this.canvas.width = W * k;
-    this.canvas.height = H * k;
-    this.ctx.setTransform(k, 0, 0, k, 0, 0);
+  setPixelScale(scale: number) {
+    const factor = Math.max(1, Math.round(scale));
+    if (factor === this.pxScale) return;
+    this.pxScale = factor;
+    this.canvas.width = WORLD_W * factor;
+    this.canvas.height = WORLD_H * factor;
+    this.ctx.setTransform(factor, 0, 0, factor, 0, 0);
     this.ctx.imageSmoothingEnabled = false;
   }
 
@@ -1352,7 +1362,7 @@ export class Office {
   start() {
     if (this.running) return;
     this.running = true;
-    window.officeEvent = (e) => this.event(e);
+    window.officeEvent = (evt) => this.event(evt);
     this.last = performance.now();
     if (typeof window !== "undefined") {
       window.removeEventListener("pagehide", this.onHide);
@@ -1416,11 +1426,11 @@ export class Office {
     return () => this.listeners.delete(cb);
   }
 
-  attachSim(s: { update(): void; addSession(): void } | null) {
-    if (s && !this.demo) this.saveProgress(true);
-    this.sim = s;
-    this.demo = !!s;
-    if (s)
+  attachSim(sim: { update(): void; addSession(): void } | null) {
+    if (sim && !this.demo) this.saveProgress(true);
+    this.sim = sim;
+    this.demo = !!sim;
+    if (sim)
       this.treasury = 0; // demo has its own throw-away treasury; nothing is persisted
     else this.loadProgress();
     this.scheduleRain(true);
@@ -1428,124 +1438,142 @@ export class Office {
   addSession() {
     this.sim?.addSession();
   }
-  setSpeed(n: number) {
-    this.speed = n;
+  setSpeed(speed: number) {
+    this.speed = speed;
   }
-  setPaused(b: boolean) {
-    this.paused = b;
+  setPaused(paused: boolean) {
+    this.paused = paused;
   }
   /** Replace the Lookout Bell queue. Malformed rows are skipped; dismissals of rows that vanished are forgotten. */
   setAttention(rows: AttentionMsgRow[] | null | undefined) {
     const out: AttentionMsgRow[] = [];
     if (Array.isArray(rows)) {
-      for (const r of rows.slice(0, MAX_RECEIPT_ROWS)) {
-        if (!r || typeof r !== "object" || typeof r.sid !== "string" || !r.sid || typeof r.key !== "string" || !r.key)
+      for (const row of rows.slice(0, MAX_RECEIPT_ROWS)) {
+        if (
+          !row ||
+          typeof row !== "object" ||
+          typeof row.sid !== "string" ||
+          !row.sid ||
+          typeof row.key !== "string" ||
+          !row.key
+        )
           continue;
-        if (!ATTN_KINDS.includes(r.kind)) continue;
-        const text = (v: unknown, max: number) => (typeof v === "string" && v ? v.slice(0, max) : undefined);
-        const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
-        const tool = text(r.tool, ATTN_TOOL_MAX);
-        const target = text(r.target, ATTN_TARGET_MAX);
-        const error = text(r.error, ATTN_ERROR_MAX);
-        const tail = text(r.tail, ATTN_TAIL_MAX);
+        if (!ATTN_KINDS.includes(row.kind)) continue;
+        const text = (value: unknown, max: number) =>
+          typeof value === "string" && value ? value.slice(0, max) : undefined;
+        const count = (value: unknown) =>
+          typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+        const tool = text(row.tool, ATTN_TOOL_MAX);
+        const target = text(row.target, ATTN_TARGET_MAX);
+        const error = text(row.error, ATTN_ERROR_MAX);
+        const tail = text(row.tail, ATTN_TAIL_MAX);
         out.push({
-          key: r.key.slice(0, RECEIPT_KEY_MAX),
-          sid: r.sid,
-          kind: r.kind,
-          since: Number.isFinite(Number(r.since)) ? Number(r.since) : 0,
-          ...(r.stale === true ? { stale: true } : {}),
+          key: row.key.slice(0, RECEIPT_KEY_MAX),
+          sid: row.sid,
+          kind: row.kind,
+          since: Number.isFinite(Number(row.since)) ? Number(row.since) : 0,
+          ...(row.stale === true ? { stale: true } : {}),
           ...(tool ? { tool } : {}),
           ...(target ? { target } : {}),
-          ...(r.kind === "loop" ? { count: count(r.count) } : {}),
+          ...(row.kind === "loop" ? { count: count(row.count) } : {}),
           ...(error ? { error } : {}),
           ...(tail ? { tail } : {}),
-          ...(r.kind === "context" ? { pct: Math.min(PERCENT, count(r.pct)) } : {}),
+          ...(row.kind === "context" ? { pct: Math.min(PERCENT, count(row.pct)) } : {}),
         });
       }
     }
-    const keys = new Set(out.map((r) => r.key));
-    for (const k of this.attnDismissed) if (!keys.has(k)) this.attnDismissed.delete(k);
+    const keys = new Set(out.map((row) => row.key));
+    for (const key of this.attnDismissed) if (!keys.has(key)) this.attnDismissed.delete(key);
     this.attn = out;
     this.bumpAttn();
   }
   /** Replace the Receipt Ledger. Malformed rows are skipped. A receipt that just closed with outcomes pops a 📜 bubble + quest-log line. */
   setReceipts(rows: ReceiptMsgRow[] | null | undefined) {
-    const num = (v: unknown) =>
-      typeof v === "number" && Number.isFinite(v) ? Math.min(RECEIPT_COUNT_MAX, Math.max(0, Math.floor(v))) : 0;
+    const num = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value)
+        ? Math.min(RECEIPT_COUNT_MAX, Math.max(0, Math.floor(value)))
+        : 0;
     const out: ReceiptMsgRow[] = [];
     if (Array.isArray(rows)) {
-      for (const r of rows.slice(0, MAX_RECEIPTS)) {
-        if (!r || typeof r !== "object" || typeof r.id !== "string" || !r.id || typeof r.sid !== "string" || !r.sid)
+      for (const receipt of rows.slice(0, MAX_RECEIPTS)) {
+        if (
+          !receipt ||
+          typeof receipt !== "object" ||
+          typeof receipt.id !== "string" ||
+          !receipt.id ||
+          typeof receipt.sid !== "string" ||
+          !receipt.sid
+        )
           continue;
-        if (!RECEIPT_VERDICTS.includes(r.verdict) || !Number.isFinite(Number(r.closedAt))) continue;
+        if (!RECEIPT_VERDICTS.includes(receipt.verdict) || !Number.isFinite(Number(receipt.closedAt))) continue;
         out.push({
-          id: r.id.slice(0, RECEIPT_ID_MAX),
-          sid: r.sid,
-          project: typeof r.project === "string" ? r.project.slice(0, RECEIPT_PROJECT_MAX) : "",
-          closedAt: Number(r.closedAt),
-          files: num(r.files),
-          recovered: num(r.recovered),
-          commits: num(r.commits),
-          amends: num(r.amends),
-          tasks: num(r.tasks),
-          squire: num(r.squire),
-          calls: num(r.calls),
-          verdict: r.verdict,
-          ...(r.staleRed === true ? { staleRed: true } : {}),
+          id: receipt.id.slice(0, RECEIPT_ID_MAX),
+          sid: receipt.sid,
+          project: typeof receipt.project === "string" ? receipt.project.slice(0, RECEIPT_PROJECT_MAX) : "",
+          closedAt: Number(receipt.closedAt),
+          files: num(receipt.files),
+          recovered: num(receipt.recovered),
+          commits: num(receipt.commits),
+          amends: num(receipt.amends),
+          tasks: num(receipt.tasks),
+          squire: num(receipt.squire),
+          calls: num(receipt.calls),
+          verdict: receipt.verdict,
+          ...(receipt.staleRed === true ? { staleRed: true } : {}),
         });
       }
     }
-    out.sort((a, b) => b.closedAt - a.closedAt);
+    out.sort((older, newer) => newer.closedAt - older.closedAt);
     const first = !this.rcptInit;
     this.rcptInit = true;
-    for (const r of out) {
-      if (this.rcptSeen.has(r.id)) continue;
-      this.rcptSeen.add(r.id);
-      if (first || Date.now() - r.closedAt > RECEIPT_FRESH_MS) continue;
-      const sum = receiptSummary(r);
-      const e = this.employees.get(r.sid);
-      if (!sum || !e) continue;
-      if (e.state === "SEATED" && !e.bubble) e.tempBubble = { e: "📜", until: this.clock + RECEIPT_BUBBLE_S };
+    for (const receipt of out) {
+      if (this.rcptSeen.has(receipt.id)) continue;
+      this.rcptSeen.add(receipt.id);
+      if (first || Date.now() - receipt.closedAt > RECEIPT_FRESH_MS) continue;
+      const sum = receiptSummary(receipt);
+      const emp = this.employees.get(receipt.sid);
+      if (!sum || !emp) continue;
+      if (emp.state === "SEATED" && !emp.bubble) emp.tempBubble = { e: "📜", until: this.clock + RECEIPT_BUBBLE_S };
       this.log.unshift({
         id: this.logSeq++,
-        sid: r.sid,
-        color: lookFor(r.sid).shirt,
-        bad: r.verdict === "red",
+        sid: receipt.sid,
+        color: lookFor(receipt.sid).shirt,
+        bad: receipt.verdict === "red",
         text: m.log_receipt({
-          tag: `#${r.sid.slice(0, TAG_LEN)}`,
-          project: e.project,
-          verdict: receiptVerdictText(r.verdict),
+          tag: `#${receipt.sid.slice(0, TAG_LEN)}`,
+          project: emp.project,
+          verdict: receiptVerdictText(receipt.verdict),
           summary: sum,
         }),
         time: Date.now(),
-        tag: e.tag,
-        project: e.project,
+        tag: emp.tag,
+        project: emp.project,
         intern: false,
         internLabel: "",
         kind: KIND_RECEIPT,
-        detail: `${receiptVerdictText(r.verdict)}: ${sum}`,
+        detail: `${receiptVerdictText(receipt.verdict)}: ${sum}`,
       });
       if (this.log.length > LOG_MAX) this.log.length = LOG_MAX;
     }
-    if (this.rcptSeen.size > RECEIPT_SEEN_MAX) this.rcptSeen = new Set(out.map((r) => r.id));
+    if (this.rcptSeen.size > RECEIPT_SEEN_MAX) this.rcptSeen = new Set(out.map((receipt) => receipt.id));
     this.rcpts = out;
     this.rcptVer++;
     this.dirty = true;
   }
   /** receipts to show: newest first, joined with the adventurer when the guild still knows them */
   receiptRows(): ReceiptRow[] {
-    return this.rcpts.map((r) => {
-      const e = this.employees.get(r.sid);
+    return this.rcpts.map((receipt) => {
+      const emp = this.employees.get(receipt.sid);
       return {
-        ...r,
-        tag: e ? e.tag : "#" + r.sid.slice(0, TAG_LEN),
-        project: e ? e.project : r.project || "unknown",
-        live: !!e,
+        ...receipt,
+        tag: emp ? emp.tag : "#" + receipt.sid.slice(0, TAG_LEN),
+        project: emp ? emp.project : receipt.project || "unknown",
+        live: !!emp,
       };
     });
   }
   dismissAttention(key: string) {
-    if (this.attn.some((r) => r.key === key)) {
+    if (this.attn.some((row) => row.key === key)) {
       this.attnDismissed.add(key);
       this.bumpAttn();
     }
@@ -1554,17 +1582,17 @@ export class Office {
     this.attnVer++;
     this.attnRowsCache = null;
     this.loopIds.clear();
-    for (const r of this.attn) if (r.kind === "loop" && !this.attnDismissed.has(r.key)) this.loopIds.add(r.sid);
+    for (const row of this.attn) if (row.kind === "loop" && !this.attnDismissed.has(row.key)) this.loopIds.add(row.sid);
     this.dirty = true;
   }
   /** rows to show: not dismissed, session known to the guild */
   attentionRows(): AttentionRow[] {
     if (this.attnRowsCache) return this.attnRowsCache;
     const out: AttentionRow[] = [];
-    for (const r of this.attn) {
-      const e = this.employees.get(r.sid);
-      if (!e || this.attnDismissed.has(r.key)) continue;
-      out.push({ ...r, tag: e.tag, project: e.project });
+    for (const row of this.attn) {
+      const emp = this.employees.get(row.sid);
+      if (!emp || this.attnDismissed.has(row.key)) continue;
+      out.push({ ...row, tag: emp.tag, project: emp.project });
     }
     return (this.attnRowsCache = out);
   }
@@ -1612,7 +1640,7 @@ export class Office {
     this.glareAt.clear();
     this.tugs.length = 0;
     this.editFailAt.clear();
-    for (const p of this.particles) p.on = false;
+    for (const particle of this.particles) particle.on = false;
     this.popups = [];
     this.banners = [];
     this.trauma = 0;
@@ -1641,8 +1669,8 @@ export class Office {
   }
   /** used/limit clamped to 0..1, or null when unknown */
   ctxFrac(id: string): number | null {
-    const c = this.ctxMap.get(id);
-    return c ? Math.max(0, Math.min(1, c.used / c.limit)) : null;
+    const ctx = this.ctxMap.get(id);
+    return ctx ? Math.max(0, Math.min(1, ctx.used / ctx.limit)) : null;
   }
   ctxOf(id: string): Ctx | null {
     return this.ctxMap.get(id) ?? null;
@@ -1656,69 +1684,70 @@ export class Office {
     const claims = new Map<string, number>();
     const conflicts: TerritoryConflict[] = [];
     if (msg && typeof msg === "object") {
-      for (const c of (Array.isArray(msg.claims) ? msg.claims : []).slice(0, MAX_CLAIMS)) {
-        if (c && typeof c.sid === "string" && Array.isArray(c.files) && c.files.length > 0)
-          claims.set(c.sid, c.files.length);
+      for (const claim of (Array.isArray(msg.claims) ? msg.claims : []).slice(0, MAX_CLAIMS)) {
+        if (claim && typeof claim.sid === "string" && Array.isArray(claim.files) && claim.files.length > 0)
+          claims.set(claim.sid, claim.files.length);
       }
-      for (const c of (Array.isArray(msg.conflicts) ? msg.conflicts : []).slice(0, MAX_CONFLICTS)) {
+      for (const conflict of (Array.isArray(msg.conflicts) ? msg.conflicts : []).slice(0, MAX_CONFLICTS)) {
         if (
-          !c ||
-          typeof c.file !== "string" ||
-          !Array.isArray(c.sids) ||
-          (c.level !== "overlap" && c.level !== "clash")
+          !conflict ||
+          typeof conflict.file !== "string" ||
+          !Array.isArray(conflict.sids) ||
+          (conflict.level !== "overlap" && conflict.level !== "clash")
         )
           continue;
-        const sids = c.sids.filter((x): x is string => typeof x === "string" && !!x).slice(0, MAX_CONFLICT_SIDS);
+        const sids = conflict.sids.filter((x): x is string => typeof x === "string" && !!x).slice(0, MAX_CONFLICT_SIDS);
         if (sids.length < 2) continue;
-        const failer = typeof c.failer === "string" && sids.includes(c.failer) ? c.failer : undefined;
+        const failer =
+          typeof conflict.failer === "string" && sids.includes(conflict.failer) ? conflict.failer : undefined;
         conflicts.push(
           failer
-            ? { file: c.file, sids, level: c.level, since: Number(c.since) || 0, failer }
-            : { file: c.file, sids, level: c.level, since: Number(c.since) || 0 },
+            ? { file: conflict.file, sids, level: conflict.level, since: Number(conflict.since) || 0, failer }
+            : { file: conflict.file, sids, level: conflict.level, since: Number(conflict.since) || 0 },
         );
       }
     }
     this.claimN = claims;
     this.conflicts = conflicts;
     const keys = new Set(conflicts.map(conflictKey));
-    for (const k of this.settled) if (!keys.has(k)) this.settled.delete(k);
+    for (const key of this.settled) if (!keys.has(key)) this.settled.delete(key);
     const now = Date.now();
-    for (const [k, exp] of [...this.dismissed]) {
-      if (keys.has(k)) this.dismissed.set(k, Infinity);
-      else if (exp === Infinity) this.dismissed.set(k, now + DISMISS_TTL_MS);
-      else if (exp < now) this.dismissed.delete(k);
+    for (const [key, exp] of [...this.dismissed]) {
+      if (keys.has(key)) this.dismissed.set(key, Infinity);
+      else if (exp === Infinity) this.dismissed.set(key, now + DISMISS_TTL_MS);
+      else if (exp < now) this.dismissed.delete(key);
     }
     const nextSeen = new Set<string>();
     const nextOverlap = new Set<string>();
     this.pendingClash.clear();
     const fresh: TerritoryConflict[] = [];
     const freshOv: TerritoryConflict[] = [];
-    for (const c of conflicts) {
-      if (c.level === "overlap") {
-        const k = conflictKey(c);
-        nextOverlap.add(k);
-        if (!quiet && !this.seenOverlap.has(k) && this.clashEligible(c)) freshOv.push(c);
+    for (const conflict of conflicts) {
+      if (conflict.level === "overlap") {
+        const key = conflictKey(conflict);
+        nextOverlap.add(key);
+        if (!quiet && !this.seenOverlap.has(key) && this.clashEligible(conflict)) freshOv.push(conflict);
         continue;
       }
-      const k = conflictKey(c);
-      if (this.seenClash.has(k) || quiet) {
-        nextSeen.add(k);
+      const key = conflictKey(conflict);
+      if (this.seenClash.has(key) || quiet) {
+        nextSeen.add(key);
         continue;
       }
-      if (!this.clashEligible(c)) {
-        this.pendingClash.set(k, c);
+      if (!this.clashEligible(conflict)) {
+        this.pendingClash.set(key, conflict);
         continue;
       } // not eligible yet: alert when sessions arrive
-      nextSeen.add(k);
-      fresh.push(c);
+      nextSeen.add(key);
+      fresh.push(conflict);
     }
     this.seenClash = nextSeen;
     this.seenOverlap = nextOverlap;
-    for (const c of fresh.slice(0, MAX_NEW_GLARES)) {
-      this.alertClash(c);
-      this.startDuel(c);
+    for (const conflict of fresh.slice(0, MAX_NEW_GLARES)) {
+      this.alertClash(conflict);
+      this.startDuel(conflict);
     }
-    for (const c of freshOv.slice(0, MAX_NEW_GLARES)) this.glare(c);
+    for (const conflict of freshOv.slice(0, MAX_NEW_GLARES)) this.glare(conflict);
     this.bumpTerr();
     this.hidVer++;
     this.dirty = true;
@@ -1726,17 +1755,17 @@ export class Office {
 
   // ---------- territory duels ----------
   /** can this adventurer start/join a duel right now */
-  private duelReady(e: Employee | undefined): e is Employee {
+  private duelReady(emp: Employee | undefined): emp is Employee {
     return (
-      !!e &&
-      e.state === "SEATED" &&
-      !e.duel &&
-      !this.isHidden(e) &&
-      !this.isWaiting(e) &&
-      e.x >= 0 &&
-      e.x <= W &&
-      e.y >= 0 &&
-      e.y <= H
+      !!emp &&
+      emp.state === "SEATED" &&
+      !emp.duel &&
+      !this.isHidden(emp) &&
+      !this.isWaiting(emp) &&
+      emp.x >= 0 &&
+      emp.x <= WORLD_W &&
+      emp.y >= 0 &&
+      emp.y <= WORLD_H
     );
   }
 
@@ -1744,18 +1773,18 @@ export class Office {
    * Who holds the file and wins (0 = left, 1 = right). The server names the session whose edit failed (`failer`) and that one loses.
    * Without it: the one whose edit failed recently loses (client-seen failures); else more claims; else a stable hash.
    */
-  private duelWinner(l: Employee, r: Employee, failer: string | null): 0 | 1 {
-    if (failer === l.id) return 1;
-    if (failer === r.id) return 0;
-    const fl = this.editFailAt.get(l.id) ?? -Infinity,
-      fr = this.editFailAt.get(r.id) ?? -Infinity;
-    const recent = (f: number) => this.clock - f < RECENT_WINDOW_S;
-    if (recent(fl) !== recent(fr)) return recent(fl) ? 1 : 0;
-    if (recent(fl) && recent(fr) && fl !== fr) return fl > fr ? 1 : 0;
-    const cl = this.claimsOf(l.id),
-      cr = this.claimsOf(r.id);
+  private duelWinner(left: Employee, right: Employee, failer: string | null): 0 | 1 {
+    if (failer === left.id) return 1;
+    if (failer === right.id) return 0;
+    const failLeft = this.editFailAt.get(left.id) ?? -Infinity,
+      failRight = this.editFailAt.get(right.id) ?? -Infinity;
+    const recent = (stamp: number) => this.clock - stamp < RECENT_WINDOW_S;
+    if (recent(failLeft) !== recent(failRight)) return recent(failLeft) ? 1 : 0;
+    if (recent(failLeft) && recent(failRight) && failLeft !== failRight) return failLeft > failRight ? 1 : 0;
+    const cl = this.claimsOf(left.id),
+      cr = this.claimsOf(right.id);
     if (cl !== cr) return cl > cr ? 0 : 1;
-    return h32(l.id) <= h32(r.id) ? 0 : 1;
+    return h32(left.id) <= h32(right.id) ? 0 : 1;
   }
 
   /**
@@ -1763,34 +1792,35 @@ export class Office {
    * When a pair is blocked only by a transient condition (someone still walking in / at the tavern / mid-duel, or both duel slots busy)
    * the clash waits in `duelWait` and is retried every frame for DUEL_WAIT seconds while it stays live.
    */
-  private startDuel(c: TerritoryConflict) {
-    const r = this.tryDuel(c);
-    const k = conflictKey(c);
-    if (r === "wait") {
-      if (!this.duelWait.has(k)) this.duelWait.set(k, { c, until: this.clock + DUEL_WAIT });
-    } else this.duelWait.delete(k);
+  private startDuel(conflict: TerritoryConflict) {
+    const result = this.tryDuel(conflict);
+    const key = conflictKey(conflict);
+    if (result === "wait") {
+      if (!this.duelWait.has(key)) this.duelWait.set(key, { c: conflict, until: this.clock + DUEL_WAIT });
+    } else this.duelWait.delete(key);
   }
   /** "started" | "wait" (retry later) | "none" (nothing to do for this clash) */
-  private tryDuel(c: TerritoryConflict): "started" | "wait" | "none" {
-    const ids = [...new Set(c.sids)];
+  private tryDuel(conflict: TerritoryConflict): "started" | "wait" | "none" {
+    const ids = [...new Set(conflict.sids)];
     let wait = false;
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) {
-        const a = this.employees.get(ids[i]),
-          b = this.employees.get(ids[j]);
-        if (!a || !b || a === b || a.state === "LEAVING" || b.state === "LEAVING") continue;
-        const key = pairKey(a.id, b.id);
+        const first = this.employees.get(ids[i]),
+          second = this.employees.get(ids[j]);
+        if (!first || !second || first === second || first.state === "LEAVING" || second.state === "LEAVING") continue;
+        const key = pairKey(first.id, second.id);
         const last = this.duelAt.get(key);
         if (last !== undefined && this.clock - last < DUEL_COOLDOWN) continue; // per pair, not per person
-        if (!this.duelReady(a) || !this.duelReady(b)) {
-          if (!this.isHidden(a) && !this.isHidden(b) && !this.isWaiting(a) && !this.isWaiting(b)) wait = true;
+        if (!this.duelReady(first) || !this.duelReady(second)) {
+          if (!this.isHidden(first) && !this.isHidden(second) && !this.isWaiting(first) && !this.isWaiting(second))
+            wait = true;
           continue;
         }
         if (this.duels.length >= DUEL_MAX) {
           wait = true;
           continue;
         }
-        if (this.beginDuel(a, b, c.failer ?? null)) {
+        if (this.beginDuel(first, second, conflict.failer ?? null)) {
           this.duelAt.set(key, this.clock);
           return "started";
         }
@@ -1800,30 +1830,30 @@ export class Office {
   }
   /** retry clashes that could not duel yet; drop them once expired or no longer a live clash */
   private retryDuels() {
-    for (const [k, w] of this.duelWait) {
-      const live = this.conflicts.find((c) => c.level === "clash" && conflictKey(c) === k);
-      if (!live || this.clock > w.until) {
-        this.duelWait.delete(k);
+    for (const [key, waiting] of this.duelWait) {
+      const live = this.conflicts.find((conflict) => conflict.level === "clash" && conflictKey(conflict) === key);
+      if (!live || this.clock > waiting.until) {
+        this.duelWait.delete(key);
         continue;
       }
       if (this.duels.length >= DUEL_MAX) continue;
-      const r = this.tryDuel(live);
-      if (r === "started" || r === "none") this.duelWait.delete(k);
+      const result = this.tryDuel(live);
+      if (result === "started" || result === "none") this.duelWait.delete(key);
     }
   }
 
-  private beginDuel(a: Employee, b: Employee, failer: string | null): boolean {
-    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  private beginDuel(first: Employee, second: Employee, failer: string | null): boolean {
+    const dist = Math.hypot(first.x - second.x, first.y - second.y);
     if (dist < DUEL_MIN_DIST) return false; // stacked on the same camp slot: nothing to draw between them
-    const bothSpots = a.deskIdx >= 0 && b.deskIdx >= 0;
+    const bothSpots = first.deskIdx >= 0 && second.deskIdx >= 0;
     let walk = !this.reducedMotion && bothSpots && dist <= DUEL_WALK_MAX;
     if (walk) {
       // a bystander standing in the fight's movement band would be run through: duel in place instead
-      const m = duelMidOfDesks(a.deskIdx, b.deskIdx, this.tmpPt),
+      const mid = duelMidOfDesks(first.deskIdx, second.deskIdx, this.tmpPt),
         reach = DUEL_HALF + DUEL_KNOCK_KO + CH_W; // fighters' sprite boxes + a bystander's box
-      for (const o of this.employees.values()) {
-        if (o === a || o === b || o.state === "LEAVING" || this.isHidden(o)) continue;
-        if (Math.abs(o.x - m.x) < reach && Math.abs(o.y - m.y) < CH_H) {
+      for (const other of this.employees.values()) {
+        if (other === first || other === second || other.state === "LEAVING" || this.isHidden(other)) continue;
+        if (Math.abs(other.x - mid.x) < reach && Math.abs(other.y - mid.y) < CH_H) {
           walk = false;
           break;
         }
@@ -1832,168 +1862,175 @@ export class Office {
     if (!walk && dist > DUEL_RANGE_MAX) return false;
     // in-place duels (camp / far apart / reduced motion) are "still": a VS badge + emotes, no effects between the sprites
     const still = !walk;
-    const [L, R] = a.x < b.x || (a.x === b.x && a.y <= b.y) ? [a, b] : [b, a];
-    const sl = styleOf(L.look.cls),
-      sr = styleOf(R.look.cls);
+    const [left, right] =
+      first.x < second.x || (first.x === second.x && first.y <= second.y) ? [first, second] : [second, first];
+    const leftStyle = styleOf(left.look.cls),
+      rightStyle = styleOf(right.look.cls);
     let kind: DuelKind,
       agg: 0 | 1 = 0;
-    if (sl === sr) kind = sl === "sword" ? "sword" : sl === "magic" ? "orb" : "arrows";
-    else if (sl === "arrow" || sr === "arrow") {
-      const other = sl === "arrow" ? sr : sl;
+    if (leftStyle === rightStyle) kind = leftStyle === "sword" ? "sword" : leftStyle === "magic" ? "orb" : "arrows";
+    else if (leftStyle === "arrow" || rightStyle === "arrow") {
+      const other = leftStyle === "arrow" ? rightStyle : leftStyle;
       kind = other === "sword" ? "arrow_sword" : "arrow_magic";
-      agg = sl === "arrow" ? 0 : 1;
+      agg = leftStyle === "arrow" ? 0 : 1;
     } else {
       kind = "magic_sword";
-      agg = sl === "magic" ? 0 : 1;
+      agg = leftStyle === "magic" ? 0 : 1;
     }
-    const d: Duel = {
-      l: L.id,
-      r: R.id,
+    const duel: Duel = {
+      l: left.id,
+      r: right.id,
       kind,
-      styleL: sl,
-      styleR: sr,
+      styleL: leftStyle,
+      styleR: rightStyle,
       agg,
       walk,
       still,
       phase: walk ? "go" : "fight",
       start: this.clock,
       t0: walk ? -1 : this.clock,
-      winner: this.duelWinner(L, R, failer),
+      winner: this.duelWinner(left, right, failer),
       failer,
-      ix: (L.x + R.x) / 2,
-      iy: (L.y + R.y) / 2 - DUEL_ICON_LIFT,
+      ix: (left.x + right.x) / 2,
+      iy: (left.y + right.y) / 2 - DUEL_ICON_LIFT,
       beat: -1,
       fxm: 0,
       decided: false,
       flourished: false,
     };
-    this.duels.push(d);
-    L.duel = d;
-    R.duel = d;
+    this.duels.push(duel);
+    left.duel = duel;
+    right.duel = duel;
     if (walk) {
-      const m = duelMidOfDesks(L.deskIdx, R.deskIdx, this.tmpPt);
-      this.startWalk(L, m.x - DUEL_HALF, m.y);
-      this.startWalk(R, m.x + DUEL_HALF, m.y);
+      const mid = duelMidOfDesks(left.deskIdx, right.deskIdx, this.tmpPt);
+      this.startWalk(left, mid.x - DUEL_HALF, mid.y);
+      this.startWalk(right, mid.x + DUEL_HALF, mid.y);
     } else {
-      if (!L.bubble) L.tempBubble = { e: "💢", until: this.clock + GLARE_BUBBLE_S };
-      if (!R.bubble) R.tempBubble = { e: "💢", until: this.clock + GLARE_BUBBLE_S };
+      if (!left.bubble) left.tempBubble = { e: "💢", until: this.clock + GLARE_BUBBLE_S };
+      if (!right.bubble) right.tempBubble = { e: "💢", until: this.clock + GLARE_BUBBLE_S };
     }
     this.dirty = true;
     return true;
   }
-  private startWalk(e: Employee, x: number, y: number) {
-    e.state = "DUEL";
-    e.stateSince = this.clock;
-    e.path = [{ x, y }];
-    e.trail = [];
-    e.holdUntil = 0;
-    e.tempBubble = null;
+  private startWalk(emp: Employee, x: number, y: number) {
+    emp.state = "DUEL";
+    emp.stateSince = this.clock;
+    emp.path = [{ x, y }];
+    emp.trail = [];
+    emp.holdUntil = 0;
+    emp.tempBubble = null;
   }
 
   /** a NEW overlap: both glare (💢) and the flag between them gets tugged (at most once per pair per cooldown) */
-  private glare(c: TerritoryConflict) {
-    const emps = c.sids.map((x) => this.employees.get(x)).filter((e): e is Employee => !!e && e.state !== "LEAVING");
+  private glare(conflict: TerritoryConflict) {
+    const emps = conflict.sids
+      .map((x) => this.employees.get(x))
+      .filter((emp): emp is Employee => !!emp && emp.state !== "LEAVING");
     if (emps.length < 2) return;
-    const [a, b] = emps;
-    const key = pairKey(a.id, b.id);
+    const [first, second] = emps;
+    const key = pairKey(first.id, second.id);
     const last = Math.max(this.glareAt.get(key) ?? -Infinity, this.duelAt.get(key) ?? -Infinity);
     if (this.clock - last < GLARE_COOLDOWN) return;
     this.glareAt.set(key, this.clock);
-    if (a.state === "SEATED" && !a.bubble && a.act !== "handup") a.tempBubble = { e: "💢", until: this.clock + 2 };
-    if (b.state === "SEATED" && !b.bubble && b.act !== "handup") b.tempBubble = { e: "💢", until: this.clock + 2 };
-    this.tugs.push({ a: a.id, b: b.id, until: this.clock + TUG_S });
+    if (first.state === "SEATED" && !first.bubble && first.act !== "handup")
+      first.tempBubble = { e: "💢", until: this.clock + 2 };
+    if (second.state === "SEATED" && !second.bubble && second.act !== "handup")
+      second.tempBubble = { e: "💢", until: this.clock + 2 };
+    this.tugs.push({ a: first.id, b: second.id, until: this.clock + TUG_S });
     if (this.tugs.length > MAX_TUGS) this.tugs.shift();
   }
   /** the duel was fought to the end: every clash between these two counts as settled */
-  private settle(d: Duel) {
-    for (const c of this.conflicts)
-      if (c.level === "clash" && c.sids.includes(d.l) && c.sids.includes(d.r)) this.settled.add(conflictKey(c));
+  private settle(duel: Duel) {
+    for (const conflict of this.conflicts)
+      if (conflict.level === "clash" && conflict.sids.includes(duel.l) && conflict.sids.includes(duel.r))
+        this.settled.add(conflictKey(conflict));
   }
   /** true once a finished duel has settled this clash (the arena between the plots is cleared) */
-  isSettled(c: { file: string; level: string }): boolean {
-    return this.settled.has(conflictKey(c));
+  isSettled(conflict: { file: string; level: string }): boolean {
+    return this.settled.has(conflictKey(conflict));
   }
 
   /** end time of the flag tug between two sessions (0 when none) */
-  tugUntil(a: string, b: string): number {
-    for (const t of this.tugs) if ((t.a === a && t.b === b) || (t.a === b && t.b === a)) return t.until;
+  tugUntil(sidA: string, sidB: string): number {
+    for (const tug of this.tugs)
+      if ((tug.a === sidA && tug.b === sidB) || (tug.a === sidB && tug.b === sidA)) return tug.until;
     return 0;
   }
 
   /** fight over for this adventurer: back to the spot (walking duel) or just release */
-  private sendHome(e: Employee | undefined, d: Duel) {
-    if (!e || e.duel !== d) return;
-    if (e.state === "DUEL") {
-      const s = seatPoint(e.deskIdx, e.slot);
-      e.path = [{ x: s.x, y: s.y }];
-      e.trail = [];
-      e.holdUntil = 0;
+  private sendHome(emp: Employee | undefined, duel: Duel) {
+    if (!emp || emp.duel !== duel) return;
+    if (emp.state === "DUEL") {
+      const spot = seatPoint(emp.deskIdx, emp.slot);
+      emp.path = [{ x: spot.x, y: spot.y }];
+      emp.trail = [];
+      emp.holdUntil = 0;
     } else {
-      e.duel = null;
-      e.facing = 1;
+      emp.duel = null;
+      emp.facing = 1;
     }
   }
   /** one adventurer of a duel in its "back" phase; true while still walking home */
-  private backStep(e: Employee | undefined, d: Duel): boolean {
-    if (!e || e.duel !== d) return false;
-    if (e.state !== "DUEL") {
-      e.duel = null;
+  private backStep(emp: Employee | undefined, duel: Duel): boolean {
+    if (!emp || emp.duel !== duel) return false;
+    if (emp.state !== "DUEL") {
+      emp.duel = null;
       return false;
     }
-    if (e.path.length) return true;
-    e.duel = null;
-    this.sit(e);
+    if (emp.path.length) return true;
+    emp.duel = null;
+    this.sit(emp);
     return false;
   }
 
   private updateDuels() {
     if (this.clock - this.pruneAt > PRUNE_INTERVAL_S) this.pruneMaps();
     for (let i = this.duels.length - 1; i >= 0; i--) {
-      const d = this.duels[i];
-      const L = this.employees.get(d.l),
-        R = this.employees.get(d.r);
-      const lOk = !!L && L.duel === d,
-        rOk = !!R && R.duel === d;
-      const okState = (e: Employee) => e.state === (d.walk ? "DUEL" : "SEATED");
+      const duel = this.duels[i];
+      const left = this.employees.get(duel.l),
+        right = this.employees.get(duel.r);
+      const lOk = !!left && left.duel === duel,
+        rOk = !!right && right.duel === duel;
+      const okState = (emp: Employee) => emp.state === (duel.walk ? "DUEL" : "SEATED");
       // stand both down: someone left / drank / got hidden by the filter / needs the user (❗ must show), or reduced motion switched on mid-walk
       const stop =
-        d.phase !== "back" &&
+        duel.phase !== "back" &&
         (!lOk ||
           !rOk ||
-          !okState(L!) ||
-          !okState(R!) ||
-          this.isHidden(L) ||
-          this.isHidden(R) ||
-          this.isWaiting(L!) ||
-          this.isWaiting(R!) ||
-          (this.reducedMotion && !d.still));
+          !okState(left!) ||
+          !okState(right!) ||
+          this.isHidden(left) ||
+          this.isHidden(right) ||
+          this.isWaiting(left!) ||
+          this.isWaiting(right!) ||
+          (this.reducedMotion && !duel.still));
       if (stop) {
-        if (d.walk) {
-          d.phase = "back";
-          this.sendHome(L, d);
-          this.sendHome(R, d);
+        if (duel.walk) {
+          duel.phase = "back";
+          this.sendHome(left, duel);
+          this.sendHome(right, duel);
         } else {
-          if (L && L.duel === d) {
-            L.duel = null;
-            L.facing = 1;
+          if (left && left.duel === duel) {
+            left.duel = null;
+            left.facing = 1;
           }
-          if (R && R.duel === d) {
-            R.duel = null;
-            R.facing = 1;
+          if (right && right.duel === duel) {
+            right.duel = null;
+            right.facing = 1;
           }
           this.duels.splice(i, 1);
           this.dirty = true;
           continue;
         }
       }
-      if ((d.phase as Duel["phase"]) === "go") {
-        if (!L!.path.length && !R!.path.length) {
-          d.phase = "fight";
-          d.t0 = this.clock;
+      if ((duel.phase as Duel["phase"]) === "go") {
+        if (!left!.path.length && !right!.path.length) {
+          duel.phase = "fight";
+          duel.t0 = this.clock;
           if (!this.reducedMotion)
             this.burst(
-              (L!.x + R!.x) / 2,
-              L!.y - FX_DUEL_START.lift,
+              (left!.x + right!.x) / 2,
+              left!.y - FX_DUEL_START.lift,
               FX_DUEL_START.n,
               GOLD_COLS,
               FX_DUEL_START.speed,
@@ -2004,31 +2041,31 @@ export class Office {
             );
         }
       }
-      if ((d.phase as Duel["phase"]) === "fight") {
-        const u = this.clock - d.t0;
-        L!.facing = 1;
-        R!.facing = -1;
-        if (u >= (d.still ? DUEL_STILL : DUEL_FIGHT)) {
-          this.settle(d);
-          if (d.walk) {
-            d.phase = "back";
-            this.sendHome(L, d);
-            this.sendHome(R, d);
+      if ((duel.phase as Duel["phase"]) === "fight") {
+        const elapsed = this.clock - duel.t0;
+        left!.facing = 1;
+        right!.facing = -1;
+        if (elapsed >= (duel.still ? DUEL_STILL : DUEL_FIGHT)) {
+          this.settle(duel);
+          if (duel.walk) {
+            duel.phase = "back";
+            this.sendHome(left, duel);
+            this.sendHome(right, duel);
           } else {
-            L!.duel = null;
-            R!.duel = null;
-            L!.facing = 1;
-            R!.facing = 1;
+            left!.duel = null;
+            right!.duel = null;
+            left!.facing = 1;
+            right!.facing = 1;
             this.duels.splice(i, 1);
             this.dirty = true;
             continue;
           }
-        } else if (!d.still) this.duelFx(d, L!, R!, u);
+        } else if (!duel.still) this.duelFx(duel, left!, right!, elapsed);
       }
-      if ((d.phase as Duel["phase"]) === "back") {
+      if ((duel.phase as Duel["phase"]) === "back") {
         let live = 0;
-        if (this.backStep(L, d)) live++;
-        if (this.backStep(R, d)) live++;
+        if (this.backStep(left, duel)) live++;
+        if (this.backStep(right, duel)) live++;
         if (!live) {
           this.duels.splice(i, 1);
           this.dirty = true;
@@ -2041,62 +2078,62 @@ export class Office {
    * One-shot effects of the choreography (see duelScript): dust / muzzle flash at the launch, impact burst + damage pop + trauma at the
    * hit, K.O. text, the winner flourish. Particles are flagged `under` (they fade, so never over a character). No per-frame allocation.
    */
-  private duelFx(d: Duel, L: Employee, R: Employee, u: number) {
+  private duelFx(duel: Duel, left: Employee, right: Employee, elapsed: number) {
     if (this.reducedMotion) return;
-    if (!d.decided && u >= DUEL_FINAL_AT) {
-      d.decided = true;
-      d.winner = this.duelWinner(L, R, d.failer);
+    if (!duel.decided && elapsed >= DUEL_FINAL_AT) {
+      duel.decided = true;
+      duel.winner = this.duelWinner(left, right, duel.failer);
     } // decided now, so a failure that arrived during the fight still counts
-    const s0 = duelScript(d, 0, u, FX0),
-      s1 = duelScript(d, 1, u, FX1);
-    if (s0.ex !== d.beat) {
-      d.beat = s0.ex;
-      d.fxm &= 8;
+    const s0 = duelScript(duel, 0, elapsed, FX0),
+      s1 = duelScript(duel, 1, elapsed, FX1);
+    if (s0.ex !== duel.beat) {
+      duel.beat = s0.ex;
+      duel.fxm &= 8;
     } // bit 8 (K.O. shown) survives the beat change
     if (s0.ex < 0) return;
     if (s0.ex === DUEL_EX_FLOURISH) {
-      if (!d.flourished) {
-        d.flourished = true;
-        const w = d.winner === 0 ? L : R;
+      if (!duel.flourished) {
+        duel.flourished = true;
+        const winner = duel.winner === 0 ? left : right;
         this.ring(
-          w.x,
-          w.y - CH_H - FX_WIN_RING.lift,
+          winner.x,
+          winner.y - CH_H - FX_WIN_RING.lift,
           FX_WIN_RING.n,
           GOLD_COLS,
           FX_WIN_RING.speed,
           FX_WIN_RING.life,
           true,
         );
-        this.pop(w.x, w.y - CH_H - POP_LIFT, "WIN!", "#ffe14a", false, true, POP_DUR_WIN);
-        if (!(d.fxm & FXM_KO_SHOWN)) {
+        this.pop(winner.x, winner.y - CH_H - POP_LIFT, "WIN!", "#ffe14a", false, true, POP_DUR_WIN);
+        if (!(duel.fxm & FXM_KO_SHOWN)) {
           // a long frame jumped over the final exchange: still show the K.O.
-          d.fxm |= 8;
-          const lo = d.winner === 0 ? R : L,
-            so = duelScript(d, d.winner === 0 ? 1 : 0, u, FX1);
+          duel.fxm |= 8;
+          const loser = duel.winner === 0 ? right : left,
+            so = duelScript(duel, duel.winner === 0 ? 1 : 0, elapsed, FX1);
           this.ring(
-            lo.x + so.dx,
-            lo.y - CH_H - FX_KO_RING.lift,
+            loser.x + so.dx,
+            loser.y - CH_H - FX_KO_RING.lift,
             FX_KO_RING.n,
             GOLD_COLS,
             FX_KO_RING.speed,
             FX_KO_RING.life,
             true,
           );
-          this.pop(lo.x + so.dx, lo.y - CH_H - POP_LIFT, "K.O.!", "#ffffff", true, false, POP_DUR_KO);
+          this.pop(loser.x + so.dx, loser.y - CH_H - POP_LIFT, "K.O.!", "#ffffff", true, false, POP_DUR_KO);
         }
       }
       return;
     }
-    const A = s0.atk === 0 ? L : s0.atk === 1 ? R : null,
+    const attacker = s0.atk === 0 ? left : s0.atk === 1 ? right : null,
       dirA = s0.atk === 1 ? -1 : 1;
-    const aStyle = s0.atk === 0 ? d.styleL : d.styleR;
-    if (!(d.fxm & 1) && s0.stage >= 2) {
+    const aStyle = s0.atk === 0 ? duel.styleL : duel.styleR;
+    if (!(duel.fxm & 1) && s0.stage >= 2) {
       // launch
-      d.fxm |= 1;
-      if (!A) {
+      duel.fxm |= 1;
+      if (!attacker) {
         this.burst(
-          L.x + FX_CLASH_DUST.dx,
-          L.y - 1,
+          left.x + FX_CLASH_DUST.dx,
+          left.y - 1,
           FX_CLASH_DUST.n,
           DUST_COLS,
           FX_CLASH_DUST.speed,
@@ -2106,8 +2143,8 @@ export class Office {
           true,
         );
         this.burst(
-          R.x - FX_CLASH_DUST.dx,
-          R.y - 1,
+          right.x - FX_CLASH_DUST.dx,
+          right.y - 1,
           FX_CLASH_DUST.n,
           DUST_COLS,
           FX_CLASH_DUST.speed,
@@ -2118,8 +2155,8 @@ export class Office {
         );
       } else if (s0.act === 1)
         this.burst(
-          A.x - dirA * FX_LUNGE_DUST.dx,
-          A.y - 1,
+          attacker.x - dirA * FX_LUNGE_DUST.dx,
+          attacker.y - 1,
           FX_LUNGE_DUST.n,
           DUST_COLS,
           FX_LUNGE_DUST.speed,
@@ -2130,10 +2167,10 @@ export class Office {
         );
       else
         this.burst(
-          A.x + dirA * FX_SHOT_MUZZLE.dx,
-          A.y - FX_SHOT_MUZZLE.lift,
+          attacker.x + dirA * FX_SHOT_MUZZLE.dx,
+          attacker.y - FX_SHOT_MUZZLE.lift,
           FX_SHOT_MUZZLE.n,
-          aStyle === "magic" ? (A.look.cls === "cleric" ? HOLY_COLS : MAGIC_COLS) : ARROW_COLS,
+          aStyle === "magic" ? (attacker.look.cls === "cleric" ? HOLY_COLS : MAGIC_COLS) : ARROW_COLS,
           FX_SHOT_MUZZLE.speed,
           0,
           FX_SHOT_MUZZLE.life,
@@ -2141,17 +2178,17 @@ export class Office {
           true,
         );
     }
-    if (!(d.fxm & 2) && s0.stage >= STAGE_HITSTOP) {
+    if (!(duel.fxm & 2) && s0.stage >= STAGE_HITSTOP) {
       // impact
-      d.fxm |= 2;
-      const c = duelContact(L, R, s0, POINT_SCRATCH);
-      d.ix = c.x;
-      d.iy = c.y;
-      if (!A) {
-        this.pop(c.x, c.y - CLANG_POP_LIFT, "CLANG!", "#ffe14a", true, true, CLANG_POP_DUR);
+      duel.fxm |= 2;
+      const contact = duelContact(left, right, s0, POINT_SCRATCH);
+      duel.ix = contact.x;
+      duel.iy = contact.y;
+      if (!attacker) {
+        this.pop(contact.x, contact.y - CLANG_POP_LIFT, "CLANG!", "#ffe14a", true, true, CLANG_POP_DUR);
         this.burst(
-          c.x,
-          c.y,
+          contact.x,
+          contact.y,
           FX_CLANG_SPARKS.n,
           SPARK_COLS,
           FX_CLANG_SPARKS.speed,
@@ -2160,22 +2197,22 @@ export class Office {
           1,
           true,
         );
-        this.ring(c.x, c.y, FX_CLANG_RING.n, CLASH_COLS, FX_CLANG_RING.speed, FX_CLANG_RING.life, true);
+        this.ring(contact.x, contact.y, FX_CLANG_RING.n, CLASH_COLS, FX_CLANG_RING.speed, FX_CLANG_RING.life, true);
         this.addTrauma(TRAUMA_CLANG);
       } else {
-        const D = s0.atk === 0 ? R : L,
+        const defender = s0.atk === 0 ? right : left,
           big = s0.big;
         const cols =
           aStyle === "sword"
             ? SPARK_COLS
             : aStyle === "magic"
-              ? A.look.cls === "cleric"
+              ? attacker.look.cls === "cleric"
                 ? HOLY_COLS
                 : MAGIC_COLS
               : ARROW_COLS;
         this.burst(
-          c.x,
-          c.y,
+          contact.x,
+          contact.y,
           big ? FX_HIT_BIG.n : FX_HIT.n,
           cols,
           big ? FX_HIT_BIG.speed : FX_HIT.speed,
@@ -2185,8 +2222,8 @@ export class Office {
           true,
         );
         this.pop(
-          D.x,
-          D.y - CH_H - POP_LIFT,
+          defender.x,
+          defender.y - CH_H - POP_LIFT,
           big ? "CRIT!" : "-1",
           big ? "#ff4a4a" : "#ffb347",
           big,
@@ -2196,21 +2233,21 @@ export class Office {
         this.addTrauma(big ? TRAUMA_HIT_BIG : TRAUMA_HIT);
       }
     }
-    if (s0.big && !(d.fxm & FXM_FINAL_KO) && s0.q >= DUEL_IMPACT_FINAL + DUEL_STOP_FINAL + DUEL_FINAL_KO_DELAY_S) {
+    if (s0.big && !(duel.fxm & FXM_FINAL_KO) && s0.q >= DUEL_IMPACT_FINAL + DUEL_STOP_FINAL + DUEL_FINAL_KO_DELAY_S) {
       // knocked out
-      d.fxm |= 12;
-      const lo = d.winner === 0 ? R : L,
-        so = d.winner === 0 ? s1 : s0;
+      duel.fxm |= 12;
+      const loser = duel.winner === 0 ? right : left,
+        so = duel.winner === 0 ? s1 : s0;
       this.ring(
-        lo.x + so.dx,
-        lo.y - CH_H - FX_KO_RING.lift,
+        loser.x + so.dx,
+        loser.y - CH_H - FX_KO_RING.lift,
         FX_KO_RING.n,
         GOLD_COLS,
         FX_KO_RING.speed,
         FX_KO_RING.life,
         true,
       );
-      this.pop(lo.x + so.dx, lo.y - CH_H - POP_LIFT, "K.O.!", "#ffffff", true, false, POP_DUR_KO);
+      this.pop(loser.x + so.dx, loser.y - CH_H - POP_LIFT, "K.O.!", "#ffffff", true, false, POP_DUR_KO);
       this.addTrauma(TRAUMA_KO);
     }
   }
@@ -2222,16 +2259,17 @@ export class Office {
     this.terrFxAt -= dt;
     if (this.terrFxAt > 0) return;
     this.terrFxAt = 0.8;
-    let n = 0;
-    for (const r of this.conflictRows()) {
-      if (r.level !== "clash" || n >= MAX_CLASH_SMOKES || this.settled.has(conflictKey(r))) continue;
-      const a = this.employees.get(r.sids[0]),
-        b = this.employees.get(r.sids[1]);
-      if (!a || !b || a.deskIdx < 0 || b.deskIdx < 0 || this.isHidden(a) || this.isHidden(b)) continue;
-      const m = duelMidOfDesks(a.deskIdx, b.deskIdx, this.tmpPt);
+    let count = 0;
+    for (const row of this.conflictRows()) {
+      if (row.level !== "clash" || count >= MAX_CLASH_SMOKES || this.settled.has(conflictKey(row))) continue;
+      const first = this.employees.get(row.sids[0]),
+        second = this.employees.get(row.sids[1]);
+      if (!first || !second || first.deskIdx < 0 || second.deskIdx < 0 || this.isHidden(first) || this.isHidden(second))
+        continue;
+      const mid = duelMidOfDesks(first.deskIdx, second.deskIdx, this.tmpPt);
       this.burst(
-        m.x,
-        m.y - FX_CLASH_SMOKE.lift,
+        mid.x,
+        mid.y - FX_CLASH_SMOKE.lift,
         FX_CLASH_SMOKE.n,
         CLASH_COLS,
         FX_CLASH_SMOKE.speed,
@@ -2240,63 +2278,63 @@ export class Office {
         1,
         true,
       );
-      n++;
+      count++;
     }
   }
 
   /** drop duel/glare/failure bookkeeping that can no longer matter */
   private pruneMaps() {
     this.pruneAt = this.clock;
-    for (const [k, t] of this.duelAt) if (this.clock - t > DUEL_COOLDOWN) this.duelAt.delete(k);
-    for (const [k, t] of this.glareAt) if (this.clock - t > GLARE_COOLDOWN) this.glareAt.delete(k);
-    for (const [k, t] of this.editFailAt) if (this.clock - t > EDIT_FAIL_TTL_S) this.editFailAt.delete(k);
+    for (const [key, stamp] of this.duelAt) if (this.clock - stamp > DUEL_COOLDOWN) this.duelAt.delete(key);
+    for (const [key, stamp] of this.glareAt) if (this.clock - stamp > GLARE_COOLDOWN) this.glareAt.delete(key);
+    for (const [key, stamp] of this.editFailAt) if (this.clock - stamp > EDIT_FAIL_TTL_S) this.editFailAt.delete(key);
   }
   private forgetFighter(id: string) {
     this.editFailAt.delete(id);
-    for (const m of [this.duelAt, this.glareAt])
-      for (const k of m.keys()) if (k.startsWith(id + "|") || k.endsWith("|" + id)) m.delete(k);
+    for (const stamps of [this.duelAt, this.glareAt])
+      for (const key of stamps.keys()) if (key.startsWith(id + "|") || key.endsWith("|" + id)) stamps.delete(key);
   }
 
-  private clashEligible(c: TerritoryConflict): boolean {
-    return c.sids.filter((x) => this.employees.has(x)).length >= 2;
+  private clashEligible(conflict: TerritoryConflict): boolean {
+    return conflict.sids.filter((x) => this.employees.has(x)).length >= 2;
   }
   /** fire clash alerts that were waiting for their sessions to become known */
   private recheckPending() {
     if (!this.pendingClash.size) return;
-    let n = 0;
-    for (const [k, c] of [...this.pendingClash]) {
-      if (!this.clashEligible(c)) continue;
-      this.pendingClash.delete(k);
-      this.seenClash.add(k);
-      if (n++ < MAX_NEW_DUELS) {
-        this.alertClash(c);
-        this.startDuel(c);
+    let count = 0;
+    for (const [key, conflict] of [...this.pendingClash]) {
+      if (!this.clashEligible(conflict)) continue;
+      this.pendingClash.delete(key);
+      this.seenClash.add(key);
+      if (count++ < MAX_NEW_DUELS) {
+        this.alertClash(conflict);
+        this.startDuel(conflict);
       }
     }
   }
 
-  private alertClash(c: TerritoryConflict) {
-    const known = c.sids.map((x) => this.employees.get(x)).filter((e): e is Employee => !!e);
-    this.addBanner("quest", `⚔️ ${trunc(c.file, BANNER_FILE_MAX)}`);
+  private alertClash(conflict: TerritoryConflict) {
+    const known = conflict.sids.map((x) => this.employees.get(x)).filter((emp): emp is Employee => !!emp);
+    this.addBanner("quest", `⚔️ ${trunc(conflict.file, BANNER_FILE_MAX)}`);
     if (!this.reducedMotion) this.addTrauma(TRAUMA_QUEST);
-    const a = known[0];
+    const first = known[0];
     const others = known
       .slice(1)
-      .map((e) => e.tag)
+      .map((emp) => emp.tag)
       .join(", ");
     this.log.unshift({
       id: this.logSeq++,
-      sid: a.id,
-      color: a.look.shirt,
+      sid: first.id,
+      color: first.look.shirt,
       bad: true,
-      text: m.log_clash({ tag: a.tag, project: a.project, file: c.file, others }),
+      text: m.log_clash({ tag: first.tag, project: first.project, file: conflict.file, others }),
       time: Date.now(),
-      tag: a.tag,
-      project: a.project,
+      tag: first.tag,
+      project: first.project,
       intern: false,
       internLabel: "",
       kind: KIND_CLASH,
-      detail: `${c.file} vs ${others}`,
+      detail: `${conflict.file} vs ${others}`,
     });
     if (this.log.length > LOG_MAX) this.log.length = LOG_MAX;
   }
@@ -2305,27 +2343,27 @@ export class Office {
   conflictRows(): ConflictRow[] {
     if (this.rowsCache) return this.rowsCache;
     const out: ConflictRow[] = [];
-    for (const c of this.conflicts) {
-      const key = conflictKey(c);
+    for (const conflict of this.conflicts) {
+      const key = conflictKey(conflict);
       if (this.dismissed.has(key)) continue;
-      const emps = c.sids.map((x) => this.employees.get(x)).filter((e): e is Employee => !!e);
+      const emps = conflict.sids.map((x) => this.employees.get(x)).filter((emp): emp is Employee => !!emp);
       if (emps.length < 2) continue;
       out.push({
         key,
-        file: c.file,
-        sids: emps.map((e) => e.id),
-        names: emps.map((e) => `${e.tag} ${e.project}`),
-        level: c.level,
-        since: c.since,
+        file: conflict.file,
+        sids: emps.map((emp) => emp.id),
+        names: emps.map((emp) => `${emp.tag} ${emp.project}`),
+        level: conflict.level,
+        since: conflict.since,
       });
     }
     return (this.rowsCache = out);
   }
   /** non-dismissed clashes (tab title) */
   clashCount(): number {
-    let n = 0;
-    for (const r of this.conflictRows()) if (r.level === "clash") n++;
-    return n;
+    let count = 0;
+    for (const row of this.conflictRows()) if (row.level === "clash") count++;
+    return count;
   }
   claimsOf(id: string): number {
     return this.claimN.get(id) ?? 0;
@@ -2338,10 +2376,13 @@ export class Office {
     this.dirty = true;
   }
 
-  setFilter(f: Partial<GuildFilter>) {
-    const n = { query: (f.query ?? this.filter.query).trim(), hideStray: f.hideStray ?? this.filter.hideStray };
-    if (n.query === this.filter.query && n.hideStray === this.filter.hideStray) return;
-    this.filter = n;
+  setFilter(patch: Partial<GuildFilter>) {
+    const next = {
+      query: (patch.query ?? this.filter.query).trim(),
+      hideStray: patch.hideStray ?? this.filter.hideStray,
+    };
+    if (next.query === this.filter.query && next.hideStray === this.filter.hideStray) return;
+    this.filter = next;
     this.hidVer++;
     if (this.hoverId && this.isHidden(this.employees.get(this.hoverId))) this.hoverId = null;
     if (this.selectedId && this.isHidden(this.employees.get(this.selectedId))) this.selectedId = null;
@@ -2351,16 +2392,16 @@ export class Office {
     return { ...this.filter };
   }
   /** waiting on the user (main handup, or a squire with a raised hand) */
-  private isWaiting(e: Employee): boolean {
-    if (e.state === "LEAVING") return false;
-    if (e.act === "handup") return true;
-    for (const it of e.interns.values()) if (it.act === "handup") return true;
+  private isWaiting(emp: Employee): boolean {
+    if (emp.state === "LEAVING") return false;
+    if (emp.act === "handup") return true;
+    for (const intern of emp.interns.values()) if (intern.act === "handup") return true;
     return false;
   }
   /** Everyone waiting on the user, regardless of the session filter (tab title, notifications). */
   waitingIds(): string[] {
     const out: string[] = [];
-    for (const e of this.employees.values()) if (this.isWaiting(e)) out.push(e.id);
+    for (const emp of this.employees.values()) if (this.isWaiting(emp)) out.push(emp.id);
     return out;
   }
   /**
@@ -2369,34 +2410,40 @@ export class Office {
    * with fewer than 3 observed events. Snapshot-listed sessions and anyone waiting on the user (handup) are never stray.
    * Result is cached per employee (see hidVer).
    */
-  isHidden(e: Employee | undefined): boolean {
-    if (!e) return false;
-    const c = this.hidCache.get(e.id);
-    if (c && c.v === this.hidVer && c.act === e.act) return c.h;
-    const proj = c && c.v === this.hidVer ? c.proj : e.project.toLowerCase();
-    const q = this.filter.query.toLowerCase();
-    let h = false;
-    if (q && !proj.includes(q)) h = true;
-    else if (this.filter.hideStray && !e.sawStart && !e.known && e.evCount < STRAY_EVENT_MIN && !this.isWaiting(e))
-      h = true;
-    this.hidCache.set(e.id, { v: this.hidVer, act: e.act, h, proj });
-    return h;
+  isHidden(emp: Employee | undefined): boolean {
+    if (!emp) return false;
+    const cached = this.hidCache.get(emp.id);
+    if (cached && cached.v === this.hidVer && cached.act === emp.act) return cached.h;
+    const proj = cached && cached.v === this.hidVer ? cached.proj : emp.project.toLowerCase();
+    const query = this.filter.query.toLowerCase();
+    let hidden = false;
+    if (query && !proj.includes(query)) hidden = true;
+    else if (
+      this.filter.hideStray &&
+      !emp.sawStart &&
+      !emp.known &&
+      emp.evCount < STRAY_EVENT_MIN &&
+      !this.isWaiting(emp)
+    )
+      hidden = true;
+    this.hidCache.set(emp.id, { v: this.hidVer, act: emp.act, h: hidden, proj });
+    return hidden;
   }
 
   private signature(): string {
-    let s = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
-    s += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}|R${this.rcptVer}`;
-    for (const e of this.employees.values()) {
-      if (this.isHidden(e)) {
-        s += `;h${e.id}${this.isWaiting(e) ? "w" + this.statusOf(e) : ""}`;
+    let sig = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
+    sig += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}|R${this.rcptVer}`;
+    for (const emp of this.employees.values()) {
+      if (this.isHidden(emp)) {
+        sig += `;h${emp.id}${this.isWaiting(emp) ? "w" + this.statusOf(emp) : ""}`;
         continue;
       }
-      const cf = this.ctxFrac(e.id);
-      s += `;${e.id}${cf === null ? "" : "c" + Math.round(cf * PERCENT) + (this.ctxMap.get(e.id)!.guessed ? "g" : "")},${this.statusOf(e)},${e.interns.size},${e.deskIdx},${e.lv}:${e.xp}:${e.gold}:${e.kills}:${e.hearts}`;
-      for (const it of e.interns.values())
-        s += `,${it.id}:${it.label}:${it.act}:${it.detail ?? ""}:${it.count}:${it.failed ? 1 : 0}`;
+      const cf = this.ctxFrac(emp.id);
+      sig += `;${emp.id}${cf === null ? "" : "c" + Math.round(cf * PERCENT) + (this.ctxMap.get(emp.id)!.guessed ? "g" : "")},${this.statusOf(emp)},${emp.interns.size},${emp.deskIdx},${emp.lv}:${emp.xp}:${emp.gold}:${emp.kills}:${emp.hearts}`;
+      for (const intern of emp.interns.values())
+        sig += `,${intern.id}:${intern.label}:${intern.act}:${intern.detail ?? ""}:${intern.count}:${intern.failed ? 1 : 0}`;
     }
-    return s;
+    return sig;
   }
 
   /** push the view to subscribers if it changed (the frame loop calls this ~5x/s) */
@@ -2409,8 +2456,8 @@ export class Office {
     const sig = this.signature();
     if (!force && sig === this.lastSig) return;
     this.lastSig = sig;
-    const v = this.getView();
-    for (const l of this.listeners) l(v);
+    const view = this.getView();
+    for (const listener of this.listeners) listener(view);
     this.dirty = false;
   }
 
@@ -2418,48 +2465,54 @@ export class Office {
     let hiddenCount = 0;
     const hiddenIds: string[] = [];
     const waiting: WaitingRow[] = [];
-    for (const e of this.employees.values()) {
-      if (this.isWaiting(e))
-        waiting.push({ id: e.id, tag: e.tag, project: e.project, status: this.statusOf(e), hidden: this.isHidden(e) });
+    for (const emp of this.employees.values()) {
+      if (this.isWaiting(emp))
+        waiting.push({
+          id: emp.id,
+          tag: emp.tag,
+          project: emp.project,
+          status: this.statusOf(emp),
+          hidden: this.isHidden(emp),
+        });
     }
     const conflicts = this.conflictRows();
     const confOf = new Map<string, "overlap" | "clash">();
-    for (const c of conflicts)
-      for (const id of c.sids) if (c.level === "clash" || !confOf.has(id)) confOf.set(id, c.level);
+    for (const row of conflicts)
+      for (const id of row.sids) if (row.level === "clash" || !confOf.has(id)) confOf.set(id, row.level);
     const roster = [...this.employees.values()]
-      .filter((e) => {
-        if (this.isHidden(e)) {
+      .filter((emp) => {
+        if (this.isHidden(emp)) {
           hiddenCount++;
-          hiddenIds.push(e.id);
+          hiddenIds.push(emp.id);
           return false;
         }
         return true;
       })
-      .sort((a, b) => a.order - b.order)
-      .map((e) => {
-        const cx = this.ctxMap.get(e.id);
-        const cl = this.claimN.get(e.id),
-          cf = confOf.get(e.id);
+      .sort((first, second) => first.order - second.order)
+      .map((emp) => {
+        const cx = this.ctxMap.get(emp.id);
+        const cl = this.claimN.get(emp.id),
+          cf = confOf.get(emp.id);
         return {
           ...(cx ? { ctxUsed: cx.used, ctxLimit: cx.limit, ctxGuessed: cx.guessed } : {}),
           ...(cl ? { claims: cl } : {}),
           ...(cf ? { conflict: cf } : {}),
-          id: e.id,
-          tag: e.tag,
-          project: e.project,
-          color: e.look.shirt,
-          status: this.statusOf(e),
-          interns: e.interns.size,
-          internList: [...e.interns.values()].map(internRow),
-          desk: e.deskIdx,
-          look: e.look,
-          act: this.rosterAct(e),
-          level: e.lv,
-          xp: e.xp,
-          xpNext: xpNeed(e.lv),
-          gold: e.gold,
-          kills: e.kills,
-          hp: e.hearts,
+          id: emp.id,
+          tag: emp.tag,
+          project: emp.project,
+          color: emp.look.shirt,
+          status: this.statusOf(emp),
+          interns: emp.interns.size,
+          internList: [...emp.interns.values()].map(internRow),
+          desk: emp.deskIdx,
+          look: emp.look,
+          act: this.rosterAct(emp),
+          level: emp.lv,
+          xp: emp.xp,
+          xpNext: xpNeed(emp.lv),
+          gold: emp.gold,
+          kills: emp.kills,
+          hp: emp.hearts,
           hpMax: MAX_HEARTS,
         };
       });
@@ -2478,8 +2531,8 @@ export class Office {
     };
   }
 
-  private rosterAct(e: Employee): RosterAct {
-    switch (e.state) {
+  private rosterAct(emp: Employee): RosterAct {
+    switch (emp.state) {
       case "ENTERING":
         return "enter";
       case "LEAVING":
@@ -2491,12 +2544,13 @@ export class Office {
       case "DRINK":
         return "coffee";
     }
-    if (e.act !== "handup") for (const it of e.interns.values()) if (it.act === "handup") return "intern_handup";
-    return e.act;
+    if (emp.act !== "handup")
+      for (const intern of emp.interns.values()) if (intern.act === "handup") return "intern_handup";
+    return emp.act;
   }
 
-  statusOf(e: Employee): string {
-    switch (e.state) {
+  statusOf(emp: Employee): string {
+    switch (emp.state) {
       case "ENTERING":
         return m.status_enter();
       case "LEAVING":
@@ -2512,12 +2566,12 @@ export class Office {
       case "DUEL":
         return m.status_duel();
     }
-    if (e.hurtUntil > this.clock) return m.status_hurt();
-    if (e.boss && e.act !== "handup") return m.status_boss();
-    if (e.resting && e.act !== "handup") return m.status_resting();
-    if (e.act !== "handup")
-      for (const it of e.interns.values()) if (it.act === "handup") return m.status_squire_handup();
-    switch (e.act) {
+    if (emp.hurtUntil > this.clock) return m.status_hurt();
+    if (emp.boss && emp.act !== "handup") return m.status_boss();
+    if (emp.resting && emp.act !== "handup") return m.status_resting();
+    if (emp.act !== "handup")
+      for (const intern of emp.interns.values()) if (intern.act === "handup") return m.status_squire_handup();
+    switch (emp.act) {
       case "typing":
         return m.status_typing();
       case "reading":
@@ -2533,8 +2587,8 @@ export class Office {
       case "handup":
         return m.status_handup();
       default:
-        if (e.note === "agent") return m.status_agent();
-        if (e.note === "idle") return m.status_idle();
+        if (emp.note === "agent") return m.status_agent();
+        if (emp.note === "idle") return m.status_idle();
         return m.status_thinking();
     }
   }
@@ -2542,23 +2596,23 @@ export class Office {
   // ---------- hit testing ----------
   hit(lx: number, ly: number): string | null {
     let best: Employee | null = null;
-    for (const e of this.employees.values()) {
-      if (this.isHidden(e)) continue;
-      if (lx >= e.x - CH_W / 2 && lx <= e.x + CH_W / 2 && ly >= e.y - CH_H && ly <= e.y) {
-        if (!best || e.y >= best.y) best = e;
+    for (const emp of this.employees.values()) {
+      if (this.isHidden(emp)) continue;
+      if (lx >= emp.x - CH_W / 2 && lx <= emp.x + CH_W / 2 && ly >= emp.y - CH_H && ly <= emp.y) {
+        if (!best || emp.y >= best.y) best = emp;
       }
     }
     return best ? best.id : null;
   }
 
   testHand() {
-    const list = [...this.employees.values()].filter((e) => e.state !== "LEAVING");
+    const list = [...this.employees.values()].filter((emp) => emp.state !== "LEAVING");
     if (!list.length) return;
-    const e = list[Math.floor(Math.random() * list.length)];
+    const emp = list[Math.floor(Math.random() * list.length)];
     this.event({
-      session_id: e.id,
+      session_id: emp.id,
       hook_event_name: "Notification",
-      cwd: e.cwd,
+      cwd: emp.cwd,
       notification_type: "permission_prompt",
       message: "Claude needs your permission",
     });
@@ -2590,12 +2644,12 @@ export class Office {
     this.retryDuels();
     this.updateDuels();
     this.updateTerritoryFx(dt);
-    for (const e of [...this.employees.values()]) this.updateEmployee(e, dt);
+    for (const emp of [...this.employees.values()]) this.updateEmployee(emp, dt);
   }
 
   // ---------- effects ----------
-  addTrauma(v: number) {
-    this.trauma = Math.min(1, this.trauma + v);
+  addTrauma(amount: number) {
+    this.trauma = Math.min(1, this.trauma + amount);
   }
 
   private emitP(
@@ -2603,57 +2657,57 @@ export class Office {
     y: number,
     vx: number,
     vy: number,
-    g: number,
+    gravity: number,
     life: number,
     col: string,
     size = 1,
     spr: string | null = null,
     under = false,
   ) {
-    let p = this.particles[this.pIdx];
+    let particle = this.particles[this.pIdx];
     for (let i = 0; i < MAX_PARTICLES; i++) {
-      const q = this.particles[(this.pIdx + i) % MAX_PARTICLES];
-      if (!q.on) {
-        p = q;
+      const candidate = this.particles[(this.pIdx + i) % MAX_PARTICLES];
+      if (!candidate.on) {
+        particle = candidate;
         this.pIdx = (this.pIdx + i + 1) % MAX_PARTICLES;
         break;
       }
       if (i === MAX_PARTICLES - 1) this.pIdx = (this.pIdx + 1) % MAX_PARTICLES; // pool full: recycle the next slot
     }
-    p.on = true;
-    p.x = x;
-    p.y = y;
-    p.vx = vx;
-    p.vy = vy;
-    p.g = g;
-    p.age = 0;
-    p.life = life;
-    p.col = col;
-    p.size = size;
-    p.spr = spr;
-    p.under = under;
+    particle.on = true;
+    particle.x = x;
+    particle.y = y;
+    particle.vx = vx;
+    particle.vy = vy;
+    particle.g = gravity;
+    particle.age = 0;
+    particle.life = life;
+    particle.col = col;
+    particle.size = size;
+    particle.spr = spr;
+    particle.under = under;
   }
 
   private burst(
     x: number,
     y: number,
-    n: number,
+    count: number,
     cols: string[],
     speed: number,
-    g = 90,
+    gravity = 90,
     life = 0.5,
     size = 1,
     under = false,
   ) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2,
-        v = speed * rand(BURST_SPEED_MIN, 1);
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2,
+        velocity = speed * rand(BURST_SPEED_MIN, 1);
       this.emitP(
         x,
         y,
-        Math.cos(a) * v,
-        Math.sin(a) * v - speed * BURST_LIFT,
-        g,
+        Math.cos(angle) * velocity,
+        Math.sin(angle) * velocity - speed * BURST_LIFT,
+        gravity,
         life * rand(BURST_LIFE_MIN, BURST_LIFE_MAX),
         cols[i % cols.length],
         size,
@@ -2663,14 +2717,14 @@ export class Office {
     }
   }
 
-  private ring(x: number, y: number, n: number, cols: string[], speed: number, life: number, under = false) {
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
+  private ring(x: number, y: number, count: number, cols: string[], speed: number, life: number, under = false) {
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
       this.emitP(
         x,
         y,
-        Math.cos(a) * speed,
-        Math.sin(a) * speed * RING_SQUASH,
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed * RING_SQUASH,
         0,
         life,
         cols[i % cols.length],
@@ -2692,16 +2746,16 @@ export class Office {
   }
 
   private updateFx(dt: number) {
-    for (const p of this.particles) {
-      if (!p.on) continue;
-      p.age += dt;
-      if (p.age >= p.life) {
-        p.on = false;
+    for (const particle of this.particles) {
+      if (!particle.on) continue;
+      particle.age += dt;
+      if (particle.age >= particle.life) {
+        particle.on = false;
         continue;
       }
-      p.vy += p.g * dt;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
+      particle.vy += particle.g * dt;
+      particle.x += particle.vx * dt;
+      particle.y += particle.vy * dt;
     }
     for (let i = this.popups.length - 1; i >= 0; i--)
       if (this.clock - this.popups[i].born > this.popups[i].dur) this.popups.splice(i, 1);
@@ -2709,42 +2763,42 @@ export class Office {
 
   private updateAmbient(dt: number) {
     this.ambT += dt;
-    const t = this.ambT;
-    for (const b of this.butterflies) {
-      const dx = b.tx - b.x,
-        dy = b.ty - b.y,
-        d = Math.hypot(dx, dy);
-      if (d < BUTTERFLY_ARRIVE_DIST) {
-        b.tx = Math.min(
-          W - BUTTERFLY_PAD_R,
-          Math.max(HALL_W + BUTTERFLY_PAD_L, b.x + rand(-BUTTERFLY_WANDER_X, BUTTERFLY_WANDER_X)),
+    const stamp = this.ambT;
+    for (const butterfly of this.butterflies) {
+      const dx = butterfly.tx - butterfly.x,
+        dy = butterfly.ty - butterfly.y,
+        dist = Math.hypot(dx, dy);
+      if (dist < BUTTERFLY_ARRIVE_DIST) {
+        butterfly.tx = Math.min(
+          WORLD_W - BUTTERFLY_PAD_R,
+          Math.max(HALL_W + BUTTERFLY_PAD_L, butterfly.x + rand(-BUTTERFLY_WANDER_X, BUTTERFLY_WANDER_X)),
         );
-        b.ty = Math.min(
+        butterfly.ty = Math.min(
           BUTTERFLY_ROAM_Y_MAX,
-          Math.max(BUTTERFLY_ROAM_Y_MIN, b.y + rand(-BUTTERFLY_WANDER_Y, BUTTERFLY_WANDER_Y)),
+          Math.max(BUTTERFLY_ROAM_Y_MIN, butterfly.y + rand(-BUTTERFLY_WANDER_Y, BUTTERFLY_WANDER_Y)),
         );
       } else {
-        const v = BUTTERFLY_SPEED * dt;
-        b.x += (dx / d) * v;
-        b.y += (dy / d) * v;
+        const stepLen = BUTTERFLY_SPEED * dt;
+        butterfly.x += (dx / dist) * stepLen;
+        butterfly.y += (dy / dist) * stepLen;
       }
     }
-    for (const f of this.fireflies) {
-      f.x = f.sx + Math.sin(t * FIREFLY_FREQ_X + f.ph * FIREFLY_PHASE_X) * FIREFLY_AMP_X;
-      f.y = f.sy + Math.sin(t * FIREFLY_FREQ_Y + f.ph * FIREFLY_PHASE_Y) * FIREFLY_AMP_Y;
+    for (const firefly of this.fireflies) {
+      firefly.x = firefly.sx + Math.sin(stamp * FIREFLY_FREQ_X + firefly.ph * FIREFLY_PHASE_X) * FIREFLY_AMP_X;
+      firefly.y = firefly.sy + Math.sin(stamp * FIREFLY_FREQ_Y + firefly.ph * FIREFLY_PHASE_Y) * FIREFLY_AMP_Y;
     }
     if (this.bird) {
-      const b = this.bird;
-      b.x += b.vx * dt;
-      b.ph += dt;
-      if (b.x < HALL_W - BIRD_OFFSCREEN || b.x > W + BIRD_OFFSCREEN) {
+      const bird = this.bird;
+      bird.x += bird.vx * dt;
+      bird.ph += dt;
+      if (bird.x < HALL_W - BIRD_OFFSCREEN || bird.x > WORLD_W + BIRD_OFFSCREEN) {
         this.bird = null;
-        this.nextBird = t + rand(BIRD_INTERVAL_MIN_S, BIRD_INTERVAL_MAX_S);
+        this.nextBird = stamp + rand(BIRD_INTERVAL_MIN_S, BIRD_INTERVAL_MAX_S);
       }
-    } else if (t >= this.nextBird) {
+    } else if (stamp >= this.nextBird) {
       const dir = Math.random() < COIN_FLIP ? 1 : -1;
       this.bird = {
-        x: dir > 0 ? HALL_W - BIRD_EDGE : W + BIRD_EDGE,
+        x: dir > 0 ? HALL_W - BIRD_EDGE : WORLD_W + BIRD_EDGE,
         y: rand(BIRD_Y_MIN, BIRD_Y_MAX),
         vx: dir * rand(BIRD_VX_MIN, BIRD_VX_MAX),
         ph: 0,
@@ -2752,56 +2806,56 @@ export class Office {
     }
     // chimney / hearth smoke
     for (let i = this.smoke.length - 1; i >= 0; i--) {
-      const s = this.smoke[i];
-      s.age += dt;
-      s.y -= SMOKE_RISE * dt;
-      s.x += Math.sin(s.age * 2 + i) * SMOKE_SWAY * dt;
-      if (s.age > s.life) this.smoke.splice(i, 1);
+      const puff = this.smoke[i];
+      puff.age += dt;
+      puff.y -= SMOKE_RISE * dt;
+      puff.x += Math.sin(puff.age * 2 + i) * SMOKE_SWAY * dt;
+      if (puff.age > puff.life) this.smoke.splice(i, 1);
     }
-    if (t >= this.nextSmoke && this.smoke.length < MAX_SMOKE) {
+    if (stamp >= this.nextSmoke && this.smoke.length < MAX_SMOKE) {
       this.smoke.push({
         x: HEARTH.x + SMOKE_X + rand(-SMOKE_JITTER, SMOKE_JITTER),
         y: HEARTH.y - 1,
         age: 0,
         life: 2.4,
       });
-      this.nextSmoke = t + SMOKE_INTERVAL_S;
+      this.nextSmoke = stamp + SMOKE_INTERVAL_S;
     }
     // rain
     if (this.rainStart < 0) {
-      if (t >= this.nextRain) {
-        this.rainStart = t;
-        this.rainEnd = t + RAIN_DURATION_S;
+      if (stamp >= this.nextRain) {
+        this.rainStart = stamp;
+        this.rainEnd = stamp + RAIN_DURATION_S;
       }
       this.rain = 0;
     } else {
-      if (t > this.rainEnd + RAIN_FADE_S) {
+      if (stamp > this.rainEnd + RAIN_FADE_S) {
         this.rain = 0;
         this.scheduleRain();
       } else
         this.rain = Math.max(
           0,
-          Math.min(1, (t - this.rainStart) / RAIN_FADE_S, (this.rainEnd + RAIN_FADE_S - t) / RAIN_FADE_S),
+          Math.min(1, (stamp - this.rainStart) / RAIN_FADE_S, (this.rainEnd + RAIN_FADE_S - stamp) / RAIN_FADE_S),
         );
     }
   }
 
-  private move(e: Employee, dt: number): boolean {
-    if (e.holdUntil > this.clock) return false;
+  private move(emp: Employee, dt: number): boolean {
+    if (emp.holdUntil > this.clock) return false;
     let rem = SPEED * dt;
-    while (rem > 0 && e.path.length) {
-      const t = e.path[0];
-      const dx = t.x - e.x,
-        dy = t.y - e.y;
-      const d = Math.hypot(dx, dy);
-      if (dx !== 0) e.facing = dx > 0 ? 1 : -1;
-      e.dustAcc += Math.min(d, rem) / SPEED;
-      if (e.dustAcc > DUST_STEP) {
-        e.dustAcc = 0;
+    while (rem > 0 && emp.path.length) {
+      const target = emp.path[0];
+      const dx = target.x - emp.x,
+        dy = target.y - emp.y;
+      const dist = Math.hypot(dx, dy);
+      if (dx !== 0) emp.facing = dx > 0 ? 1 : -1;
+      emp.dustAcc += Math.min(dist, rem) / SPEED;
+      if (emp.dustAcc > DUST_STEP) {
+        emp.dustAcc = 0;
         this.emitP(
-          e.x - e.facing * DUST_BEHIND + rand(-1, 1),
-          e.y - 1,
-          -e.facing * rand(2, DUST_VX_MAX),
+          emp.x - emp.facing * DUST_BEHIND + rand(-1, 1),
+          emp.y - 1,
+          -emp.facing * rand(2, DUST_VX_MAX),
           rand(-DUST_VY_UP, -DUST_VY_DOWN),
           0,
           DUST_LIFE,
@@ -2810,58 +2864,58 @@ export class Office {
           Math.random() < COIN_FLIP ? "dust0" : "dust1",
         );
       }
-      if (d <= rem) {
-        e.x = t.x;
-        e.y = t.y;
-        rem -= d;
-        e.path.shift();
-        if (e.state === "TO_COFFEE") e.trail.push(t);
-        if (t.wait && e.path.length) {
-          e.holdUntil = this.clock + t.wait;
-          if (e.state === "LEAVING") e.lootAt = this.clock;
-          else e.noteAt = this.clock;
+      if (dist <= rem) {
+        emp.x = target.x;
+        emp.y = target.y;
+        rem -= dist;
+        emp.path.shift();
+        if (emp.state === "TO_COFFEE") emp.trail.push(target);
+        if (target.wait && emp.path.length) {
+          emp.holdUntil = this.clock + target.wait;
+          if (emp.state === "LEAVING") emp.lootAt = this.clock;
+          else emp.noteAt = this.clock;
           break;
         }
       } else {
-        e.x += (dx / d) * rem;
-        e.y += (dy / d) * rem;
+        emp.x += (dx / dist) * rem;
+        emp.y += (dy / dist) * rem;
         rem = 0;
       }
     }
-    return e.path.length === 0;
+    return emp.path.length === 0;
   }
 
-  private updateEmployee(e: Employee, dt: number) {
+  private updateEmployee(emp: Employee, dt: number) {
     // a duel is not a stall: in-flight tools must not age into a boss while the adventurer is busy dueling
-    if (e.duel && e.pending.size) for (const [k, t0] of e.pending) e.pending.set(k, t0 + dt);
+    if (emp.duel && emp.pending.size) for (const [key, t0] of emp.pending) emp.pending.set(key, t0 + dt);
     // idle timeout is ~10 real minutes: the sim clock is speed-scaled, and waiting on a permission prompt is not idle.
     if (
-      e.state !== "LEAVING" &&
-      e.act !== "handup" &&
-      e.pending.size === 0 &&
-      this.clock - e.lastEventAt > IDLE_GRACE_S * Math.max(1, this.speed)
+      emp.state !== "LEAVING" &&
+      emp.act !== "handup" &&
+      emp.pending.size === 0 &&
+      this.clock - emp.lastEventAt > IDLE_GRACE_S * Math.max(1, this.speed)
     )
-      this.leave(e);
-    switch (e.state) {
+      this.leave(emp);
+    switch (emp.state) {
       case "ENTERING":
-        if (this.move(e, dt)) this.sit(e);
+        if (this.move(emp, dt)) this.sit(emp);
         break;
       case "FROM_COFFEE":
-        if (this.move(e, dt)) this.sit(e);
+        if (this.move(emp, dt)) this.sit(emp);
         break;
       case "DUEL":
-        if (e.path.length) this.move(e, dt); // updateDuels() owns the phase changes
+        if (emp.path.length) this.move(emp, dt); // updateDuels() owns the phase changes
         break;
       case "TO_COFFEE":
-        if (this.move(e, dt)) {
-          e.state = "DRINK";
-          e.stateSince = this.clock;
-          e.facing = 1;
-          e.hearts = MAX_HEARTS;
+        if (this.move(emp, dt)) {
+          emp.state = "DRINK";
+          emp.stateSince = this.clock;
+          emp.facing = 1;
+          emp.hearts = MAX_HEARTS;
           for (let k = 0; k < HEART_COUNT; k++)
             this.emitP(
-              e.x - HEART_SPACING + k * HEART_SPACING,
-              e.y - HEART_LIFT,
+              emp.x - HEART_SPACING + k * HEART_SPACING,
+              emp.y - HEART_LIFT,
               rand(-HEART_VX, HEART_VX),
               rand(-HEART_VY_MAX, -HEART_VY_MIN),
               0,
@@ -2873,147 +2927,149 @@ export class Office {
         }
         break;
       case "LEAVING":
-        if (this.move(e, dt)) {
-          if (e.returning) this.reenter(e);
+        if (this.move(emp, dt)) {
+          if (emp.returning) this.reenter(emp);
           else {
-            this.employees.delete(e.id);
-            this.forgetFighter(e.id);
+            this.employees.delete(emp.id);
+            this.forgetFighter(emp.id);
             this.bumpTerr();
             this.dirty = true;
           }
         }
         break;
       case "STRETCH":
-        if (this.clock - e.stateSince >= STRETCH_S) {
-          e.state = "TO_COFFEE";
-          e.stateSince = this.clock;
-          const r = routeToTavern(e.deskIdx, e.slot, e.order);
-          e.trail = [r[0]];
-          e.path = r.slice(1);
+        if (this.clock - emp.stateSince >= STRETCH_S) {
+          emp.state = "TO_COFFEE";
+          emp.stateSince = this.clock;
+          const route = routeToTavern(emp.deskIdx, emp.slot, emp.order);
+          emp.trail = [route[0]];
+          emp.path = route.slice(1);
         }
         break;
       case "DRINK":
-        if (this.clock - e.stateSince >= DRINK_S) {
-          e.state = "FROM_COFFEE";
-          e.path = [...e.trail].reverse();
-          e.trail = [];
+        if (this.clock - emp.stateSince >= DRINK_S) {
+          emp.state = "FROM_COFFEE";
+          emp.path = [...emp.trail].reverse();
+          emp.trail = [];
         }
         break;
       case "SEATED":
-        if (e.tempBubble && this.clock > e.tempBubble.until) e.tempBubble = null;
-        if (e.act === "thinking" && !e.bubble && !e.tempBubble && this.clock >= e.nextThought) {
-          e.tempBubble = { e: "…", until: this.clock + THOUGHT_BUBBLE_S };
-          e.nextThought = this.clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
+        if (emp.tempBubble && this.clock > emp.tempBubble.until) emp.tempBubble = null;
+        if (emp.act === "thinking" && !emp.bubble && !emp.tempBubble && this.clock >= emp.nextThought) {
+          emp.tempBubble = { e: "…", until: this.clock + THOUGHT_BUBBLE_S };
+          emp.nextThought = this.clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
         }
-        if (e.act === "handup") {
-          for (const k of e.pending.keys()) e.pending.set(k, this.clock);
+        if (emp.act === "handup") {
+          for (const key of emp.pending.keys()) emp.pending.set(key, this.clock);
         } // waiting on the user is not a boss fight
-        if (e.pending.size > 0 && !e.boss && e.deskIdx >= 0 && e.monPos) {
+        if (emp.pending.size > 0 && !emp.boss && emp.deskIdx >= 0 && emp.monPos) {
           let oldest = Infinity;
-          for (const t0 of e.pending.values()) if (t0 < oldest) oldest = t0;
-          if (this.clock - oldest > BOSS_AFTER) this.spawnBoss(e);
+          for (const t0 of emp.pending.values()) if (t0 < oldest) oldest = t0;
+          if (this.clock - oldest > BOSS_AFTER) this.spawnBoss(emp);
         }
         break;
     }
-    e.resting =
-      e.state === "SEATED" &&
-      e.deskIdx >= 0 &&
-      e.act === "thinking" &&
-      e.pending.size === 0 &&
-      !e.boss &&
-      this.clock - e.lastEventAt > REST_AFTER;
-    if (e.state !== "LEAVING" && e.deskIdx >= 0 && e.monDead && e.monRespawnAt <= this.clock) this.spawnMonster(e);
-    if (e.state !== "SEATED" && e.tempBubble && this.clock > e.tempBubble.until) e.tempBubble = null;
+    emp.resting =
+      emp.state === "SEATED" &&
+      emp.deskIdx >= 0 &&
+      emp.act === "thinking" &&
+      emp.pending.size === 0 &&
+      !emp.boss &&
+      this.clock - emp.lastEventAt > REST_AFTER;
+    if (emp.state !== "LEAVING" && emp.deskIdx >= 0 && emp.monDead && emp.monRespawnAt <= this.clock)
+      this.spawnMonster(emp);
+    if (emp.state !== "SEATED" && emp.tempBubble && this.clock > emp.tempBubble.until) emp.tempBubble = null;
   }
 
-  private sit(e: Employee) {
-    const s = seatPoint(e.deskIdx, e.slot);
-    e.x = s.x;
-    e.y = s.y;
-    e.facing = 1;
-    e.trail = [];
-    if (e.deskIdx >= 0 && !e.monPos) this.spawnMonster(e);
-    e.state = "SEATED";
-    e.stateSince = this.clock;
-    const q = e.queue;
-    e.queue = [];
-    for (let i = 0; i < q.length; i++) {
-      if (e.state !== "SEATED") {
-        e.queue = q.slice(i);
+  private sit(emp: Employee) {
+    const spot = seatPoint(emp.deskIdx, emp.slot);
+    emp.x = spot.x;
+    emp.y = spot.y;
+    emp.facing = 1;
+    emp.trail = [];
+    if (emp.deskIdx >= 0 && !emp.monPos) this.spawnMonster(emp);
+    emp.state = "SEATED";
+    emp.stateSince = this.clock;
+    const queue = emp.queue;
+    emp.queue = [];
+    for (let i = 0; i < queue.length; i++) {
+      if (emp.state !== "SEATED") {
+        emp.queue = queue.slice(i);
         break;
       }
-      this.applyEvent(e, q[i], i === q.length - 1);
+      this.applyEvent(emp, queue[i], i === queue.length - 1);
     }
-    if (e.coffeeAfter) {
+    if (emp.coffeeAfter) {
       // a Stop arrived while dueling: take the break now
-      e.coffeeAfter = false;
-      if (e.state === "SEATED") {
-        e.state = "STRETCH";
-        e.stateSince = this.clock;
+      emp.coffeeAfter = false;
+      if (emp.state === "SEATED") {
+        emp.state = "STRETCH";
+        emp.stateSince = this.clock;
       }
     }
   }
 
-  private leave(e: Employee) {
-    if (e.state === "LEAVING") return;
-    e.duel = null;
-    e.coffeeAfter = false; // updateDuels() sends the opponent home
-    const path: Pt[] = routeLeave(e.x, e.y);
-    e.state = "LEAVING";
-    e.returning = false;
-    e.path = path;
-    e.trail = [];
-    e.holdUntil = 0;
-    if (e.monPos && !e.monDead) {
-      e.monDead = true;
-      e.monDeadAt = this.clock;
-      e.monLoot = false;
-      e.monRespawnAt = Infinity;
+  private leave(emp: Employee) {
+    if (emp.state === "LEAVING") return;
+    emp.duel = null;
+    emp.coffeeAfter = false; // updateDuels() sends the opponent home
+    const path: Pt[] = routeLeave(emp.x, emp.y);
+    emp.state = "LEAVING";
+    emp.returning = false;
+    emp.path = path;
+    emp.trail = [];
+    emp.holdUntil = 0;
+    if (emp.monPos && !emp.monDead) {
+      emp.monDead = true;
+      emp.monDeadAt = this.clock;
+      emp.monLoot = false;
+      emp.monRespawnAt = Infinity;
     }
-    e.bubble = null;
-    e.tempBubble = null;
-    e.queue = [];
-    e.act = "thinking";
-    e.actSince = this.clock;
-    e.note = null;
-    e.hasPaper = false;
-    e.sticky = false;
-    e.hurtUntil = 0;
-    e.boss = null;
-    e.pending.clear();
-    e.resting = false;
-    e.toolCalls = 0;
-    e.qKills = 0;
-    e.qGold = 0;
-    e.interns.clear();
-    e.deskIdx = -1;
-    e.slot = -1;
+    emp.bubble = null;
+    emp.tempBubble = null;
+    emp.queue = [];
+    emp.act = "thinking";
+    emp.actSince = this.clock;
+    emp.note = null;
+    emp.hasPaper = false;
+    emp.sticky = false;
+    emp.hurtUntil = 0;
+    emp.boss = null;
+    emp.pending.clear();
+    emp.resting = false;
+    emp.toolCalls = 0;
+    emp.qKills = 0;
+    emp.qGold = 0;
+    emp.interns.clear();
+    emp.deskIdx = -1;
+    emp.slot = -1;
     this.dirty = true;
   }
 
   /** A battle spot is free and someone is waiting at camp: send the longest-waiting seated one to it. */
   private promoteOverflow() {
     let waiting: Employee | null = null;
-    for (const o of this.employees.values()) {
-      if (o.deskIdx < 0 && o.slot >= 0 && o.state === "SEATED" && (!waiting || o.order < waiting.order)) waiting = o;
+    for (const other of this.employees.values()) {
+      if (other.deskIdx < 0 && other.slot >= 0 && other.state === "SEATED" && (!waiting || other.order < waiting.order))
+        waiting = other;
     }
     if (!waiting) return;
     const { desk } = this.pickSeat(waiting.id);
     if (desk < 0) return;
-    const e = waiting;
-    e.path = routePromote(e.x, e.y, desk);
-    e.deskIdx = desk;
-    e.slot = -1;
-    e.state = "FROM_COFFEE";
-    e.stateSince = this.clock;
-    e.trail = [];
-    e.holdUntil = 0;
-    e.monAppearAt = -1;
-    e.monPos = null;
-    e.monDead = false;
-    e.monRespawnAt = Infinity;
-    e.boss = null;
-    e.pending.clear();
+    const emp = waiting;
+    emp.path = routePromote(emp.x, emp.y, desk);
+    emp.deskIdx = desk;
+    emp.slot = -1;
+    emp.state = "FROM_COFFEE";
+    emp.stateSince = this.clock;
+    emp.trail = [];
+    emp.holdUntil = 0;
+    emp.monAppearAt = -1;
+    emp.monPos = null;
+    emp.monDead = false;
+    emp.monRespawnAt = Infinity;
+    emp.boss = null;
+    emp.pending.clear();
     this.dirty = true;
   }
 
@@ -3021,10 +3077,10 @@ export class Office {
   private pickSeat(exclude?: string): { desk: number; slot: number } {
     const used = new Set<number>(),
       slots = new Set<number>();
-    for (const o of this.employees.values()) {
-      if (o.id === exclude) continue;
-      if (o.deskIdx >= 0) used.add(o.deskIdx);
-      else if (o.slot >= 0) slots.add(o.slot);
+    for (const other of this.employees.values()) {
+      if (other.id === exclude) continue;
+      if (other.deskIdx >= 0) used.add(other.deskIdx);
+      else if (other.slot >= 0) slots.add(other.slot);
     }
     let desk = -1,
       slot = -1;
@@ -3040,51 +3096,51 @@ export class Office {
     return { desk, slot };
   }
 
-  private reenter(e: Employee) {
-    const { desk, slot } = this.pickSeat(e.id);
-    e.deskIdx = desk;
-    e.slot = slot;
-    e.returning = false;
-    e.state = "ENTERING";
-    e.stateSince = this.clock;
-    e.trail = [];
-    e.holdUntil = 0;
-    e.monAppearAt = -1;
-    e.monPos = null;
-    e.monDead = false;
-    e.monRespawnAt = Infinity;
-    e.boss = null;
-    e.pending.clear();
-    e.resting = false;
-    e.path = routeIn(desk, slot).slice(1);
+  private reenter(emp: Employee) {
+    const { desk, slot } = this.pickSeat(emp.id);
+    emp.deskIdx = desk;
+    emp.slot = slot;
+    emp.returning = false;
+    emp.state = "ENTERING";
+    emp.stateSince = this.clock;
+    emp.trail = [];
+    emp.holdUntil = 0;
+    emp.monAppearAt = -1;
+    emp.monPos = null;
+    emp.monDead = false;
+    emp.monRespawnAt = Infinity;
+    emp.boss = null;
+    emp.pending.clear();
+    emp.resting = false;
+    emp.path = routeIn(desk, slot).slice(1);
     this.dirty = true;
   }
 
-  private spawnMonster(e: Employee, instant = false) {
+  private spawnMonster(emp: Employee, instant = false) {
     const kinds = MONSTER_KINDS as readonly MonsterKind[];
-    e.monKind = kinds[(h32(e.id) + e.monN * MON_KIND_STRIDE) % kinds.length];
-    e.monN++;
-    e.monHp = e.monHpMax = MON_HP[e.monKind];
-    e.boss = null;
-    e.monPos = e.deskIdx >= 0 ? monsterSpot(e.deskIdx) : null;
-    e.monAppearAt = instant ? this.clock - MON_INSTANT_BACKDATE_S : this.clock;
-    e.monDead = false;
-    e.monDeadAt = -99;
-    e.monRespawnAt = Infinity;
-    e.monLoot = false;
+    emp.monKind = kinds[(h32(emp.id) + emp.monN * MON_KIND_STRIDE) % kinds.length];
+    emp.monN++;
+    emp.monHp = emp.monHpMax = MON_HP[emp.monKind];
+    emp.boss = null;
+    emp.monPos = emp.deskIdx >= 0 ? monsterSpot(emp.deskIdx) : null;
+    emp.monAppearAt = instant ? this.clock - MON_INSTANT_BACKDATE_S : this.clock;
+    emp.monDead = false;
+    emp.monDeadAt = -99;
+    emp.monRespawnAt = Infinity;
+    emp.monLoot = false;
   }
 
-  private defeatMonster(e: Employee) {
-    e.monDead = true;
-    e.monDeadAt = this.clock;
-    e.monLoot = true;
-    e.monRespawnAt = this.clock + MON_RESPAWN_BASE_S + Math.random();
+  private defeatMonster(emp: Employee) {
+    emp.monDead = true;
+    emp.monDeadAt = this.clock;
+    emp.monLoot = true;
+    emp.monRespawnAt = this.clock + MON_RESPAWN_BASE_S + Math.random();
   }
 
   private spawn(id: string, cwd: string | undefined, seated: boolean): Employee {
     const { desk, slot } = this.pickSeat();
     const seat = seatPoint(desk, slot);
-    const e: Employee = {
+    const emp: Employee = {
       id,
       tag: "#" + id.slice(0, TAG_LEN),
       project: projectOf(cwd),
@@ -3160,59 +3216,66 @@ export class Office {
     };
     const sv = this.demo ? undefined : this.progress[id];
     if (sv) {
-      e.lv = sv.lv;
-      e.xp = sv.xp;
-      e.gold = sv.gold;
-      e.kills = sv.kills;
+      emp.lv = sv.lv;
+      emp.xp = sv.xp;
+      emp.gold = sv.gold;
+      emp.kills = sv.kills;
     }
-    if (!seated) e.path = routeIn(desk, slot).slice(1);
-    else if (desk >= 0) this.spawnMonster(e, true);
-    this.employees.set(id, e);
+    if (!seated) emp.path = routeIn(desk, slot).slice(1);
+    else if (desk >= 0) this.spawnMonster(emp, true);
+    this.employees.set(id, emp);
     this.bumpTerr(); // conflict rows depend on who is present
     this.recheckPending();
     this.dirty = true;
-    return e;
+    return emp;
   }
 
   loadSnapshot(snap: SnapshotMsg) {
     const ids = new Set<string>();
     const seen = new Map<string, { n: number; start: boolean }>();
     for (const ev of snap.events ?? []) {
-      const k = str(ev?.session_id);
-      if (!k) continue;
-      const r = seen.get(k) ?? { n: 0, start: false };
-      r.n++;
-      if (ev.hook_event_name === "SessionStart") r.start = true;
-      seen.set(k, r);
+      const sid = str(ev?.session_id);
+      if (!sid) continue;
+      const tally = seen.get(sid) ?? { n: 0, start: false };
+      tally.n++;
+      if (ev.hook_event_name === "SessionStart") tally.start = true;
+      seen.set(sid, tally);
     }
-    for (const s of snap.sessions ?? []) {
-      if (!s.session_id) continue;
-      ids.add(s.session_id);
-      if (s.context === null) this.setContext(s.session_id, null, null);
-      else if (s.context) this.setContext(s.session_id, s.context.used, s.context.limit, !!s.context.limitGuessed);
-      this.ended.delete(s.session_id);
-      let e = this.employees.get(s.session_id);
-      if (!e) e = this.spawn(s.session_id, s.cwd, true);
-      e.known = true;
-      const sn = seen.get(s.session_id);
+    for (const session of snap.sessions ?? []) {
+      if (!session.session_id) continue;
+      ids.add(session.session_id);
+      if (session.context === null) this.setContext(session.session_id, null, null);
+      else if (session.context)
+        this.setContext(
+          session.session_id,
+          session.context.used,
+          session.context.limit,
+          !!session.context.limitGuessed,
+        );
+      this.ended.delete(session.session_id);
+      let emp = this.employees.get(session.session_id);
+      if (!emp) emp = this.spawn(session.session_id, session.cwd, true);
+      emp.known = true;
+      const sn = seen.get(session.session_id);
       if (sn) {
-        e.evCount = Math.max(e.evCount, sn.n);
-        if (sn.start) e.sawStart = true;
+        emp.evCount = Math.max(emp.evCount, sn.n);
+        if (sn.start) emp.sawStart = true;
       }
-      if (e.state === "LEAVING") {
-        e.returning = true;
-        e.lastEventAt = this.clock;
+      if (emp.state === "LEAVING") {
+        emp.returning = true;
+        emp.lastEventAt = this.clock;
         continue;
       }
-      if (s.waiting && e.act !== "handup") this.setAct(e, "handup", "❗");
-      const want = new Set(s.interns ?? []);
-      for (const k of [...e.interns.keys()]) if (!want.has(k)) e.interns.delete(k);
-      for (const a of want) if (!e.interns.has(a)) e.interns.set(a, newIntern(a, "squire", this.clock, this.clock - 1));
+      if (session.waiting && emp.act !== "handup") this.setAct(emp, "handup", "❗");
+      const want = new Set(session.interns ?? []);
+      for (const key of [...emp.interns.keys()]) if (!want.has(key)) emp.interns.delete(key);
+      for (const agent of want)
+        if (!emp.interns.has(agent)) emp.interns.set(agent, newIntern(agent, "squire", this.clock, this.clock - 1));
     }
-    for (const e of [...this.employees.values()])
-      if (!ids.has(e.id)) {
-        e.returning = false;
-        this.leave(e);
+    for (const emp of [...this.employees.values()])
+      if (!ids.has(emp.id)) {
+        emp.returning = false;
+        this.leave(emp);
       }
     if (!this.log.length) for (const ev of [...(snap.events ?? [])]) this.pushLog(ev);
     if (snap.territory !== undefined) this.setTerritory(snap.territory, true);
@@ -3283,8 +3346,8 @@ export class Office {
     const name = str(evt.hook_event_name);
     if (!sid) return;
     const nowMs = Date.now();
-    for (const m of [this.ended, this.endedAgents])
-      for (const [k, t] of m) if (nowMs - t > ENDED_TTL_S * MS_PER_SECOND) m.delete(k);
+    for (const stamps of [this.ended, this.endedAgents])
+      for (const [key, stamp] of stamps) if (nowMs - stamp > ENDED_TTL_S * MS_PER_SECOND) stamps.delete(key);
     if (name === "SessionStart") this.ended.delete(sid);
     else if (this.ended.has(sid)) return;
     const aid = str(evt.agent_id);
@@ -3292,176 +3355,176 @@ export class Office {
       if (name === "SubagentStart") this.endedAgents.delete(aid);
       else if (this.endedAgents.has(aid)) return;
     }
-    let e = this.employees.get(sid);
+    let emp = this.employees.get(sid);
 
     if (name === "SessionEnd") {
       this.ended.set(sid, nowMs);
       this.pushLog(evt);
-      if (e) {
-        e.returning = false;
-        this.leave(e);
+      if (emp) {
+        emp.returning = false;
+        this.leave(emp);
       }
       return;
     }
-    if (name === "SessionStart" && e) {
-      e.sawStart = true;
-      if (e.state === "LEAVING") {
-        e.returning = true;
-        e.lastEventAt = this.clock;
+    if (name === "SessionStart" && emp) {
+      emp.sawStart = true;
+      if (emp.state === "LEAVING") {
+        emp.returning = true;
+        emp.lastEventAt = this.clock;
         this.pushLog(evt);
       }
       return;
     }
-    const fresh = !e;
-    if (!e) e = this.spawn(sid, evt.cwd, false);
-    if (name === "SessionStart") e.sawStart = true;
-    e.evCount++;
+    const fresh = !emp;
+    if (!emp) emp = this.spawn(sid, evt.cwd, false);
+    if (name === "SessionStart") emp.sawStart = true;
+    emp.evCount++;
     this.hidVer++;
-    if (evt.cwd && (fresh || e.project === "unknown")) {
-      e.cwd = evt.cwd;
-      e.project = projectOf(evt.cwd);
+    if (evt.cwd && (fresh || emp.project === "unknown")) {
+      emp.cwd = evt.cwd;
+      emp.project = projectOf(evt.cwd);
     }
     this.pushLog(evt);
-    e.lastEventAt = this.clock;
+    emp.lastEventAt = this.clock;
     if (name === "PostToolUseFailure" && EDIT_TOOLS.has(str(evt.tool_name))) this.editFailAt.set(sid, this.clock);
-    if (e.state === "LEAVING") {
-      e.returning = true;
+    if (emp.state === "LEAVING") {
+      emp.returning = true;
       return;
     }
 
     const agentId = str(evt.agent_id);
     if (name === "SubagentStart" || name === "SubagentStop") {
-      this.internLifecycle(e, evt);
+      this.internLifecycle(emp, evt);
       return;
     }
     if (agentId) {
-      this.internEvent(e, evt);
+      this.internEvent(emp, evt);
       return;
     }
 
-    switch (e.state) {
+    switch (emp.state) {
       case "SEATED":
-        this.applyEvent(e, evt);
+        this.applyEvent(emp, evt);
         break;
       case "STRETCH":
-        e.state = "SEATED";
-        this.applyEvent(e, evt);
+        emp.state = "SEATED";
+        this.applyEvent(emp, evt);
         break;
       case "DUEL": // never queued: apply state-only (no coffee walk), the adventurer keeps dueling; updateDuels() aborts on a ❗
-        this.applyEvent(e, evt, false);
-        e.coffeeAfter = name === "Stop";
+        this.applyEvent(emp, evt, false);
+        emp.coffeeAfter = name === "Stop";
         break;
       case "TO_COFFEE":
       case "DRINK":
-        e.state = "FROM_COFFEE";
-        e.path = [...e.trail].reverse();
-        e.trail = [];
-        e.tempBubble = null;
-        this.enqueue(e, evt);
+        emp.state = "FROM_COFFEE";
+        emp.path = [...emp.trail].reverse();
+        emp.trail = [];
+        emp.tempBubble = null;
+        this.enqueue(emp, evt);
         break;
       default:
-        this.enqueue(e, evt);
+        this.enqueue(emp, evt);
     }
   }
 
-  private enqueue(e: Employee, evt: HookEvt) {
-    e.queue.push(evt);
-    if (e.queue.length > QUEUE_MAX) e.queue.splice(0, e.queue.length - QUEUE_MAX);
+  private enqueue(emp: Employee, evt: HookEvt) {
+    emp.queue.push(evt);
+    if (emp.queue.length > QUEUE_MAX) emp.queue.splice(0, emp.queue.length - QUEUE_MAX);
   }
 
-  private setAct(e: Employee, act: Act, bubble: string | null = null, note: Employee["note"] = null) {
-    if (e.act !== act) e.actSince = this.clock;
-    e.act = act;
-    e.bubble = bubble;
-    e.note = note;
-    e.tempBubble = null;
+  private setAct(emp: Employee, act: Act, bubble: string | null = null, note: Employee["note"] = null) {
+    if (emp.act !== act) emp.actSince = this.clock;
+    emp.act = act;
+    emp.bubble = bubble;
+    emp.note = note;
+    emp.tempBubble = null;
   }
 
-  private applyEvent(e: Employee, evt: HookEvt, coffee = true) {
+  private applyEvent(emp: Employee, evt: HookEvt, coffee = true) {
     const name = str(evt.hook_event_name);
     const clock = this.clock;
     switch (name) {
       case "UserPromptSubmit":
-        e.hasPaper = true;
-        e.paperAt = clock;
-        e.sparkUntil = clock + SPARK_S;
-        e.toolCalls = 0;
-        e.qKills = 0;
-        e.qGold = 0;
-        this.clearPending(e);
-        this.setAct(e, "thinking");
-        e.nextThought = clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
+        emp.hasPaper = true;
+        emp.paperAt = clock;
+        emp.sparkUntil = clock + SPARK_S;
+        emp.toolCalls = 0;
+        emp.qKills = 0;
+        emp.qGold = 0;
+        this.clearPending(emp);
+        this.setAct(emp, "thinking");
+        emp.nextThought = clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
         break;
       case "PreToolUse": {
-        const t = str(evt.tool_name);
-        if (!AGENT_TOOLS.has(t) && !USER_WAIT_TOOLS.has(t)) {
+        const tool = str(evt.tool_name);
+        if (!AGENT_TOOLS.has(tool) && !USER_WAIT_TOOLS.has(tool)) {
           const id = str(evt.tool_use_id) || `#${this.pendSeq++}`;
-          if (!e.pending.has(id) && e.pending.size >= MAX_PENDING)
-            e.pending.delete(e.pending.keys().next().value as string);
-          e.pending.set(id, clock);
+          if (!emp.pending.has(id) && emp.pending.size >= MAX_PENDING)
+            emp.pending.delete(emp.pending.keys().next().value as string);
+          emp.pending.set(id, clock);
         }
-        e.windupUntil = clock + WINDUP_S;
-        if (READ_TOOLS.has(t)) this.setAct(e, "reading", "📜");
-        else if (EDIT_TOOLS.has(t)) this.setAct(e, "typing");
-        else if (t === "Bash") this.setAct(e, "bash", "⚔️");
-        else if (t === "WebSearch" || t === "WebFetch") this.setAct(e, "phone", "🦉");
-        else if (AGENT_TOOLS.has(t)) this.setAct(e, "thinking", "🛡️", "agent");
-        else if (t.startsWith("mcp__")) this.setAct(e, "mcp", "🌀");
-        else if (STICKY_TOOLS.has(t)) {
-          this.setAct(e, "sticky", "📝");
-          e.sticky = true;
-        } else this.setAct(e, "typing");
+        emp.windupUntil = clock + WINDUP_S;
+        if (READ_TOOLS.has(tool)) this.setAct(emp, "reading", "📜");
+        else if (EDIT_TOOLS.has(tool)) this.setAct(emp, "typing");
+        else if (tool === "Bash") this.setAct(emp, "bash", "⚔️");
+        else if (tool === "WebSearch" || tool === "WebFetch") this.setAct(emp, "phone", "🦉");
+        else if (AGENT_TOOLS.has(tool)) this.setAct(emp, "thinking", "🛡️", "agent");
+        else if (tool.startsWith("mcp__")) this.setAct(emp, "mcp", "🌀");
+        else if (STICKY_TOOLS.has(tool)) {
+          this.setAct(emp, "sticky", "📝");
+          emp.sticky = true;
+        } else this.setAct(emp, "typing");
         break;
       }
       case "PostToolUse": {
-        this.setAct(e, "thinking");
-        e.nextThought = clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
-        this.donePending(e, evt);
-        e.toolCalls++;
-        this.onHit(e, str(evt.tool_name));
+        this.setAct(emp, "thinking");
+        emp.nextThought = clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
+        this.donePending(emp, evt);
+        emp.toolCalls++;
+        this.onHit(emp, str(evt.tool_name));
         break;
       }
       case "PostToolUseFailure":
-        this.setAct(e, "thinking");
-        e.nextThought = clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
-        this.donePending(e, evt);
-        e.toolCalls++;
-        this.onFail(e);
+        this.setAct(emp, "thinking");
+        emp.nextThought = clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
+        this.donePending(emp, evt);
+        emp.toolCalls++;
+        this.onFail(emp);
         break;
       case "PermissionRequest":
-        this.setAct(e, "handup", "❗");
+        this.setAct(emp, "handup", "❗");
         break;
       case "PreCompact":
-        this.setAct(e, "thinking");
-        e.tempBubble = { e: "🗜️", until: clock + 2 };
+        this.setAct(emp, "thinking");
+        emp.tempBubble = { e: "🗜️", until: clock + 2 };
         break;
       case "Notification": {
         const nt = str(evt.notification_type);
         const msg = str(evt.message).toLowerCase();
-        if (HANDUP_NOTIFS.has(nt) || msg.includes("permission")) this.setAct(e, "handup", "❗");
+        if (HANDUP_NOTIFS.has(nt) || msg.includes("permission")) this.setAct(emp, "handup", "❗");
         else if (nt === "idle_prompt") {
-          this.clearPending(e);
-          this.setAct(e, "thinking", "💤", "idle");
-        } else e.tempBubble = { e: "🔔", until: clock + 2 };
+          this.clearPending(emp);
+          this.setAct(emp, "thinking", "💤", "idle");
+        } else emp.tempBubble = { e: "🔔", until: clock + 2 };
         break;
       }
       case "Stop":
-        e.hasPaper = false;
-        this.setAct(e, "thinking");
-        this.clearPending(e);
-        if (e.boss) this.bossLeaves(e);
-        if (e.toolCalls >= QUEST_MIN_TOOLS) {
-          this.addBanner("quest", m.banner_quest_done({ calls: e.toolCalls, gold: e.qGold }));
+        emp.hasPaper = false;
+        this.setAct(emp, "thinking");
+        this.clearPending(emp);
+        if (emp.boss) this.bossLeaves(emp);
+        if (emp.toolCalls >= QUEST_MIN_TOOLS) {
+          this.addBanner("quest", m.banner_quest_done({ calls: emp.toolCalls, gold: emp.qGold }));
         }
-        e.toolCalls = 0;
-        e.qKills = 0;
-        e.qGold = 0;
-        if (e.hearts < MAX_HEARTS) {
-          e.hearts = MAX_HEARTS;
+        emp.toolCalls = 0;
+        emp.qKills = 0;
+        emp.qGold = 0;
+        if (emp.hearts < MAX_HEARTS) {
+          emp.hearts = MAX_HEARTS;
           for (let k = 0; k < HEART_COUNT; k++)
             this.emitP(
-              e.x - HEART_SPACING + k * HEART_SPACING,
-              e.y - HEART_LIFT,
+              emp.x - HEART_SPACING + k * HEART_SPACING,
+              emp.y - HEART_LIFT,
               rand(-HEART_VX, HEART_VX),
               rand(-HEART_VY_MAX, -HEART_VY_MIN),
               0,
@@ -3472,8 +3535,8 @@ export class Office {
             );
         }
         if (coffee) {
-          e.state = "STRETCH";
-          e.stateSince = clock;
+          emp.state = "STRETCH";
+          emp.stateSince = clock;
         }
         break;
       default:
@@ -3482,43 +3545,43 @@ export class Office {
   }
 
   private pendSeq = 0;
-  private clearPending(e: Employee) {
-    e.pending.clear();
-    if (e.boss) this.bossLeaves(e);
+  private clearPending(emp: Employee) {
+    emp.pending.clear();
+    if (emp.boss) this.bossLeaves(emp);
   }
   /** a tool finished: drop it from the in-flight set (by id, else the oldest keyless one) */
-  private donePending(e: Employee, evt: HookEvt) {
-    const t = str(evt.tool_name);
-    if (AGENT_TOOLS.has(t) || USER_WAIT_TOOLS.has(t)) return;
+  private donePending(emp: Employee, evt: HookEvt) {
+    const tool = str(evt.tool_name);
+    if (AGENT_TOOLS.has(tool) || USER_WAIT_TOOLS.has(tool)) return;
     const id = str(evt.tool_use_id);
-    if (id && e.pending.delete(id)) return;
-    for (const k of e.pending.keys())
-      if (k.startsWith("#") || !id) {
-        e.pending.delete(k);
+    if (id && emp.pending.delete(id)) return;
+    for (const key of emp.pending.keys())
+      if (key.startsWith("#") || !id) {
+        emp.pending.delete(key);
         return;
       }
   }
 
   // ---------- combat / progression ----------
-  private onHit(e: Employee, tool: string) {
+  private onHit(emp: Employee, tool: string) {
     const clock = this.clock;
-    if (e.boss) {
-      this.bossDown(e);
+    if (emp.boss) {
+      this.bossDown(emp);
       return;
     }
-    const mp = e.monPos;
+    const mp = emp.monPos;
     const xp = 1 + Math.floor(Math.random() * XP_ROLL_MAX);
-    if (mp && e.deskIdx >= 0 && !e.monDead && clock - e.monAppearAt > MON_HITTABLE_AFTER_S) {
+    if (mp && emp.deskIdx >= 0 && !emp.monDead && clock - emp.monAppearAt > MON_HITTABLE_AFTER_S) {
       const crit = Math.random() < CRIT_CHANCE;
       let dmg = HEAVY_TOOLS.has(tool) ? 2 : 1;
       if (crit) dmg *= 2;
-      e.monHp -= dmg;
-      e.flashUntil = clock + FLASH_S;
-      e.hsUntil = clock + HITSTOP_S;
-      e.hsAt = clock;
-      e.lungeUntil = clock + LUNGE_S;
-      e.monKnockUntil = clock + MON_KNOCK_S;
-      e.slashUntil = clock + SLASH_S;
+      emp.monHp -= dmg;
+      emp.flashUntil = clock + FLASH_S;
+      emp.hsUntil = clock + HITSTOP_S;
+      emp.hsAt = clock;
+      emp.lungeUntil = clock + LUNGE_S;
+      emp.monKnockUntil = clock + MON_KNOCK_S;
+      emp.slashUntil = clock + SLASH_S;
       const hx = mp.x,
         hy = mp.y - MON_HIT_LIFT;
       this.pop(
@@ -3537,22 +3600,22 @@ export class Office {
         crit ? HIT_SPARK_SPEED_CRIT : HIT_SPARK_SPEED,
       );
       if (crit) this.addTrauma(TRAUMA_CRIT);
-      if (e.monHp <= 0) this.killMonster(e);
+      if (emp.monHp <= 0) this.killMonster(emp);
     }
-    this.gainXp(e, xp);
+    this.gainXp(emp, xp);
   }
 
-  private killMonster(e: Employee) {
-    const mp = e.monPos!;
-    const g = 1 + Math.floor(Math.random() * GOLD_ROLL_MAX);
-    e.kills++;
-    e.gold += g;
-    e.qKills++;
-    e.qGold += g;
-    this.treasury += g;
-    this.defeatMonster(e);
+  private killMonster(emp: Employee) {
+    const mp = emp.monPos!;
+    const gold = 1 + Math.floor(Math.random() * GOLD_ROLL_MAX);
+    emp.kills++;
+    emp.gold += gold;
+    emp.qKills++;
+    emp.qGold += gold;
+    this.treasury += gold;
+    this.defeatMonster(emp);
     this.pop(mp.x - XP_POP_DX, mp.y - XP_POP_LIFT, "+5xp", "#8ee8ff", false, false, LOOT_POP_DUR);
-    this.pop(mp.x + GOLD_POP_DX, mp.y - GOLD_POP_LIFT, `+${g}g`, "#f2c14e", false, false, LOOT_POP_DUR);
+    this.pop(mp.x + GOLD_POP_DX, mp.y - GOLD_POP_LIFT, `+${gold}g`, "#f2c14e", false, false, LOOT_POP_DUR);
     for (let k = 0; k < COIN_COUNT; k++)
       this.emitP(
         mp.x + rand(-COIN_SPREAD_X, COIN_SPREAD_X),
@@ -3566,23 +3629,23 @@ export class Office {
         "coin",
       );
     this.addTrauma(TRAUMA_KILL);
-    this.gainXp(e, KILL_XP);
+    this.gainXp(emp, KILL_XP);
   }
 
-  private gainXp(e: Employee, n: number) {
-    e.xp += n;
+  private gainXp(emp: Employee, amount: number) {
+    emp.xp += amount;
     let up = false;
-    while (e.xp >= xpNeed(e.lv)) {
-      e.xp -= xpNeed(e.lv);
-      e.lv++;
+    while (emp.xp >= xpNeed(emp.lv)) {
+      emp.xp -= xpNeed(emp.lv);
+      emp.lv++;
       up = true;
     }
     if (up) {
-      e.lvlAt = this.clock;
-      e.lvlTo = e.lv;
+      emp.lvlAt = this.clock;
+      emp.lvlTo = emp.lv;
       this.ring(
-        e.x,
-        e.y - FX_LEVELUP_RING.lift,
+        emp.x,
+        emp.y - FX_LEVELUP_RING.lift,
         FX_LEVELUP_RING.n,
         ["#f2c14e", "#ffffff", "#8ee8ff"],
         FX_LEVELUP_RING.speed,
@@ -3590,71 +3653,71 @@ export class Office {
       );
       this.flash = 0.3;
     }
-    this.touch(e);
+    this.touch(emp);
   }
 
-  private loseHeart(e: Employee) {
-    e.hearts = Math.max(0, e.hearts - 1);
-    e.hurtUntil = this.clock + HURT_S;
-    e.redUntil = this.clock + RED_S;
-    this.pop(e.x - HURT_POP_DX, e.y - HURT_POP_LIFT, "-1", "#ff5a5a", false, false, HURT_POP_DUR);
-    this.burst(e.x, e.y - FX_HURT_BURST.lift, FX_HURT_BURST.n, ["#ff5a5a", "#ff9a9a"], FX_HURT_BURST.speed);
+  private loseHeart(emp: Employee) {
+    emp.hearts = Math.max(0, emp.hearts - 1);
+    emp.hurtUntil = this.clock + HURT_S;
+    emp.redUntil = this.clock + RED_S;
+    this.pop(emp.x - HURT_POP_DX, emp.y - HURT_POP_LIFT, "-1", "#ff5a5a", false, false, HURT_POP_DUR);
+    this.burst(emp.x, emp.y - FX_HURT_BURST.lift, FX_HURT_BURST.n, ["#ff5a5a", "#ff9a9a"], FX_HURT_BURST.speed);
     this.addTrauma(TRAUMA_HURT);
   }
 
-  private onFail(e: Employee) {
+  private onFail(emp: Employee) {
     const clock = this.clock;
-    e.tempBubble = { e: "💥", until: clock + HURT_BUBBLE_S };
-    if (e.boss) {
-      this.bossLeaves(e);
-      this.loseHeart(e);
+    emp.tempBubble = { e: "💥", until: clock + HURT_BUBBLE_S };
+    if (emp.boss) {
+      this.bossLeaves(emp);
+      this.loseHeart(emp);
       return;
     }
-    if (e.monPos && e.deskIdx >= 0 && !e.monDead) e.monLungeUntil = clock + MON_LUNGE_S;
-    this.loseHeart(e);
+    if (emp.monPos && emp.deskIdx >= 0 && !emp.monDead) emp.monLungeUntil = clock + MON_LUNGE_S;
+    this.loseHeart(emp);
   }
 
-  private spawnBoss(e: Employee) {
+  private spawnBoss(emp: Employee) {
     const kinds = BOSS_KINDS as readonly BossKind[];
-    e.boss = kinds[(h32(e.id) + e.monN) % kinds.length];
-    e.bossAt = this.clock;
-    e.monDead = false;
-    e.monAppearAt = this.clock;
-    e.monRespawnAt = Infinity;
-    e.monLoot = false;
-    const p = e.monPos!;
+    emp.boss = kinds[(h32(emp.id) + emp.monN) % kinds.length];
+    emp.bossAt = this.clock;
+    emp.monDead = false;
+    emp.monAppearAt = this.clock;
+    emp.monRespawnAt = Infinity;
+    emp.monLoot = false;
+    const pos = emp.monPos!;
     this.burst(
-      p.x + FX_MON_DEATH.dx,
-      p.y - FX_MON_DEATH.lift,
+      pos.x + FX_MON_DEATH.dx,
+      pos.y - FX_MON_DEATH.lift,
       FX_MON_DEATH.n,
       ["#ff5a5a", "#ffb870", "#6a2a7a"],
       FX_MON_DEATH.speed,
       FX_MON_DEATH.up,
       FX_MON_DEATH.life,
     );
-    this.addBanner("boss", `BOSS! ${e.boss.toUpperCase()}`);
+    this.addBanner("boss", `BOSS! ${emp.boss.toUpperCase()}`);
     this.addTrauma(1);
   }
 
-  private bossDown(e: Employee) {
-    const p = e.monPos!;
-    e.kills++;
-    e.gold += 10;
-    e.qKills++;
-    e.qGold += 10;
+  private bossDown(emp: Employee) {
+    const pos = emp.monPos!;
+    emp.kills++;
+    emp.gold += 10;
+    emp.qKills++;
+    emp.qGold += 10;
     this.treasury += 10;
-    e.boss = null;
-    e.monDead = true;
-    e.monDeadAt = this.clock;
-    e.monLoot = true;
-    e.monRespawnAt = this.clock + BOSS_RESPAWN_S;
-    this.pop(p.x, p.y - BOSS_POP_LIFT, "BOSS DOWN!", "#ffe14a", true, true, BOSS_POP_DUR);
-    this.pop(p.x - BOSS_XP_POP_DX, p.y - BOSS_XP_POP_LIFT, "+25xp", "#8ee8ff", false, false, BOSS_POP_DUR);
-    this.pop(p.x + BOSS_GOLD_POP_DX, p.y - BOSS_GOLD_POP_LIFT, "+10g", "#f2c14e", false, false, BOSS_POP_DUR);
+    emp.boss = null;
+    emp.monDead = true;
+    emp.monDeadAt = this.clock;
+    emp.monLoot = true;
+    emp.monRespawnAt = this.clock + BOSS_RESPAWN_S;
+    this.pop(pos.x, pos.y - BOSS_POP_LIFT, "BOSS DOWN!", "#ffe14a", true, true, BOSS_POP_DUR);
+    this.pop(pos.x - BOSS_XP_POP_DX, pos.y - BOSS_XP_POP_LIFT, "+25xp", "#8ee8ff", false, false, BOSS_POP_DUR);
+    this.pop(pos.x + BOSS_GOLD_POP_DX, pos.y - BOSS_GOLD_POP_LIFT, "+10g", "#f2c14e", false, false, BOSS_POP_DUR);
     for (let k = 0; k < BOSS_COIN_COUNT; k++)
       this.emitP(
-        p.x + BOSS_COIN_DX + rand(-BOSS_COIN_SPREAD_X, BOSS_COIN_SPREAD_X),
-        p.y - BOSS_COIN_LIFT,
+        pos.x + BOSS_COIN_DX + rand(-BOSS_COIN_SPREAD_X, BOSS_COIN_SPREAD_X),
+        pos.y - BOSS_COIN_LIFT,
         rand(-BOSS_COIN_VX, BOSS_COIN_VX),
         rand(-BOSS_COIN_VY_MAX, -BOSS_COIN_VY_MIN),
         BOSS_COIN_GRAVITY,
@@ -3664,27 +3727,27 @@ export class Office {
         "coin",
       );
     this.burst(
-      p.x + FX_BOSS_BURST.dx,
-      p.y - FX_BOSS_BURST.lift,
+      pos.x + FX_BOSS_BURST.dx,
+      pos.y - FX_BOSS_BURST.lift,
       FX_BOSS_BURST.n,
       ["#ffe14a", "#ffffff", "#ff9a3a"],
       FX_BOSS_BURST.speed,
     );
     this.addTrauma(1);
-    this.gainXp(e, BOSS_XP);
+    this.gainXp(emp, BOSS_XP);
   }
 
   /** boss runs away (tool failed / interrupted): no loot */
-  private bossLeaves(e: Employee) {
-    e.boss = null;
-    e.monDead = true;
-    e.monDeadAt = this.clock;
-    e.monLoot = false;
-    e.monRespawnAt = this.clock + 2;
-    if (e.monPos)
+  private bossLeaves(emp: Employee) {
+    emp.boss = null;
+    emp.monDead = true;
+    emp.monDeadAt = this.clock;
+    emp.monLoot = false;
+    emp.monRespawnAt = this.clock + 2;
+    if (emp.monPos)
       this.burst(
-        e.monPos.x + FX_MON_FLEE.dx,
-        e.monPos.y - FX_MON_FLEE.lift,
+        emp.monPos.x + FX_MON_FLEE.dx,
+        emp.monPos.y - FX_MON_FLEE.lift,
         FX_MON_FLEE.n,
         ["#cfd2de", "#6a2a7a"],
         FX_MON_FLEE.speed,
@@ -3692,49 +3755,49 @@ export class Office {
   }
 
   // ---------- interns ----------
-  private internLifecycle(e: Employee, evt: HookEvt) {
+  private internLifecycle(emp: Employee, evt: HookEvt) {
     const id = str(evt.agent_id);
     if (str(evt.hook_event_name) === "SubagentStart") {
-      if (id) e.interns.set(id, newIntern(id, str(evt.agent_type), this.clock));
+      if (id) emp.interns.set(id, newIntern(id, str(evt.agent_type), this.clock));
     } else {
       if (id) this.endedAgents.set(id, Date.now());
-      if (id && e.interns.has(id)) e.interns.delete(id);
+      if (id && emp.interns.has(id)) emp.interns.delete(id);
       else if (!id) {
-        const k = e.interns.keys().next();
-        if (!k.done) e.interns.delete(k.value);
+        const firstKey = emp.interns.keys().next();
+        if (!firstKey.done) emp.interns.delete(firstKey.value);
       }
     }
     this.dirty = true;
   }
 
-  private internEvent(e: Employee, evt: HookEvt) {
+  private internEvent(emp: Employee, evt: HookEvt) {
     const id = str(evt.agent_id);
     const name = str(evt.hook_event_name);
-    let it = e.interns.get(id);
+    let intern = emp.interns.get(id);
     if (name === "PreToolUse") {
-      if (!it) {
-        it = newIntern(id, str(evt.agent_type), this.clock);
-        e.interns.set(id, it);
+      if (!intern) {
+        intern = newIntern(id, str(evt.agent_type), this.clock);
+        emp.interns.set(id, intern);
       }
       const tn = str(evt.tool_name);
-      it.act = READ_TOOLS.has(tn) ? "reading" : "typing";
-      it.tool = tn;
-      it.detail = toolDetail(evt);
-      it.since = this.clock;
-      it.count++;
-      it.failed = false;
+      intern.act = READ_TOOLS.has(tn) ? "reading" : "typing";
+      intern.tool = tn;
+      intern.detail = toolDetail(evt);
+      intern.since = this.clock;
+      intern.count++;
+      intern.failed = false;
       this.dirty = true;
       return;
     }
-    if (!it) return;
+    if (!intern) return;
     if (name === "PostToolUse" || name === "PostToolUseFailure") {
-      it.act = "idle";
-      it.since = this.clock;
-      it.failed = name === "PostToolUseFailure";
-    } else if (name === "PermissionRequest") it.act = "handup";
+      intern.act = "idle";
+      intern.since = this.clock;
+      intern.failed = name === "PostToolUseFailure";
+    } else if (name === "PermissionRequest") intern.act = "handup";
     else if (name === "Notification") {
       if (HANDUP_NOTIFS.has(str(evt.notification_type)) || str(evt.message).toLowerCase().includes("permission"))
-        it.act = "handup";
+        intern.act = "handup";
     }
   }
 }

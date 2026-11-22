@@ -14,18 +14,18 @@ const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const watch = spawn(npm, ["run", "--silent", "paraglide:watch"], { stdio: ["ignore", "pipe", "inherit"] });
 let next = null;
 
-function startNext() {
+const startNext = () => {
   if (next) return;
   clearTimeout(timer);
   next = spawn(bin("next"), ["dev", "-p", PORT, "-H", HOST], { stdio: "inherit" });
   next.on("exit", (code, signal) => stop(code ?? (signal ? 1 : 0)));
-}
+};
 
-function stop(code) {
+const stop = (code) => {
   watch.kill();
   next?.kill();
   process.exit(code);
-}
+};
 
 const timer = setTimeout(startNext, FIRST_COMPILE_TIMEOUT_MS);
 watch.stdout.on("data", (chunk) => {
@@ -33,4 +33,4 @@ watch.stdout.on("data", (chunk) => {
   if (COMPILED.test(String(chunk))) startNext();
 });
 watch.on("exit", (code) => stop(code ?? 1));
-for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => stop(0));
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => stop(0));

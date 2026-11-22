@@ -11,18 +11,18 @@ let current: Locale = baseLocale;
 
 overwriteGetLocale(() => (ready ? current : baseLocale));
 
-export const subscribeLocale = (cb: () => void) => {
-  listeners.add(cb);
-  return () => listeners.delete(cb);
+export const subscribeLocale = (listener: () => void) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 };
 export const isLocaleActive = () => ready;
 export const activeLocale = (): Locale => (ready ? current : baseLocale);
 
 /** Resolve the viewer's locale once, tell subscribers, and put it on `<html lang>`. Browser only; idempotent. */
-export function activateLocale() {
+export const activateLocale = () => {
   if (ready) return;
   current = detectLocale();
   ready = true;
   document.documentElement.lang = current;
-  for (const cb of listeners) cb();
-}
+  for (const listener of listeners) listener();
+};

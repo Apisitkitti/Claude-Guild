@@ -52,6 +52,19 @@ const eslintConfig = defineConfig([
         },
       ],
       "local/component-order": "error",
+      // Arrow functions everywhere: `const name = (...) => {}` instead of `function name() {}`.
+      // Class methods and generators (`function*`, which have no arrow form) are allowed.
+      "func-style": ["error", "expression"],
+      "prefer-arrow-callback": "error",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "FunctionExpression[generator=false]:not(MethodDefinition > FunctionExpression)",
+          message: "Use an arrow function instead of a function expression.",
+        },
+      ],
+      // Names must say what they hold: no single-letter identifiers except loop indexes and coordinates.
+      "id-length": ["error", { min: 2, exceptions: ["i", "j", "k", "x", "y", "_"], properties: "never" }],
     },
   },
   {

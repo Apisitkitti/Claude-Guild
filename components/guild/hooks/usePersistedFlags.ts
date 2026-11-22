@@ -1,28 +1,28 @@
 import { useCallback, useEffect, useState } from "react";
 
-export function readJson(key: string): Record<string, boolean> {
+export const readJson = (key: string): Record<string, boolean> => {
   try {
-    const v = JSON.parse(localStorage.getItem(key) ?? "{}");
-    return v && typeof v === "object" ? v : {};
+    const value = JSON.parse(localStorage.getItem(key) ?? "{}");
+    return value && typeof value === "object" ? value : {};
   } catch {
     return {};
   }
-}
-export function writeJson(key: string, v: Record<string, boolean>) {
+};
+export const writeJson = (key: string, value: Record<string, boolean>) => {
   try {
-    localStorage.setItem(key, JSON.stringify(v));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {}
-}
+};
 
 /** Boolean flag map persisted in localStorage (restored after mount to stay hydration-safe). */
-export function usePersistedFlags(key: string) {
+export const usePersistedFlags = (key: string) => {
   const [flags, setFlags] = useState<Record<string, boolean>>({});
   const toggle = useCallback(
     (id: string) => {
-      setFlags((m) => {
-        const n = { ...m, [id]: !m[id] };
-        writeJson(key, n);
-        return n;
+      setFlags((current) => {
+        const next = { ...current, [id]: !current[id] };
+        writeJson(key, next);
+        return next;
       });
     },
     [key],
@@ -31,4 +31,4 @@ export function usePersistedFlags(key: string) {
     queueMicrotask(() => setFlags(readJson(key)));
   }, [key]);
   return [flags, toggle] as const;
-}
+};

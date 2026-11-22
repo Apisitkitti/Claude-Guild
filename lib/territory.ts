@@ -44,23 +44,23 @@ type Claim = { file: string; display: string; lastTouch: number };
 type Clash = { file: string; display: string; failer: string; sids: string[]; since: number };
 
 /** Absolute normalized path of an edit target, or null when not trackable. */
-export function resolveTarget(cwd: string | undefined, p: unknown): string | null {
-  if (typeof p !== "string" || !p) return null;
-  const abs = path.normalize(path.resolve(cwd || "/", p));
-  if (IGNORED_PREFIXES.some((x) => abs.startsWith(x))) return null;
-  if (abs.split("/").some((seg) => IGNORED_SEGMENTS.has(seg))) return null;
+export const resolveTarget = (cwd: string | undefined, target: unknown): string | null => {
+  if (typeof target !== "string" || !target) return null;
+  const abs = path.normalize(path.resolve(cwd || "/", target));
+  if (IGNORED_PREFIXES.some((prefix) => abs.startsWith(prefix))) return null;
+  if (abs.split("/").some((segment) => IGNORED_SEGMENTS.has(segment))) return null;
   return abs;
-}
+};
 
 /** Display path: relative to cwd if under it, otherwise the last two segments. Never absolute. */
-export function displayPath(abs: string, cwd: string | undefined): string {
+export const displayPath = (abs: string, cwd: string | undefined): string => {
   if (cwd) {
     const root = path.normalize(path.resolve("/", cwd)).replace(/\/+$/, "");
     if (root && abs.startsWith(root + "/")) return abs.slice(root.length + 1);
   }
-  const segs = abs.split("/").filter(Boolean);
-  return segs.slice(-PATH_TAIL_SEGMENTS).join("/");
-}
+  const segments = abs.split("/").filter(Boolean);
+  return segments.slice(-PATH_TAIL_SEGMENTS).join("/");
+};
 
 export class TerritoryTracker {
   private claims = new Map<string, Map<string, Claim>>(); // sid -> file -> claim
@@ -89,8 +89,8 @@ export class TerritoryTracker {
     const isEdit = typeof evt.tool_name === "string" && EDIT_TOOLS.has(evt.tool_name);
     if (!isEdit) return false;
     if (name !== "PreToolUse" && name !== "PostToolUse" && name !== "PostToolUseFailure") return false;
-    const ti = evt.tool_input ?? {};
-    const file = resolveTarget(evt.cwd, ti.file_path ?? ti.notebook_path);
+    const toolInput = evt.tool_input ?? {};
+    const file = resolveTarget(evt.cwd, toolInput.file_path ?? toolInput.notebook_path);
     if (!file) return false;
     this.expire(now);
     if (name === "PostToolUseFailure") {
@@ -113,11 +113,12 @@ export class TerritoryTracker {
   /** Forget a session entirely (ended / stale). */
   dropSession(sid: string, now: number): boolean {
     this.claims.delete(sid);
-    for (const [file, m] of this.recent) {
-      if (m.delete(sid)) this.recentCount--;
-      if (m.size === 0) this.recent.delete(file);
+    for (const [file, times] of this.recent) {
+      if (times.delete(sid)) this.recentCount--;
+      if (times.size === 0) this.recent.delete(file);
     }
-    for (const [k, c] of this.clashes) if (c.failer === sid || c.sids.includes(sid)) this.clashes.delete(k);
+    for (const [key, clash] of this.clashes)
+      if (clash.failer === sid || clash.sids.includes(sid)) this.clashes.delete(key);
     return this.refresh(now);
   }
 
@@ -127,69 +128,73 @@ export class TerritoryTracker {
     mine.set(file, { file, display: displayPath(file, cwd), lastTouch: now });
     if (mine.size > MAX_CLAIMS_PER_SESSION) {
       let oldest: string | null = null;
-      for (const [f, c] of mine)
-        if (f !== file && (oldest === null || c.lastTouch < mine.get(oldest)!.lastTouch)) oldest = f;
+      for (const [claimFile, claim] of mine)
+        if (claimFile !== file && (oldest === null || claim.lastTouch < mine.get(oldest)!.lastTouch))
+          oldest = claimFile;
       if (oldest) mine.delete(oldest);
     }
     let total = 0;
-    for (const m of this.claims.values()) total += m.size;
+    for (const sessionClaims of this.claims.values()) total += sessionClaims.size;
     while (total > MAX_CLAIMS_TOTAL) {
-      let os: string | null = null;
-      let of: string | null = null;
-      let ot = Infinity;
-      for (const [s, m] of this.claims)
-        for (const [f, c] of m)
-          if (!(s === sid && f === file) && c.lastTouch < ot) {
-            os = s;
-            of = f;
-            ot = c.lastTouch;
+      let oldestSid: string | null = null;
+      let oldestFile: string | null = null;
+      let oldestTouch = Infinity;
+      for (const [claimSid, sessionClaims] of this.claims)
+        for (const [claimFile, claim] of sessionClaims)
+          if (!(claimSid === sid && claimFile === file) && claim.lastTouch < oldestTouch) {
+            oldestSid = claimSid;
+            oldestFile = claimFile;
+            oldestTouch = claim.lastTouch;
           }
-      if (os === null || of === null) break;
-      const m = this.claims.get(os)!;
-      m.delete(of);
-      if (m.size === 0) this.claims.delete(os);
+      if (oldestSid === null || oldestFile === null) break;
+      const sessionClaims = this.claims.get(oldestSid)!;
+      sessionClaims.delete(oldestFile);
+      if (sessionClaims.size === 0) this.claims.delete(oldestSid);
       total--;
     }
-    let r = this.recent.get(file);
-    if (!r) this.recent.set(file, (r = new Map()));
-    if (!r.has(sid)) this.recentCount++;
-    r.set(sid, now);
+    let touches = this.recent.get(file);
+    if (!touches) this.recent.set(file, (touches = new Map()));
+    if (!touches.has(sid)) this.recentCount++;
+    touches.set(sid, now);
     if (this.recentCount > MAX_RECENT) this.pruneRecent(now);
   }
 
   private pruneRecent(now: number) {
-    for (const [file, m] of this.recent) {
-      for (const [s, t] of m)
-        if (now - t >= RECENT_MS) {
-          m.delete(s);
+    for (const [file, touches] of this.recent) {
+      for (const [touchSid, touchedAt] of touches)
+        if (now - touchedAt >= RECENT_MS) {
+          touches.delete(touchSid);
           this.recentCount--;
         }
-      if (m.size === 0) this.recent.delete(file);
+      if (touches.size === 0) this.recent.delete(file);
     }
     while (this.recentCount > MAX_RECENT) {
-      let of: string | null = null;
-      let os: string | null = null;
-      let ot = Infinity;
-      for (const [f, m] of this.recent)
-        for (const [s, t] of m)
-          if (t < ot) {
-            of = f;
-            os = s;
-            ot = t;
+      let oldestFile: string | null = null;
+      let oldestSid: string | null = null;
+      let oldestTouch = Infinity;
+      for (const [file, touches] of this.recent)
+        for (const [touchSid, touchedAt] of touches)
+          if (touchedAt < oldestTouch) {
+            oldestFile = file;
+            oldestSid = touchSid;
+            oldestTouch = touchedAt;
           }
-      if (of === null || os === null) break;
-      const m = this.recent.get(of)!;
-      m.delete(os);
+      if (oldestFile === null || oldestSid === null) break;
+      const touches = this.recent.get(oldestFile)!;
+      touches.delete(oldestSid);
       this.recentCount--;
-      if (m.size === 0) this.recent.delete(of);
+      if (touches.size === 0) this.recent.delete(oldestFile);
     }
   }
 
   private fail(sid: string, file: string, cwd: string | undefined, now: number) {
     const others = new Set<string>();
-    for (const [s, m] of this.claims) if (s !== sid && m.has(file)) others.add(s);
-    const r = this.recent.get(file);
-    if (r) for (const [s, t] of r) if (s !== sid && now - t < RECENT_MS) others.add(s);
+    for (const [claimSid, sessionClaims] of this.claims)
+      if (claimSid !== sid && sessionClaims.has(file)) others.add(claimSid);
+    const touches = this.recent.get(file);
+    if (touches)
+      for (const [touchSid, touchedAt] of touches)
+        if (touchSid !== sid && now - touchedAt < RECENT_MS) others.add(touchSid);
     if (others.size === 0) return; // failing on a file nobody else touched is not a clash (also: same session never clashes)
     const key = `${file}\0${sid}`;
     const sids = [sid, ...others].sort();
@@ -212,22 +217,22 @@ export class TerritoryTracker {
    * It also ends when an involved session is dropped.
    */
   private expire(now: number) {
-    for (const [sid, m] of this.claims) {
-      for (const [f, c] of m) if (now - c.lastTouch >= CLAIM_TTL_MS) m.delete(f);
-      if (m.size === 0) this.claims.delete(sid);
+    for (const [sid, sessionClaims] of this.claims) {
+      for (const [file, claim] of sessionClaims) if (now - claim.lastTouch >= CLAIM_TTL_MS) sessionClaims.delete(file);
+      if (sessionClaims.size === 0) this.claims.delete(sid);
     }
-    for (const [file, m] of this.recent) {
-      for (const [s, t] of m)
-        if (now - t >= RECENT_MS) {
-          m.delete(s);
+    for (const [file, touches] of this.recent) {
+      for (const [touchSid, touchedAt] of touches)
+        if (now - touchedAt >= RECENT_MS) {
+          touches.delete(touchSid);
           this.recentCount--;
         }
-      if (m.size === 0) this.recent.delete(file);
+      if (touches.size === 0) this.recent.delete(file);
     }
-    for (const [k, c] of this.clashes) {
-      const age = now - c.since;
-      const othersHold = c.sids.some((s) => s !== c.failer && this.claims.get(s)?.has(c.file));
-      if (age >= CLASH_TTL_MS || (!othersHold && age >= RECENT_MS)) this.clashes.delete(k);
+    for (const [key, clash] of this.clashes) {
+      const age = now - clash.since;
+      const othersHold = clash.sids.some((other) => other !== clash.failer && this.claims.get(other)?.has(clash.file));
+      if (age >= CLASH_TTL_MS || (!othersHold && age >= RECENT_MS)) this.clashes.delete(key);
     }
   }
 
@@ -236,55 +241,62 @@ export class TerritoryTracker {
     const holders = new Map<string, string[]>();
     const display = new Map<string, string>();
     for (const sid of [...this.claims.keys()].sort()) {
-      const m = this.claims.get(sid)!;
-      if (m.size === 0) continue;
-      const sorted = [...m.values()].sort((a, b) => b.lastTouch - a.lastTouch || (a.file < b.file ? -1 : 1));
-      claims.push({ sid, files: sorted.slice(0, MAX_CLAIMS_PER_SESSION).map((c) => c.display) });
-      for (const c of m.values()) {
-        const h = holders.get(c.file);
-        if (h) h.push(sid);
-        else holders.set(c.file, [sid]);
-        if (!display.has(c.file)) display.set(c.file, c.display);
+      const sessionClaims = this.claims.get(sid)!;
+      if (sessionClaims.size === 0) continue;
+      const sorted = [...sessionClaims.values()].sort(
+        (first, second) => second.lastTouch - first.lastTouch || (first.file < second.file ? -1 : 1),
+      );
+      claims.push({ sid, files: sorted.slice(0, MAX_CLAIMS_PER_SESSION).map((claim) => claim.display) });
+      for (const claim of sessionClaims.values()) {
+        const fileHolders = holders.get(claim.file);
+        if (fileHolders) fileHolders.push(sid);
+        else holders.set(claim.file, [sid]);
+        if (!display.has(claim.file)) display.set(claim.file, claim.display);
       }
     }
     const clashByFile = new Map<string, Clash[]>();
-    for (const c of this.clashes.values()) {
-      const l = clashByFile.get(c.file);
-      if (l) l.push(c);
-      else clashByFile.set(c.file, [c]);
-      if (!display.has(c.file)) display.set(c.file, c.display);
+    for (const clash of this.clashes.values()) {
+      const fileClashes = clashByFile.get(clash.file);
+      if (fileClashes) fileClashes.push(clash);
+      else clashByFile.set(clash.file, [clash]);
+      if (!display.has(clash.file)) display.set(clash.file, clash.display);
     }
     // Overlap start time: when a file first reached >=2 holders; reset when it drops below 2.
-    for (const [f, h] of holders) if (h.length >= 2 && !this.overlapSince.has(f)) this.overlapSince.set(f, now);
-    for (const f of [...this.overlapSince.keys()]) if ((holders.get(f)?.length ?? 0) < 2) this.overlapSince.delete(f);
+    for (const [file, fileHolders] of holders)
+      if (fileHolders.length >= 2 && !this.overlapSince.has(file)) this.overlapSince.set(file, now);
+    for (const file of [...this.overlapSince.keys()])
+      if ((holders.get(file)?.length ?? 0) < 2) this.overlapSince.delete(file);
 
     const conflicts: TerritoryConflict[] = [];
     for (const file of new Set([...holders.keys(), ...clashByFile.keys()])) {
-      const h = holders.get(file) ?? [];
-      const cl = clashByFile.get(file);
-      if (cl) {
-        const sids = [...new Set([...h, ...cl.flatMap((c) => c.sids)])].sort();
-        let top = cl[0];
-        for (const c of cl) if (c.since > top.since || (c.since === top.since && c.failer < top.failer)) top = c;
+      const fileHolders = holders.get(file) ?? [];
+      const fileClashes = clashByFile.get(file);
+      if (fileClashes) {
+        const sids = [...new Set([...fileHolders, ...fileClashes.flatMap((clash) => clash.sids)])].sort();
+        let top = fileClashes[0];
+        for (const clash of fileClashes)
+          if (clash.since > top.since || (clash.since === top.since && clash.failer < top.failer)) top = clash;
         conflicts.push({
           file: display.get(file)!,
           sids,
           level: "clash",
-          since: Math.max(...cl.map((c) => c.since)),
+          since: Math.max(...fileClashes.map((clash) => clash.since)),
           failer: top.failer,
         });
-      } else if (h.length >= 2) {
+      } else if (fileHolders.length >= 2) {
         conflicts.push({
           file: display.get(file)!,
-          sids: [...h].sort(),
+          sids: [...fileHolders].sort(),
           level: "overlap",
           since: this.overlapSince.get(file)!,
         });
       }
     }
     conflicts.sort(
-      (a, b) =>
-        (a.level === b.level ? 0 : a.level === "clash" ? -1 : 1) || b.since - a.since || (a.file < b.file ? -1 : 1),
+      (first, second) =>
+        (first.level === second.level ? 0 : first.level === "clash" ? -1 : 1) ||
+        second.since - first.since ||
+        (first.file < second.file ? -1 : 1),
     );
     return { claims, conflicts };
   }

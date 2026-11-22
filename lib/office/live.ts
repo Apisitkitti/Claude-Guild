@@ -17,7 +17,7 @@ export interface LiveHandlers {
   onStatus(s: "open" | "error"): void;
 }
 
-export function connectLive(h: LiveHandlers): { close(): void } {
+export const connectLive = (handlers: LiveHandlers): { close(): void } => {
   let es: EventSource | null = null;
   let closed = false;
   let delay = RECONNECT_BASE_MS;
@@ -29,10 +29,10 @@ export function connectLive(h: LiveHandlers): { close(): void } {
     es = src;
     src.onopen = () => {
       delay = RECONNECT_BASE_MS;
-      h.onStatus("open");
+      handlers.onStatus("open");
     };
     src.onerror = () => {
-      h.onStatus("error");
+      handlers.onStatus("error");
       if (src.readyState === 2) {
         // CLOSED: browser gave up, retry manually with backoff
         src.close();
@@ -45,42 +45,42 @@ export function connectLive(h: LiveHandlers): { close(): void } {
     };
     src.addEventListener("snapshot", (ev) => {
       try {
-        h.onSnapshot(JSON.parse((ev as MessageEvent).data));
+        handlers.onSnapshot(JSON.parse((ev as MessageEvent).data));
       } catch {
         /* ignore bad frame */
       }
     });
     src.addEventListener("context", (ev) => {
       try {
-        h.onContext?.(JSON.parse((ev as MessageEvent).data));
+        handlers.onContext?.(JSON.parse((ev as MessageEvent).data));
       } catch {
         /* ignore bad frame */
       }
     });
     src.addEventListener("territory", (ev) => {
       try {
-        h.onTerritory?.(JSON.parse((ev as MessageEvent).data));
+        handlers.onTerritory?.(JSON.parse((ev as MessageEvent).data));
       } catch {
         /* ignore bad frame */
       }
     });
     src.addEventListener("attention", (ev) => {
       try {
-        h.onAttention?.(JSON.parse((ev as MessageEvent).data));
+        handlers.onAttention?.(JSON.parse((ev as MessageEvent).data));
       } catch {
         /* ignore bad frame */
       }
     });
     src.addEventListener("receipts", (ev) => {
       try {
-        h.onReceipts?.(JSON.parse((ev as MessageEvent).data));
+        handlers.onReceipts?.(JSON.parse((ev as MessageEvent).data));
       } catch {
         /* ignore bad frame */
       }
     });
     src.onmessage = (ev) => {
       try {
-        h.onEvent(JSON.parse(ev.data));
+        handlers.onEvent(JSON.parse(ev.data));
       } catch {
         /* ignore bad frame */
       }
@@ -95,4 +95,4 @@ export function connectLive(h: LiveHandlers): { close(): void } {
       es = null;
     },
   };
-}
+};

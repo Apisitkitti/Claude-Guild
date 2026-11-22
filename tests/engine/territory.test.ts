@@ -14,34 +14,34 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const msg = (a: string, b: string, level: "overlap" | "clash" = "overlap"): TerritoryMsg => ({
+const msg = (sessionA: string, sessionB: string, level: "overlap" | "clash" = "overlap"): TerritoryMsg => ({
   claims: [
-    { sid: a, files: ["src/a.ts", "src/b.ts"] },
-    { sid: b, files: ["src/a.ts"] },
+    { sid: sessionA, files: ["src/a.ts", "src/b.ts"] },
+    { sid: sessionB, files: ["src/a.ts"] },
   ],
-  conflicts: [{ file: "src/a.ts", sids: [a, b], level, since: 1 }],
+  conflicts: [{ file: "src/a.ts", sids: [sessionA, sessionB], level, since: 1 }],
 });
 
-function two() {
-  const o = newOffice();
-  const a = sid(),
-    b = sid();
-  seat(o, a, { cwd: "/w/alpha" });
-  seat(o, b, { cwd: "/w/beta" });
-  return { o, a, b };
-}
+const two = () => {
+  const office = newOffice();
+  const sessionA = sid(),
+    sessionB = sid();
+  seat(office, sessionA, { cwd: "/w/alpha" });
+  seat(office, sessionB, { cwd: "/w/beta" });
+  return { o: office, a: sessionA, b: sessionB };
+};
 
 describe("territory", () => {
   it("roster shows claims and conflict level", () => {
     const { o, a, b } = two();
     o.setTerritory(msg(a, b));
     const rows = o.getView().roster;
-    const ra = rows.find((r) => r.id === a)!,
-      rb = rows.find((r) => r.id === b)!;
+    const ra = rows.find((row) => row.id === a)!,
+      rb = rows.find((row) => row.id === b)!;
     expect([ra.claims, rb.claims]).toEqual([2, 1]);
     expect([ra.conflict, rb.conflict]).toEqual(["overlap", "overlap"]);
     o.setTerritory(msg(a, b, "clash"));
-    expect(o.getView().roster.every((r) => r.conflict === "clash")).toBe(true);
+    expect(o.getView().roster.every((row) => row.conflict === "clash")).toBe(true);
     o.setTerritory({ claims: [], conflicts: [] });
     const r0 = o.getView().roster[0];
     expect(r0.claims).toBeUndefined();
@@ -51,13 +51,13 @@ describe("territory", () => {
   it("conflicts list has names, level, file", () => {
     const { o, a, b } = two();
     o.setTerritory(msg(a, b));
-    const c = o.getView().conflicts!;
-    expect(c).toHaveLength(1);
-    expect(c[0].file).toBe("src/a.ts");
-    expect(c[0].level).toBe("overlap");
-    expect(c[0].sids).toEqual([a, b]);
-    expect(c[0].names[0]).toContain("alpha");
-    expect(c[0].names[1]).toContain("beta");
+    const conflicts = o.getView().conflicts!;
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].file).toBe("src/a.ts");
+    expect(conflicts[0].level).toBe("overlap");
+    expect(conflicts[0].sids).toEqual([a, b]);
+    expect(conflicts[0].names[0]).toContain("alpha");
+    expect(conflicts[0].names[1]).toContain("beta");
   });
 
   it("dismiss hides; escalation to clash re-shows; clashCount counts only clashes", () => {
@@ -68,7 +68,7 @@ describe("territory", () => {
     expect(key).toBe(conflictKey({ file: "src/a.ts", level: "overlap" }));
     o.dismissConflict(key);
     expect(o.getView().conflicts).toHaveLength(0);
-    expect(o.getView().roster.every((r) => r.conflict === undefined)).toBe(true);
+    expect(o.getView().roster.every((row) => row.conflict === undefined)).toBe(true);
     o.setTerritory(msg(a, b)); // same state again stays dismissed
     expect(o.getView().conflicts).toHaveLength(0);
     o.setTerritory(msg(a, b, "clash"));
@@ -94,15 +94,15 @@ describe("territory", () => {
 
   it("a third session joining a clash does not re-alert nor undo a dismissal", () => {
     const { o, a, b } = two();
-    const c = sid();
-    seat(o, c, { cwd: "/w/gamma" });
+    const sessionC = sid();
+    seat(o, sessionC, { cwd: "/w/gamma" });
     o.banners.length = 0;
     o.setTerritory(msg(a, b, "clash"));
     expect(o.banners).toHaveLength(1);
     const logN = o.getView().log.length;
     const three: TerritoryMsg = {
       claims: [],
-      conflicts: [{ file: "src/a.ts", sids: [a, b, c], level: "clash", since: 1 }],
+      conflicts: [{ file: "src/a.ts", sids: [a, b, sessionC], level: "clash", since: 1 }],
     };
     o.setTerritory(three);
     expect(o.banners).toHaveLength(1);
@@ -114,17 +114,17 @@ describe("territory", () => {
   });
 
   it("clash alert deferred for an unknown session fires once it joins", () => {
-    const o = newOffice();
-    const a = sid(),
-      b = sid();
-    seat(o, a, { cwd: "/w/alpha" });
-    o.banners.length = 0;
-    o.setTerritory(msg(a, b, "clash"));
-    expect(o.banners).toHaveLength(0);
-    seat(o, b, { cwd: "/w/beta" });
-    expect(o.banners).toHaveLength(1);
-    o.setTerritory(msg(a, b, "clash"));
-    expect(o.banners).toHaveLength(1);
+    const office = newOffice();
+    const sessionA = sid(),
+      sessionB = sid();
+    seat(office, sessionA, { cwd: "/w/alpha" });
+    office.banners.length = 0;
+    office.setTerritory(msg(sessionA, sessionB, "clash"));
+    expect(office.banners).toHaveLength(0);
+    seat(office, sessionB, { cwd: "/w/beta" });
+    expect(office.banners).toHaveLength(1);
+    office.setTerritory(msg(sessionA, sessionB, "clash"));
+    expect(office.banners).toHaveLength(1);
   });
 
   it("clashCount (tab title) still counts a clash when the filter hides both parties", () => {
@@ -134,7 +134,7 @@ describe("territory", () => {
     expect(o.getView().roster).toHaveLength(0);
     expect(o.clashCount()).toBe(1);
     o.setFilter({ query: "beta" });
-    expect(o.getView().roster.map((r) => r.id)).toEqual([b]);
+    expect(o.getView().roster.map((row) => row.id)).toEqual([b]);
     expect(o.clashCount()).toBe(1);
   });
 
@@ -159,10 +159,10 @@ describe("territory", () => {
     o.trauma = 0;
     o.setTerritory(msg(a, b, "clash"));
     expect(o.trauma).toBe(0);
-    const p = two();
-    p.o.banners.length = 0;
-    p.o.setTerritory(msg(p.a, p.b));
-    expect(p.o.banners).toHaveLength(0);
+    const pair = two();
+    pair.o.banners.length = 0;
+    pair.o.setTerritory(msg(pair.a, pair.b));
+    expect(pair.o.banners).toHaveLength(0);
     void a;
     void b;
   });
@@ -172,7 +172,7 @@ describe("territory", () => {
     o.setTerritory(msg(a, "ghost-session", "clash"));
     expect(o.getView().conflicts).toHaveLength(0);
     expect(o.clashCount()).toBe(0);
-    expect(o.getView().roster.find((r) => r.id === a)!.conflict).toBeUndefined();
+    expect(o.getView().roster.find((row) => row.id === a)!.conflict).toBeUndefined();
     o.setTerritory({ claims: [{ sid: "ghost", files: ["x"] }], conflicts: [] }); // no throw
   });
 
@@ -189,21 +189,21 @@ describe("territory", () => {
   });
 
   it("snapshot territory applies quietly (no banner for existing clashes)", () => {
-    const o = newOffice();
-    const a = sid(),
-      b = sid();
-    o.loadSnapshot({
+    const office = newOffice();
+    const sessionA = sid(),
+      sessionB = sid();
+    office.loadSnapshot({
       sessions: [
-        { session_id: a, cwd: "/w/alpha" },
-        { session_id: b, cwd: "/w/beta" },
+        { session_id: sessionA, cwd: "/w/alpha" },
+        { session_id: sessionB, cwd: "/w/beta" },
       ],
-      territory: msg(a, b, "clash"),
+      territory: msg(sessionA, sessionB, "clash"),
     });
-    expect(o.getView().conflicts).toHaveLength(1);
-    expect(o.clashCount()).toBe(1);
-    expect(o.banners).toHaveLength(0);
-    o.setTerritory(msg(a, b, "clash")); // same key afterwards: still no alert
-    expect(o.banners).toHaveLength(0);
+    expect(office.getView().conflicts).toHaveLength(1);
+    expect(office.clashCount()).toBe(1);
+    expect(office.banners).toHaveLength(0);
+    office.setTerritory(msg(sessionA, sessionB, "clash")); // same key afterwards: still no alert
+    expect(office.banners).toHaveLength(0);
   });
 
   it("snapshot without territory keeps current state", () => {
@@ -217,9 +217,9 @@ describe("territory", () => {
     const { o, a, b } = two();
     o.setTerritory(msg(a, b, "clash"));
     o.setFilter({ query: "alpha" });
-    const v = o.getView();
-    expect(v.roster.map((r) => r.id)).toEqual([a]);
-    expect(v.conflicts).toHaveLength(1);
+    const view = o.getView();
+    expect(view.roster.map((row) => row.id)).toEqual([a]);
+    expect(view.conflicts).toHaveLength(1);
     expect(o.clashCount()).toBe(1);
   });
 

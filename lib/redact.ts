@@ -62,98 +62,100 @@ const REF_ROOTS =
   /^(?:this|self|props|opts|options|config|cfg|args|req|res|ctx|process|os|env|settings|params|window|document|input|data|user|state)\./i;
 
 /** value that merely refers to another variable / command output instead of being a literal secret */
-function isReference(v: string): boolean {
-  if (!v) return true;
-  const c = v[0];
+const isReference = (value: string): boolean => {
+  if (!value) return true;
+  const first = value[0];
   if (
-    c === "$" ||
-    c === "<" ||
-    c === "%" ||
-    c === "{" ||
-    c === "[" ||
-    c === "=" ||
-    c === ">" ||
-    c === "~" ||
-    c === "@" ||
-    c === "(" ||
-    c === "`"
+    first === "$" ||
+    first === "<" ||
+    first === "%" ||
+    first === "{" ||
+    first === "[" ||
+    first === "=" ||
+    first === ">" ||
+    first === "~" ||
+    first === "@" ||
+    first === "(" ||
+    first === "`"
   )
     return true;
-  if (v.includes("(") || v.includes("[")) return true;
-  if (v.includes(REDACTED)) return true;
-  if (NULLISH.test(v)) return true;
-  if (DOTTED_REF.test(v) && (REF_ROOTS.test(v) || /(?:^|\.)env\b/i.test(v))) return true;
+  if (value.includes("(") || value.includes("[")) return true;
+  if (value.includes(REDACTED)) return true;
+  if (NULLISH.test(value)) return true;
+  if (DOTTED_REF.test(value) && (REF_ROOTS.test(value) || /(?:^|\.)env\b/i.test(value))) return true;
   return false;
-}
+};
 
-function maskAssign(
-  m: string,
+const maskAssign = (
+  match: string,
   key: string,
-  q: string,
+  quoteChar: string,
   sep: string,
-  val: string,
+  value: string,
   offset: number,
   whole: string,
-): string {
+): string => {
   const sepT = sep.trim();
-  const quoted = val[0] === '"' || val[0] === "'";
-  const quote = quoted ? val[0] : "";
-  const inner = quoted ? val.slice(1, -1) : val;
-  if (quoted && (inner === "" || val.length < 2 || val[val.length - 1] !== quote)) return m;
-  const out = (v: string) => key + q + sep + (quoted ? quote + v + quote : v);
+  const quoted = value[0] === '"' || value[0] === "'";
+  const quote = quoted ? value[0] : "";
+  const inner = quoted ? value.slice(1, -1) : value;
+  if (quoted && (inner === "" || value.length < 2 || value[value.length - 1] !== quote)) return match;
+  const out = (replacement: string) => key + quoteChar + sep + (quoted ? quote + replacement + quote : replacement);
   if (sepT === "") {
     // `--password hunter2` / `--token "x y"` flag form only
-    if (!key.startsWith("--") || (!quoted && val.startsWith("-"))) return m;
-    return isReference(inner) ? m : out(REDACTED);
+    if (!key.startsWith("--") || (!quoted && value.startsWith("-"))) return match;
+    return isReference(inner) ? match : out(REDACTED);
   }
   if (sepT === ":") {
-    if (quoted) return isReference(inner) ? m : out(REDACTED); // "password": "x", password: 'x'
+    if (quoted) return isReference(inner) ? match : out(REDACTED); // "password": "x", password: 'x'
     // unquoted: only HTTP-header style keys (`X-Api-Key: abc`); `token: string` / `password: required` stay
-    if (q !== "" || key.startsWith("--") || isReference(inner) || TYPE_WORDS.test(inner)) return m;
+    if (quoteChar !== "" || key.startsWith("--") || isReference(inner) || TYPE_WORDS.test(inner)) return match;
     if (key.includes("-")) return out(REDACTED);
     if (/^[A-Z][A-Z0-9_]*$/.test(key)) return out(REDACTED); // compose / env style: POSTGRES_PASSWORD: hunter2
-    const ls = whole.lastIndexOf("\n", offset - 1) + 1;
+    const lineStart = whole.lastIndexOf("\n", offset - 1) + 1;
     // YAML key at the start of a line: needs something secret-looking (a digit or symbol), so `token: Token` stays
-    if (/^[ \t]*(?:-[ \t]+)?$/.test(whole.slice(ls, offset)) && (/\d/.test(inner) || /[^A-Za-z_]/.test(inner)))
+    if (/^[ \t]*(?:-[ \t]+)?$/.test(whole.slice(lineStart, offset)) && (/\d/.test(inner) || /[^A-Za-z_]/.test(inner)))
       return out(REDACTED);
-    return m;
+    return match;
   }
-  if (sepT !== "=") return m;
-  if (quoted) return isReference(inner) ? m : out(REDACTED);
+  if (sepT !== "=") return match;
+  if (quoted) return isReference(inner) ? match : out(REDACTED);
   const spaced = /\s/.test(sep);
-  if (isReference(inner)) return m;
+  if (isReference(inner)) return match;
   if (spaced) {
     // `const token = x` is code. Only a config-style line (`aws_secret_access_key = abc123...`) that begins with the key counts.
-    const ls = whole.lastIndexOf("\n", offset - 1) + 1;
-    if (!/^[ \t]*(?:export[ \t]+)?$/.test(whole.slice(ls, offset))) return m;
-    if (!/\d/.test(inner) && !/[^A-Za-z0-9_]/.test(inner)) return m; // `token = next_token`
+    const lineStart = whole.lastIndexOf("\n", offset - 1) + 1;
+    if (!/^[ \t]*(?:export[ \t]+)?$/.test(whole.slice(lineStart, offset))) return match;
+    if (!/\d/.test(inner) && !/[^A-Za-z0-9_]/.test(inner)) return match; // `token = next_token`
   }
   return out(REDACTED);
-}
+};
 
 /** strings shorter than this cannot hold a secret worth redacting */
 const MIN_REDACT_LENGTH = 6;
 
 /** Replace likely secrets in `text` with ‹redacted›. Never throws; returns non-strings untouched. */
-export function redactSecrets(text: string): string {
+export const redactSecrets = (text: string): string => {
   if (typeof text !== "string" || text.length < MIN_REDACT_LENGTH) return text;
-  let s = text;
+  let result = text;
   // keep head + tail; drop 64 chars either side of the seam so a secret cut in half leaves no readable half
-  if (s.length > MAX_REDACT_LEN)
-    s = s.slice(0, MAX_REDACT_LEN / 2 - SEAM) + "…" + s.slice(-(MAX_REDACT_LEN / 2 - SEAM));
-  s = s.replace(PEM, REDACTED);
-  s = s.replace(AUTH_SCHEME, (_m, p: string) => p + REDACTED);
-  s = s.replace(AUTH_BARE, (_m, p: string) => p + REDACTED);
-  s = s.replace(COOKIE, (_m, p: string) => p + REDACTED);
-  s = s.replace(BEARER, (_m, p: string) => p + REDACTED);
-  for (const re of TOKEN_SHAPES) s = s.replace(re, REDACTED);
-  s = s.replace(URL_CREDS, (m, a: string, pw: string, at: string) =>
-    pw[0] === "$" || pw[0] === "{" || pw.includes(REDACTED) ? m : a + REDACTED + at,
+  if (result.length > MAX_REDACT_LEN)
+    result = result.slice(0, MAX_REDACT_LEN / 2 - SEAM) + "…" + result.slice(-(MAX_REDACT_LEN / 2 - SEAM));
+  result = result.replace(PEM, REDACTED);
+  result = result.replace(AUTH_SCHEME, (_match, prefix: string) => prefix + REDACTED);
+  result = result.replace(AUTH_BARE, (_match, prefix: string) => prefix + REDACTED);
+  result = result.replace(COOKIE, (_match, prefix: string) => prefix + REDACTED);
+  result = result.replace(BEARER, (_match, prefix: string) => prefix + REDACTED);
+  for (const shape of TOKEN_SHAPES) result = result.replace(shape, REDACTED);
+  result = result.replace(URL_CREDS, (match, prefix: string, password: string, at: string) =>
+    password[0] === "$" || password[0] === "{" || password.includes(REDACTED) ? match : prefix + REDACTED + at,
   );
-  s = s.replace(CURL_USER, (m, a: string, pw: string) => (pw[0] === "$" || pw.includes(REDACTED) ? m : a + REDACTED));
-  s = s.replace(ASSIGN, maskAssign);
-  return s;
-}
+  result = result.replace(CURL_USER, (match, prefix: string, password: string) =>
+    password[0] === "$" || password.includes(REDACTED) ? match : prefix + REDACTED,
+  );
+  result = result.replace(ASSIGN, maskAssign);
+  return result;
+};
 
 const SECRET_KEY = new RegExp(
   String.raw`^(?:[A-Za-z0-9_.$-]*?[_.$-])?(?:${TERM}|authorization|cookie|set-cookie)$`,
@@ -161,27 +163,24 @@ const SECRET_KEY = new RegExp(
 );
 
 /** an object key that names a secret (`api_key`, `GITHUB_TOKEN`, `authorization`) */
-export function isSecretKey(k: string): boolean {
-  return (
-    SECRET_KEY.test(k) ||
-    /^(?:password|passwd|secret|token|apikey|authorization|cookie)$/i.test(k) ||
-    SECRET_KEY.test(k.replace(/([a-z])([A-Z])/g, "$1_$2"))
-  );
-}
+export const isSecretKey = (key: string): boolean =>
+  SECRET_KEY.test(key) ||
+  /^(?:password|passwd|secret|token|apikey|authorization|cookie)$/i.test(key) ||
+  SECRET_KEY.test(key.replace(/([a-z])([A-Z])/g, "$1_$2"));
 
 /**
  * Deep copy of a hook payload with every string redacted and secret-named keys blanked. Bounded: depth <= 8,
  * <= 200 items per array / object; deeper values become "{…}". Non-plain values (functions, ...) become null.
  */
-export function redactDeep(value: unknown, depth = 0): unknown {
+export const redactDeep = (value: unknown, depth = 0): unknown => {
   if (typeof value === "string") return redactSecrets(value);
   if (value === null || typeof value !== "object")
     return typeof value === "function" || typeof value === "symbol" || typeof value === "bigint" ? null : value;
   if (depth >= MAX_DEPTH) return Array.isArray(value) ? "[…]" : "{…}";
-  if (Array.isArray(value)) return value.slice(0, MAX_ITEMS).map((v) => redactDeep(v, depth + 1));
+  if (Array.isArray(value)) return value.slice(0, MAX_ITEMS).map((item) => redactDeep(item, depth + 1));
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value).slice(0, MAX_ITEMS)) {
-    out[k] = typeof v === "string" && v !== "" && isSecretKey(k) ? REDACTED : redactDeep(v, depth + 1);
+  for (const [key, item] of Object.entries(value).slice(0, MAX_ITEMS)) {
+    out[key] = typeof item === "string" && item !== "" && isSecretKey(key) ? REDACTED : redactDeep(item, depth + 1);
   }
   return out;
-}
+};

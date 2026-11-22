@@ -9,57 +9,57 @@ const LV_FLASH_MS = 1200;
 const BUMP_MS = 400;
 
 /** Level-up flash per roster card (brief CSS class toggle). */
-export function useRosterFlash(roster: RosterRow[]) {
+export const useRosterFlash = (roster: RosterRow[]) => {
   const [lvFlash, setLvFlash] = useState<Record<string, boolean>>({});
   const prevLv = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     const up: string[] = [];
     const seen = new Set<string>();
-    for (const r of roster) {
-      const lv = (r as RpgRow).level;
-      seen.add(r.id);
-      if (!isNum(lv)) continue;
-      const old = prevLv.current.get(r.id);
-      if (old !== undefined && lv > old) up.push(r.id);
-      prevLv.current.set(r.id, lv);
+    for (const row of roster) {
+      const level = (row as RpgRow).level;
+      seen.add(row.id);
+      if (!isNum(level)) continue;
+      const old = prevLv.current.get(row.id);
+      if (old !== undefined && level > old) up.push(row.id);
+      prevLv.current.set(row.id, level);
     }
     for (const id of [...prevLv.current.keys()]) if (!seen.has(id)) prevLv.current.delete(id);
     if (!up.length) return;
-    const t = setTimeout(() => {
-      setLvFlash((m) => {
-        const n = { ...m };
-        for (const id of up) n[id] = true;
-        return n;
+    const timer = setTimeout(() => {
+      setLvFlash((current) => {
+        const next = { ...current };
+        for (const id of up) next[id] = true;
+        return next;
       });
       setTimeout(
         () =>
-          setLvFlash((m) => {
-            const n = { ...m };
-            for (const id of up) delete n[id];
-            return n;
+          setLvFlash((current) => {
+            const next = { ...current };
+            for (const id of up) delete next[id];
+            return next;
           }),
         LV_FLASH_MS,
       );
     }, 0);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [roster]);
   return lvFlash;
-}
+};
 
 /** Treasury bump: true briefly whenever the guild treasury grows. */
-export function useTreasuryBump(treasury: number | undefined) {
+export const useTreasuryBump = (treasury: number | undefined) => {
   const [bump, setBump] = useState(false);
   const prevTreasury = useRef<number | undefined>(undefined);
   useEffect(() => {
     const old = prevTreasury.current;
     prevTreasury.current = treasury;
     if (!isNum(treasury) || old === undefined || treasury <= old) return;
-    const a = setTimeout(() => setBump(true), 0);
-    const b = setTimeout(() => setBump(false), BUMP_MS);
+    const showTimer = setTimeout(() => setBump(true), 0);
+    const hideTimer = setTimeout(() => setBump(false), BUMP_MS);
     return () => {
-      clearTimeout(a);
-      clearTimeout(b);
+      clearTimeout(showTimer);
+      clearTimeout(hideTimer);
     };
   }, [treasury]);
   return bump;
-}
+};

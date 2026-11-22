@@ -75,99 +75,99 @@ export type ReceiptEvent = {
   tool_input?: unknown;
   tool_use_id?: unknown;
   is_interrupt?: unknown;
-  [k: string]: unknown;
+  [key: string]: unknown;
 };
 
 // ---- command analysis (exported for tests) ----
-function fnv(s: string): string {
-  let h = FNV_OFFSET_BASIS;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, FNV_PRIME) >>> 0;
+const fnv = (text: string): string => {
+  let hash = FNV_OFFSET_BASIS;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME) >>> 0;
   }
-  return h.toString(HEX_RADIX).padStart(HEX_BYTE_DIGITS, "0");
-}
+  return hash.toString(HEX_RADIX).padStart(HEX_BYTE_DIGITS, "0");
+};
 
 const HEREDOC_START = /<<-?[ \t]*(['"]?)([A-Za-z_]\w*)\1[^\n]{0,200}\n/g;
 const HEREDOC_BODY_MAX = 20_000;
 const HEREDOC_MAX_STARTS = 50;
 
 /** remove heredoc bodies (`<<'EOF' ... EOF`). Bounded: <= 50 starts, body <= 20k chars, unterminated delimiters remembered. */
-function stripHeredocs(s: string): string {
+const stripHeredocs = (command: string): string => {
   let out = "";
   let last = 0;
   const missing = new Set<string>();
   HEREDOC_START.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  for (let n = 0; n < HEREDOC_MAX_STARTS && (m = HEREDOC_START.exec(s)); n++) {
-    const delim = m[2];
+  let match: RegExpExecArray | null;
+  for (let starts = 0; starts < HEREDOC_MAX_STARTS && (match = HEREDOC_START.exec(command)); starts++) {
+    const delim = match[2];
     if (missing.has(delim)) continue;
-    const bodyStart = m.index + m[0].length;
-    const limit = Math.min(s.length, bodyStart + HEREDOC_BODY_MAX);
+    const bodyStart = match.index + match[0].length;
+    const limit = Math.min(command.length, bodyStart + HEREDOC_BODY_MAX);
     let pos = bodyStart;
     let end = -1;
     while (pos <= limit) {
-      let nl = s.indexOf("\n", pos);
-      if (nl < 0 || nl > limit) nl = s.length;
-      if (s.slice(pos, nl).trim() === delim) {
+      let nl = command.indexOf("\n", pos);
+      if (nl < 0 || nl > limit) nl = command.length;
+      if (command.slice(pos, nl).trim() === delim) {
         end = nl;
         break;
       }
-      if (nl >= s.length) break;
+      if (nl >= command.length) break;
       pos = nl + 1;
     }
     if (end < 0) {
       missing.add(delim);
       continue;
     }
-    out += s.slice(last, m.index);
+    out += command.slice(last, match.index);
     last = end;
     HEREDOC_START.lastIndex = end;
   }
-  return out + s.slice(last);
-}
+  return out + command.slice(last);
+};
 
 /** replace quoted strings by empty quotes (so a `;` or `|` inside a message does not look like a shell operator) */
-function stripQuotes(s: string): string {
+const stripQuotes = (command: string): string => {
   let out = "";
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (c === "\\") {
-      out += s[i + 1] === "\n" ? " " : "_";
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+    if (char === "\\") {
+      out += command[i + 1] === "\n" ? " " : "_";
       i++;
-    } else if (c === "'") {
-      const j = s.indexOf("'", i + 1);
+    } else if (char === "'") {
+      const end = command.indexOf("'", i + 1);
       out += "''";
-      if (j < 0) break;
-      i = j;
-    } else if (c === '"') {
-      let j = i + 1;
-      while (j < s.length && s[j] !== '"') j += s[j] === "\\" ? 2 : 1;
+      if (end < 0) break;
+      i = end;
+    } else if (char === '"') {
+      let end = i + 1;
+      while (end < command.length && command[end] !== '"') end += command[end] === "\\" ? 2 : 1;
       out += '""';
-      if (j >= s.length) break;
-      i = j;
-    } else out += c;
+      if (end >= command.length) break;
+      i = end;
+    } else out += char;
   }
   return out;
-}
+};
 
 /**
  * Is the exit code of this command trustworthy as "the last thing it ran"? Only plain `a && b && c` chains are:
  * a pipe (`npm test | tail`), `;`, `||` (`|| true`), a newline, or a background `&` all hide / replace the exit code.
  * `segments` are the `&&`-separated parts with quoted text emptied.
  */
-export function commandShape(cmd: string): { ok: boolean; segments: string[] } {
-  let s = stripQuotes(stripHeredocs(cmd));
-  s = s.replace(/\d*[<>]&\d*-?/g, " ").replace(/&>>?/g, " ");
-  if (/[|;\n`]/.test(s) || /(?<!&)&(?!&)/.test(s) || s.includes("$(")) return { ok: false, segments: [] };
+export const commandShape = (cmd: string): { ok: boolean; segments: string[] } => {
+  let shell = stripQuotes(stripHeredocs(cmd));
+  shell = shell.replace(/\d*[<>]&\d*-?/g, " ").replace(/&>>?/g, " ");
+  if (/[|;\n`]/.test(shell) || /(?<!&)&(?!&)/.test(shell) || shell.includes("$(")) return { ok: false, segments: [] };
   return {
     ok: true,
-    segments: s
+    segments: shell
       .split("&&")
-      .map((x) => x.trim())
+      .map((part) => part.trim())
       .filter(Boolean),
   };
-}
+};
 
 const PREFIX =
   /^(?:[A-Za-z_]\w*=\S*|time|sudo|nohup|exec|command|env|timeout\s+\d+\S*|npx(?:\s+(?:-y|--yes|--no-install))*|pnpm\s+(?:exec|dlx)|yarn\s+dlx|bunx|npm\s+exec(?:\s+--)?|(?:poetry|uv|pipenv|pdm|hatch)\s+run|bundle\s+exec)\s+/;
@@ -192,30 +192,30 @@ const RUNNERS: [string, RegExp][] = [
 ];
 
 /** which test runner a (single, quote-stripped) command segment starts, or null. `echo vitest` is not one. */
-export function runnerOf(segment: string): string | null {
-  let r = segment.trim();
+export const runnerOf = (segment: string): string | null => {
+  let command = segment.trim();
   for (let i = 0; i < RUNNER_PREFIX_MAX_STRIPS; i++) {
-    const m = PREFIX.exec(r);
-    if (!m) break;
-    r = r.slice(m[0].length);
+    const prefix = PREFIX.exec(command);
+    if (!prefix) break;
+    command = command.slice(prefix[0].length);
   }
-  for (const [name, re] of RUNNERS) if (re.test(r)) return name;
+  for (const [name, re] of RUNNERS) if (re.test(command)) return name;
   return null;
-}
+};
 
 const GIT_COMMIT = /^(?:[A-Za-z_]\w*=\S*\s+)*git(?:\s+(?:-[A-Za-z]\s+\S+|--[\w-]+(?:=\S+)?))*\s+commit(?![-\w])/;
 
 /** "commit" | "amend" when some part of a trustworthy && chain is `git commit` (success of the whole chain implies the commit ran) */
-export function commitKind(segments: string[]): "commit" | "amend" | null {
+export const commitKind = (segments: string[]): "commit" | "amend" | null => {
   for (const seg of segments)
     if (GIT_COMMIT.test(seg))
       return /(?:^|\s)--dry-run(?![\w-])/.test(seg) ? null : /(?:^|\s)--amend(?![\w-])/.test(seg) ? "amend" : "commit";
   return null;
-}
+};
 
-const str = (v: unknown): string => (typeof v === "string" ? v : "");
-const obj = (v: unknown): Record<string, unknown> =>
-  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+const str = (value: unknown): string => (typeof value === "string" ? value : "");
+const obj = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 
 type Receipt = {
   id: string;
@@ -250,27 +250,28 @@ type SessionState = {
   touched: number;
 };
 
-const outcomes = (r: Receipt) => r.files.size + r.recovered + r.commits + r.amends + r.tasks;
+const outcomes = (receipt: Receipt) =>
+  receipt.files.size + receipt.recovered + receipt.commits + receipt.amends + receipt.tasks;
 
-function projectOf(cwd: string): string {
-  const segs = cwd.split("/").filter(Boolean);
-  const p = segs[segs.length - 1] ?? "";
-  return (p.length > PROJECT_CHARS ? p.slice(0, PROJECT_CHARS - 1) + "…" : p) || "unknown";
-}
+const projectOf = (cwd: string): string => {
+  const segments = cwd.split("/").filter(Boolean);
+  const name = segments[segments.length - 1] ?? "";
+  return (name.length > PROJECT_CHARS ? name.slice(0, PROJECT_CHARS - 1) + "…" : name) || "unknown";
+};
 
 export class ReceiptTracker {
   private sessions = new Map<string, SessionState>();
   private closed: Receipt[] = []; // oldest first
-  private n = 0;
+  private seq = 0;
   /** ids stay unique across server restarts / store rebuilds (the client remembers ids it has seen) */
   private nonce = Date.now().toString(BASE36);
 
   private state(sid: string, now: number): SessionState {
-    let st = this.sessions.get(sid);
-    if (st)
+    let state = this.sessions.get(sid);
+    if (state)
       this.sessions.delete(sid); // re-insert = most recently used
     else
-      st = {
+      state = {
         sid,
         cwd: "",
         open: null,
@@ -281,39 +282,39 @@ export class ReceiptTracker {
         taskIds: new Set(),
         touched: now,
       };
-    this.sessions.set(sid, st);
+    this.sessions.set(sid, state);
     if (this.sessions.size > MAX_SESSIONS) {
       const oldest = this.sessions.keys().next().value as string;
       this.dropSession(oldest, now);
     }
-    return st;
+    return state;
   }
 
-  private redNow(st: SessionState): boolean {
-    for (const v of st.runners.values()) if (v === "red") return true;
+  private redNow(state: SessionState): boolean {
+    for (const status of state.runners.values()) if (status === "red") return true;
     return false;
   }
 
   /** red only if a runner that failed in THIS turn is still red; red from an earlier turn is just a note */
-  private judge(st: SessionState, r: Receipt): void {
+  private judge(state: SessionState, receipt: Receipt): void {
     let red = false;
-    for (const k of r.failed) if (st.runners.get(k) === "red") red = true;
-    r.red = red;
-    r.staleRed = !red && this.redNow(st);
+    for (const runnerKey of receipt.failed) if (state.runners.get(runnerKey) === "red") red = true;
+    receipt.red = red;
+    receipt.staleRed = !red && this.redNow(state);
   }
 
-  private list(r: Receipt): void {
-    if (r.listed) return;
-    r.listed = true;
-    this.closed.push(r);
+  private list(receipt: Receipt): void {
+    if (receipt.listed) return;
+    receipt.listed = true;
+    this.closed.push(receipt);
     while (this.closed.length > MAX_CLOSED) this.closed.shift();
   }
 
-  private openNew(st: SessionState, now: number): Receipt {
-    const r: Receipt = {
-      id: `${this.nonce}-${++this.n}`,
-      sid: st.sid,
-      project: projectOf(st.cwd),
+  private openNew(state: SessionState, now: number): Receipt {
+    const receipt: Receipt = {
+      id: `${this.nonce}-${++this.seq}`,
+      sid: state.sid,
+      project: projectOf(state.cwd),
       openedAt: now,
       closedAt: 0,
       files: new Set(),
@@ -328,22 +329,22 @@ export class ReceiptTracker {
       staleRed: false,
       listed: false,
     };
-    st.open = r;
-    st.lastClosed = null;
-    return r;
+    state.open = receipt;
+    state.lastClosed = null;
+    return receipt;
   }
 
   /** close the open receipt; it is kept only if the turn did something (`needOutcome`: only if it produced an outcome) */
-  private close(st: SessionState, now: number, needOutcome = false): void {
-    const r = st.open;
-    st.open = null;
-    if (!r || (needOutcome && (r.calls === 0 || outcomes(r) === 0))) return;
-    r.closedAt = now;
-    if (st.cwd) r.project = projectOf(st.cwd);
-    this.judge(st, r);
-    st.lastClosed = r;
+  private close(state: SessionState, now: number, needOutcome = false): void {
+    const receipt = state.open;
+    state.open = null;
+    if (!receipt || (needOutcome && (receipt.calls === 0 || outcomes(receipt) === 0))) return;
+    receipt.closedAt = now;
+    if (state.cwd) receipt.project = projectOf(state.cwd);
+    this.judge(state, receipt);
+    state.lastClosed = receipt;
     // async hooks: Stop may beat the turn's PostToolUse. An empty turn is held back and listed only if a late event lands on it.
-    if (r.calls > 0) this.list(r);
+    if (receipt.calls > 0) this.list(receipt);
   }
 
   /** Feed a (secret-redacted) hook event. Command text is analysed and thrown away. */
@@ -354,13 +355,13 @@ export class ReceiptTracker {
     const agent = str(raw.agent_id);
     if (name === "UserPromptSubmit" || name === "Stop") {
       if (agent) return; // only the main agent starts / finishes a turn
-      const st = this.state(sid, now);
-      st.touched = now;
-      if (str(raw.cwd)) st.cwd = str(raw.cwd);
-      this.close(st, now);
+      const state = this.state(sid, now);
+      state.touched = now;
+      if (str(raw.cwd)) state.cwd = str(raw.cwd);
+      this.close(state, now);
       if (name === "UserPromptSubmit") {
-        st.lastClosed = null;
-        this.openNew(st, now);
+        state.lastClosed = null;
+        this.openNew(state, now);
       }
       return;
     }
@@ -369,127 +370,138 @@ export class ReceiptTracker {
     if (!tool) return;
     const failed = name === "PostToolUseFailure";
     if (failed && raw.is_interrupt === true) return;
-    const st = this.state(sid, now);
-    st.touched = now;
-    if (str(raw.cwd)) st.cwd = str(raw.cwd);
+    const state = this.state(sid, now);
+    state.touched = now;
+    if (str(raw.cwd)) state.cwd = str(raw.cwd);
     const id = str(raw.tool_use_id);
     if (id) {
-      if (st.ids.includes(id)) return;
-      st.ids.push(id);
-      if (st.ids.length > MAX_IDS) st.ids.shift();
+      if (state.ids.includes(id)) return;
+      state.ids.push(id);
+      if (state.ids.length > MAX_IDS) state.ids.shift();
     }
     // which receipt does this land on: the open turn, a turn that closed a moment ago (late async hook), or a new one
-    let r = st.open;
-    if (!r) r = st.lastClosed && now - st.lastClosed.closedAt <= LATE_GRACE_MS ? st.lastClosed : this.openNew(st, now);
-    r.calls++;
-    if (r.closedAt) this.list(r); // late event landed on a closed turn
+    let receipt = state.open;
+    if (!receipt)
+      receipt =
+        state.lastClosed && now - state.lastClosed.closedAt <= LATE_GRACE_MS
+          ? state.lastClosed
+          : this.openNew(state, now);
+    receipt.calls++;
+    if (receipt.closedAt) this.list(receipt); // late event landed on a closed turn
     const input = obj(raw.tool_input);
-    const sq = agent ? 1 : 0;
+    const squireInc = agent ? 1 : 0;
 
     if (EDIT_TOOLS.has(tool)) {
       if (failed) return;
       const file = str(input.file_path) || str(input.notebook_path);
-      if (file && r.files.size < MAX_FILES) {
-        const h = fnv(file);
-        if (!r.files.has(h)) {
-          r.files.add(h);
-          r.squire += sq;
+      if (file && receipt.files.size < MAX_FILES) {
+        const fileHash = fnv(file);
+        if (!receipt.files.has(fileHash)) {
+          receipt.files.add(fileHash);
+          receipt.squire += squireInc;
         }
       }
     } else if (tool === "Bash") {
       const cmd = str(input.command);
-      if (cmd) this.bash(st, r, cmd, failed, sq, input.run_in_background === true);
+      if (cmd) this.bash(state, receipt, cmd, failed, squireInc, input.run_in_background === true);
     } else if (!failed && tool === "TaskUpdate") {
       if (str(input.status) === "completed") {
         const tid = str(input.taskId) || str(input.task_id) || str(input.id);
-        if (!tid || !st.taskIds.has(tid)) {
+        if (!tid || !state.taskIds.has(tid)) {
           if (tid) {
-            st.taskIds.add(tid);
-            if (st.taskIds.size > MAX_TASK_IDS) st.taskIds.delete(st.taskIds.values().next().value as string);
+            state.taskIds.add(tid);
+            if (state.taskIds.size > MAX_TASK_IDS) state.taskIds.delete(state.taskIds.values().next().value as string);
           }
-          r.tasks++;
-          r.squire += sq;
+          receipt.tasks++;
+          receipt.squire += squireInc;
         }
       }
     } else if (!failed && tool === "TodoWrite") {
       const todos = Array.isArray(input.todos) ? input.todos.slice(0, MAX_TODOS) : [];
       let done = 0;
-      for (const t of todos) if (obj(t).status === "completed") done++;
+      for (const todo of todos) if (obj(todo).status === "completed") done++;
       const who = agent || "main";
-      const delta = Math.max(0, done - (st.todoDone.get(who) ?? 0));
-      st.todoDone.delete(who);
-      st.todoDone.set(who, done);
-      if (st.todoDone.size > MAX_TODO_OWNERS) st.todoDone.delete(st.todoDone.keys().next().value as string);
-      r.tasks += delta;
-      if (delta) r.squire += sq;
+      const delta = Math.max(0, done - (state.todoDone.get(who) ?? 0));
+      state.todoDone.delete(who);
+      state.todoDone.set(who, done);
+      if (state.todoDone.size > MAX_TODO_OWNERS) state.todoDone.delete(state.todoDone.keys().next().value as string);
+      receipt.tasks += delta;
+      if (delta) receipt.squire += squireInc;
     }
-    if (r.closedAt) this.judge(st, r); // late event that landed on a closed receipt
+    if (receipt.closedAt) this.judge(state, receipt); // late event that landed on a closed receipt
   }
 
-  private bash(st: SessionState, r: Receipt, cmd: string, failed: boolean, sq: number, background: boolean): void {
+  private bash(
+    state: SessionState,
+    receipt: Receipt,
+    cmd: string,
+    failed: boolean,
+    squireInc: number,
+    background: boolean,
+  ): void {
     if (background) return; // "success" only means the process launched
     const shape = commandShape(cmd);
     if (!shape.ok || !shape.segments.length) return; // exit code is not (only) the command's: count nothing
     if (!failed) {
-      const k = commitKind(shape.segments);
-      if (k === "commit") {
-        r.commits++;
-        r.squire += sq;
-      } else if (k === "amend") {
-        r.amends++;
-        r.squire += sq;
+      const kind = commitKind(shape.segments);
+      if (kind === "commit") {
+        receipt.commits++;
+        receipt.squire += squireInc;
+      } else if (kind === "amend") {
+        receipt.amends++;
+        receipt.squire += squireInc;
       }
     }
     const runner = runnerOf(shape.segments[shape.segments.length - 1]);
     if (!runner) return; // the test must be the LAST part of the chain: only then does a failure / success speak for it
-    const key = st.cwd + "\0" + runner;
-    const prev = st.runners.get(key);
-    st.runners.delete(key);
+    const key = state.cwd + "\0" + runner;
+    const prev = state.runners.get(key);
+    state.runners.delete(key);
     if (failed) {
-      st.runners.set(key, "red");
-      r.failed.add(key);
+      state.runners.set(key, "red");
+      receipt.failed.add(key);
     } else {
-      st.runners.set(key, "green");
+      state.runners.set(key, "green");
       if (prev === "red") {
-        r.recovered++;
-        r.squire += sq;
+        receipt.recovered++;
+        receipt.squire += squireInc;
       }
     }
-    while (st.runners.size > MAX_RUNNERS) st.runners.delete(st.runners.keys().next().value as string);
+    while (state.runners.size > MAX_RUNNERS) state.runners.delete(state.runners.keys().next().value as string);
   }
 
   /** closed receipts (counts only), newest first */
   rows(now: number): ReceiptRow[] {
     const out: ReceiptRow[] = [];
     for (let i = this.closed.length - 1; i >= 0; i--) {
-      const r = this.closed[i];
-      if (now - r.closedAt > RECEIPT_TTL_MS) continue;
-      const n = outcomes(r);
+      const receipt = this.closed[i];
+      if (now - receipt.closedAt > RECEIPT_TTL_MS) continue;
+      const outcomeCount = outcomes(receipt);
       out.push({
-        id: r.id,
-        sid: r.sid,
-        project: r.project,
-        closedAt: r.closedAt,
-        files: r.files.size,
-        recovered: r.recovered,
-        commits: r.commits,
-        amends: r.amends,
-        tasks: r.tasks,
-        squire: r.squire,
-        calls: r.calls,
-        verdict: r.red ? "red" : n > 0 ? "done" : "none",
-        staleRed: r.staleRed,
+        id: receipt.id,
+        sid: receipt.sid,
+        project: receipt.project,
+        closedAt: receipt.closedAt,
+        files: receipt.files.size,
+        recovered: receipt.recovered,
+        commits: receipt.commits,
+        amends: receipt.amends,
+        tasks: receipt.tasks,
+        squire: receipt.squire,
+        calls: receipt.calls,
+        verdict: receipt.red ? "red" : outcomeCount > 0 ? "done" : "none",
+        staleRed: receipt.staleRed,
       });
     }
-    out.sort((a, b) => b.closedAt - a.closedAt);
+    out.sort((first, second) => second.closedAt - first.closedAt);
     return out;
   }
 
   /** drop expired receipts and long-idle session state; true iff a visible receipt was removed */
   sweep(now: number): boolean {
     const before = this.closed.length;
-    this.closed = this.closed.filter((r) => now - r.closedAt <= RECEIPT_TTL_MS);
-    for (const [sid, st] of this.sessions) if (now - st.touched > RECEIPT_TTL_MS) this.dropSession(sid, now);
+    this.closed = this.closed.filter((receipt) => now - receipt.closedAt <= RECEIPT_TTL_MS);
+    for (const [sid, state] of this.sessions) if (now - state.touched > RECEIPT_TTL_MS) this.dropSession(sid, now);
     return this.closed.length !== before;
   }
 
@@ -498,16 +510,16 @@ export class ReceiptTracker {
    * (e.g. SessionEnd with no Stop), otherwise it is dropped with the session.
    */
   dropSession(sid: string, now: number): void {
-    const st = this.sessions.get(sid);
-    if (!st) return;
-    this.close(st, now, true);
+    const state = this.sessions.get(sid);
+    if (!state) return;
+    this.close(state, now, true);
     this.sessions.delete(sid);
   }
 
   /** test/diagnostic: sizes of internal maps */
   size(): { sessions: number; closed: number; open: number } {
     let open = 0;
-    for (const st of this.sessions.values()) if (st.open) open++;
+    for (const state of this.sessions.values()) if (state.open) open++;
     return { sessions: this.sessions.size, closed: this.closed.length, open };
   }
 }

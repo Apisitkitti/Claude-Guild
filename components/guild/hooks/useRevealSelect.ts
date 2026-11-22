@@ -3,7 +3,7 @@ import { useCallback } from "react";
 import type { OfficeRef } from "../types";
 
 /** Select an adventurer; if the query filter hides it, relax the filter first (also used by notification clicks). */
-export function useRevealSelect(officeRef: OfficeRef, setFq: (q: string) => void) {
+export const useRevealSelect = (officeRef: OfficeRef, setFq: (query: string) => void) => {
   return useCallback(
     (id: string) => {
       const off = officeRef.current;
@@ -19,4 +19,4 @@ export function useRevealSelect(officeRef: OfficeRef, setFq: (q: string) => void
     },
     [officeRef, setFq],
   );
-}
+};

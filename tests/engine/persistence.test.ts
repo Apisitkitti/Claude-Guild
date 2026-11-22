@@ -19,70 +19,80 @@ afterEach(() => {
 
 const sim = () => ({ update: vi.fn(), addSession: vi.fn() });
 
-function earn(o: Office, id: string) {
-  const e = emp(o, id);
-  e.monHp = 1;
-  o.event(ev(id, "PostToolUse", { tool_name: "Read" }));
-  return e;
-}
+const earn = (office: Office, id: string) => {
+  const employee = emp(office, id);
+  employee.monHp = 1;
+  office.event(ev(id, "PostToolUse", { tool_name: "Read" }));
+  return employee;
+};
 
 describe("persistence", () => {
   it("works with no localStorage at all", () => {
     vi.stubGlobal("localStorage", undefined);
-    const o = newOffice();
+    const office = newOffice();
     const id = sid();
-    seat(o, id);
-    earn(o, id);
-    expect(() => tick(o, 5)).not.toThrow();
+    seat(office, id);
+    earn(office, id);
+    expect(() => tick(office, 5)).not.toThrow();
   });
 
   it("survives corrupt storage", () => {
     stubStorage({ [PROGRESS_KEY]: "{not json" });
-    const o = newOffice();
-    expect(o.treasury).toBe(0);
+    const office = newOffice();
+    expect(office.treasury).toBe(0);
   });
 
   it("saves progress (throttled, via update) and a fresh Office restores it", () => {
     const { ls, m } = stubStorage();
-    const o = newOffice();
+    const office = newOffice();
     const id = sid();
-    seat(o, id);
-    const e = earn(o, id);
-    tick(o, 3);
+    seat(office, id);
+    const employee = earn(office, id);
+    tick(office, 3);
     expect(ls.setItem).toHaveBeenCalled();
     const j = JSON.parse(m.get(PROGRESS_KEY)!);
-    expect(j.treasury).toBe(o.treasury);
-    expect(j.sessions[id]).toMatchObject({ xp: e.xp, lv: e.lv, gold: e.gold, kills: e.kills });
+    expect(j.treasury).toBe(office.treasury);
+    expect(j.sessions[id]).toMatchObject({
+      xp: employee.xp,
+      lv: employee.lv,
+      gold: employee.gold,
+      kills: employee.kills,
+    });
 
     const o2 = newOffice();
-    expect(o2.treasury).toBe(o.treasury);
+    expect(o2.treasury).toBe(office.treasury);
     o2.event(ev(id, "SessionStart"));
-    const r = emp(o2, id);
-    expect([r.xp, r.lv, r.gold, r.kills]).toEqual([e.xp, e.lv, e.gold, e.kills]);
+    const restored = emp(o2, id);
+    expect([restored.xp, restored.lv, restored.gold, restored.kills]).toEqual([
+      employee.xp,
+      employee.lv,
+      employee.gold,
+      employee.kills,
+    ]);
   });
 
   it("writes are throttled to once per 2s of real time", () => {
     const { ls } = stubStorage();
-    const o = newOffice();
+    const office = newOffice();
     const id = sid();
-    seat(o, id);
-    tick(o, 3);
-    earn(o, id);
-    o.update(0.1);
+    seat(office, id);
+    tick(office, 3);
+    earn(office, id);
+    office.update(0.1);
     expect(ls.setItem).toHaveBeenCalledTimes(1);
     ls.setItem.mockClear();
-    earn(o, id);
-    o.update(0.1);
+    earn(office, id);
+    office.update(0.1);
     expect(ls.setItem).not.toHaveBeenCalled();
-    tick(o, 2.2);
+    tick(office, 2.2);
     expect(ls.setItem).toHaveBeenCalledTimes(1);
   });
 
   it("does not write when nothing changed", () => {
     const { ls } = stubStorage();
-    const o = newOffice();
-    seat(o, sid());
-    tick(o, 10);
+    const office = newOffice();
+    seat(office, sid());
+    tick(office, 10);
     expect(ls.setItem).not.toHaveBeenCalled();
   });
 
@@ -98,14 +108,14 @@ describe("persistence", () => {
         treasury: 5,
       }),
     });
-    const o = newOffice();
-    o.event(ev(old, "SessionStart"));
-    o.event(ev(fresh, "SessionStart"));
-    expect(emp(o, old).lv).toBe(1);
-    expect(emp(o, fresh).lv).toBe(5);
-    seat(o, fresh);
-    earn(o, fresh);
-    tick(o, 3);
+    const office = newOffice();
+    office.event(ev(old, "SessionStart"));
+    office.event(ev(fresh, "SessionStart"));
+    expect(emp(office, old).lv).toBe(1);
+    expect(emp(office, fresh).lv).toBe(5);
+    seat(office, fresh);
+    earn(office, fresh);
+    tick(office, 3);
     expect(Object.keys(JSON.parse(m.get(PROGRESS_KEY)!).sessions)).toEqual([fresh]);
   });
 
@@ -117,11 +127,11 @@ describe("persistence", () => {
         treasury: -3,
       }),
     });
-    const o = newOffice();
-    o.event(ev(id, "SessionStart"));
-    const e = emp(o, id);
-    expect([e.xp, e.lv, e.gold, e.kills]).toEqual([0, 1, 0, 2]);
-    expect(o.treasury).toBe(0);
+    const office = newOffice();
+    office.event(ev(id, "SessionStart"));
+    const employee = emp(office, id);
+    expect([employee.xp, employee.lv, employee.gold, employee.kills]).toEqual([0, 1, 0, 2]);
+    expect(office.treasury).toBe(0);
   });
 
   it("a thrown setItem (quota) is swallowed", () => {
@@ -129,11 +139,11 @@ describe("persistence", () => {
     ls.setItem.mockImplementation(() => {
       throw new Error("quota");
     });
-    const o = newOffice();
+    const office = newOffice();
     const id = sid();
-    seat(o, id);
-    earn(o, id);
-    expect(() => tick(o, 3)).not.toThrow();
+    seat(office, id);
+    earn(office, id);
+    expect(() => tick(office, 3)).not.toThrow();
   });
 });
 
@@ -146,93 +156,93 @@ describe("demo mode (attachSim)", () => {
         treasury: 42,
       }),
     });
-    const o = newOffice();
-    expect(o.treasury).toBe(42);
-    o.attachSim(sim());
-    expect(o.treasury).toBe(0);
-    seat(o, id);
-    const e = emp(o, id);
-    expect(e.lv).toBe(1); // saved progress ignored in demo
-    earn(o, id);
-    e.xp = 9999;
-    tick(o, 10);
+    const office = newOffice();
+    expect(office.treasury).toBe(42);
+    office.attachSim(sim());
+    expect(office.treasury).toBe(0);
+    seat(office, id);
+    const employee = emp(office, id);
+    expect(employee.lv).toBe(1); // saved progress ignored in demo
+    earn(office, id);
+    employee.xp = 9999;
+    tick(office, 10);
     expect(ls.setItem).not.toHaveBeenCalled();
   });
 
   it("calls the sim every update and exposes addSession", () => {
     stubStorage();
-    const o = newOffice();
-    const s = sim();
-    o.attachSim(s);
-    tick(o, 0.5, 0.1);
-    expect(s.update).toHaveBeenCalledTimes(5);
-    o.addSession();
-    expect(s.addSession).toHaveBeenCalled();
+    const office = newOffice();
+    const simulator = sim();
+    office.attachSim(simulator);
+    tick(office, 0.5, 0.1);
+    expect(simulator.update).toHaveBeenCalledTimes(5);
+    office.addSession();
+    expect(simulator.addSession).toHaveBeenCalled();
   });
 
   it("flushes pending real progress when entering demo, then leaving demo reloads it", () => {
     const { m } = stubStorage();
-    const o = newOffice();
+    const office = newOffice();
     const id = sid();
-    seat(o, id);
-    earn(o, id);
-    const real = o.treasury;
+    seat(office, id);
+    earn(office, id);
+    const real = office.treasury;
     expect(real).toBeGreaterThan(0);
-    o.attachSim(sim());
+    office.attachSim(sim());
     expect(JSON.parse(m.get(PROGRESS_KEY)!).treasury).toBe(real);
-    o.attachSim(null);
-    expect(o.treasury).toBe(real);
+    office.attachSim(null);
+    expect(office.treasury).toBe(real);
   });
 
   it("demo treasury gains are not written even on stop-like forced saves", () => {
     const { ls } = stubStorage();
-    const o = newOffice();
-    o.attachSim(sim());
+    const office = newOffice();
+    office.attachSim(sim());
     const id = sid();
-    seat(o, id);
-    earn(o, id);
-    expect(o.treasury).toBeGreaterThan(0);
-    tick(o, 5);
+    seat(office, id);
+    earn(office, id);
+    expect(office.treasury).toBeGreaterThan(0);
+    tick(office, 5);
     expect(ls.setItem).not.toHaveBeenCalled();
-    o.attachSim(null);
+    office.attachSim(null);
     expect(ls.setItem).not.toHaveBeenCalled();
-    expect(o.treasury).toBe(0);
+    expect(office.treasury).toBe(0);
   });
 });
 
 describe("misc", () => {
   it("pause freezes the sim clock; speed scales it", () => {
     stubStorage();
-    const o = newOffice();
-    o.setPaused(true);
-    o.update(1);
-    expect(o.clock).toBe(0);
-    o.setPaused(false);
-    o.setSpeed(4);
-    o.update(0.5);
-    expect(o.clock).toBeCloseTo(2);
+    const office = newOffice();
+    office.setPaused(true);
+    office.update(1);
+    expect(office.clock).toBe(0);
+    office.setPaused(false);
+    office.setSpeed(4);
+    office.update(0.5);
+    expect(office.clock).toBeCloseTo(2);
   });
 
   it("clear() empties employees and tombstones", () => {
     stubStorage();
-    const o = new Office(makeCanvas());
+    const office = new Office(makeCanvas());
     const id = sid();
-    seat(o, id);
-    o.event(ev(id, "SessionEnd"));
-    o.clear();
-    expect(o.employees.size).toBe(0);
-    o.event(ev(id, "PreToolUse", { tool_name: "Read" }));
-    expect(o.employees.has(id)).toBe(true);
+    seat(office, id);
+    office.event(ev(id, "SessionEnd"));
+    office.clear();
+    expect(office.employees.size).toBe(0);
+    office.event(ev(id, "PreToolUse", { tool_name: "Read" }));
+    expect(office.employees.has(id)).toBe(true);
   });
 
   it("subscribe emits views to listeners and can unsubscribe", () => {
     stubStorage();
-    const o = newOffice();
+    const office = newOffice();
     const cb = vi.fn();
-    const un = o.subscribe(cb);
+    const un = office.subscribe(cb);
     expect(cb).toHaveBeenCalledTimes(1);
     un();
-    o.clear();
+    office.clear();
     expect(cb).toHaveBeenCalledTimes(1);
   });
 });

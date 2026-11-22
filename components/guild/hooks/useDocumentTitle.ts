@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 /** Tab title badge: 🔔 queue, ❗ waiting, ⚔️ clashes. Restores the original title on unmount. */
-export function useDocumentTitle({ waitingN, clashN, bellN }: { waitingN: number; clashN: number; bellN: number }) {
+export const useDocumentTitle = ({ waitingN, clashN, bellN }: { waitingN: number; clashN: number; bellN: number }) => {
   const baseTitle = useRef<string | null>(null);
   useEffect(() => {
     baseTitle.current = document.title;
@@ -18,4 +18,4 @@ export function useDocumentTitle({ waitingN, clashN, bellN }: { waitingN: number
     ].filter(Boolean);
     document.title = parts.length ? `${parts.join(" ")} Claude Guild` : baseTitle.current;
   }, [waitingN, clashN, bellN]);
-}
+};
