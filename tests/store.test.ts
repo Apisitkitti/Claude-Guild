@@ -221,3 +221,66 @@ describe("store territory", () => {
     expect(territories().at(-1)).toEqual({ claims: [], conflicts: [] });
   });
 });
+
+describe("store attention (Lookout Bell)", () => {
+  const frames = () => sent.filter((c) => c.startsWith("event: attention")).map((c) => JSON.parse(c.split("data: ")[1]) as { kind: string; sid: string }[]);
+  const failBash = (sid: string, i: number) =>
+    ev(sid, "PostToolUseFailure", { tool_name: "Bash", tool_input: { command: "npm test" }, error: "boom 1", tool_use_id: "t" + i });
+
+  it("detects a loop from RAW events, broadcasts an attention frame, never leaks the message", () => {
+    readContext.mockResolvedValue(null);
+    ev("a1", "SessionStart");
+    for (let i = 0; i < 3; i++) failBash("a1", i);
+    const last = frames().at(-1)!;
+    expect(last.map((r) => r.kind)).toEqual(["loop"]);
+    expect(m.snapshot().attention.map((r) => r.kind)).toEqual(["loop"]);
+    ev("a1", "UserPromptSubmit");
+    expect(frames().at(-1)).toEqual([]);
+  });
+
+  it("reads last_assistant_message before it is stripped; stored events never contain it", () => {
+    readContext.mockResolvedValue(null);
+    ev("a2", "SessionStart");
+    ev("a2", "Stop", { last_assistant_message: "ใช้ Prisma ไหมครับ?" });
+    expect(m.snapshot().attention[0]).toMatchObject({ kind: "asked", sid: "a2" });
+    expect(JSON.stringify(m.snapshot().events)).not.toContain("Prisma");
+  });
+
+  it("permission waits become rows with waitingSince and clear on activity", () => {
+    readContext.mockResolvedValue(null);
+    ev("a3", "SessionStart");
+    ev("a3", "PermissionRequest");
+    const s = m.snapshot();
+    expect(s.sessions[0].waitingSince).toEqual(expect.any(Number));
+    expect(s.attention[0]).toMatchObject({ kind: "permission", sid: "a3" });
+    ev("a3", "PostToolUse");
+    expect(m.snapshot().attention).toEqual([]);
+    expect(m.snapshot().sessions[0].waitingSince).toBeNull();
+  });
+
+  it("context >= 85% adds a row; SessionEnd drops the session's rows", async () => {
+    readContext.mockResolvedValue(ctx(180000));
+    ev("a4", "SessionStart");
+    await flush();
+    expect(m.snapshot().attention.map((r) => r.kind)).toContain("context");
+    ev("a4", "SessionEnd");
+    expect(m.snapshot().attention).toEqual([]);
+  });
+
+  it("a guessed context limit never raises the context row", async () => {
+    readContext.mockResolvedValue({ used: 190000, limit: 200000, limitGuessed: true });
+    ev("a6", "SessionStart");
+    await flush();
+    expect(m.snapshot().attention.map((r) => r.kind)).not.toContain("context");
+  });
+
+  it("sweep timer expires old done rows", async () => {
+    readContext.mockResolvedValue(null);
+    ev("a5", "SessionStart");
+    ev("a5", "Stop", { last_assistant_message: "ok" });
+    expect(m.snapshot().attention).toHaveLength(1);
+    ev("a5b", "SessionStart");
+    await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
+    expect(m.snapshot().attention).toEqual([]);
+  });
+});

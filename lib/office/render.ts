@@ -1334,6 +1334,37 @@ function drawFx(c: Ctx, e: Employee, t: number, o: Office) {
   }
 }
 
+/** sessions in a failure loop this frame (set once per render from the engine) */
+let LOOPING: ReadonlySet<string> = new Set();
+
+/** drawn for a looping adventurer this frame (🔁 badge + berserk marks) */
+function isLooping(e: Employee): boolean {
+  return LOOPING.has(e.id) && e.state !== "LEAVING" && e.state !== "DRINK";
+}
+
+/** "Berserk": opaque red vein mark + steam puffs beside the head. Rects only, nothing translucent. */
+function drawBerserk(c: Ctx, e: Employee, t: number, still: boolean) {
+  duelOffsetInto(e, t);
+  const hx = Math.round(e.x + DP.dx), hy = Math.round(e.y + DP.dy - CH_H);
+  // anger vein (red cross-hatch) at the temple
+  const vx = hx + 4, vy = hy + 1;
+  rect(c, INK, vx - 1, vy - 1, 6, 6);
+  rect(c, "#e23b3b", vx, vy, 2, 1); rect(c, "#e23b3b", vx, vy + 1, 1, 1);
+  rect(c, "#e23b3b", vx + 3, vy, 1, 2); rect(c, "#e23b3b", vx + 2, vy + 3, 2, 1);
+  rect(c, "#e23b3b", vx, vy + 3, 1, 1); rect(c, "#ff8a7a", vx + 1, vy + 1, 1, 1);
+  // two steam puffs rising off the head (opaque pixels that step up and reset; still frame when reduced motion).
+  // Kept >= 11px to the side of the head so they never touch the ❗/🔁 bubble above it; skipped in duels (HP pips live there).
+  if (e.duel) return;
+  for (let i = 0; i < 2; i++) {
+    const u = still ? 0.4 : ((t * 1.3 + i * 0.5) % 1);
+    const px = hx + (i ? 13 : -15) + (still ? 0 : Math.round(Math.sin(t * 4 + i) * 1));
+    const py = hy - 1 - Math.floor(u * 7);
+    const sz = u < 0.5 ? 3 : 2;
+    rect(c, INK, px - 1, py - 1, sz + 2, sz + 2);
+    rect(c, u < 0.75 ? "#f4f4f4" : "#cfd3dc", px, py, sz, sz);
+  }
+}
+
 function bubbleOf(e: Employee, t: number): string | null {
   if (e.state === "DRINK") return "🍺";
   if (e.state !== "SEATED") return null;
@@ -1400,12 +1431,22 @@ function drawTag(c: Ctx, e: Employee, topY: number, dx = 0) {
 }
 
 // ---------- guild receptionist ----------
-function drawNpc(c: Ctx, t: number) {
+function drawNpc(c: Ctx, t: number, o: Office) {
   const spr = charSprite(lookFor("guild-receptionist-npc"), "idle", Math.floor(t * 1.2) % 2);
   c.save();
   c.beginPath(); c.rect(0, 0, W, COUNTER_BOX.y + 1); c.clip(); // counter hides the legs
   c.drawImage(spr, Math.round(NPC_POS.x - CH_W / 2), Math.round(NPC_POS.y - CH_H));
   c.restore();
+  // Lookout Bell: while someone needs the user the receptionist rings the counter bell (opaque swing; static when idle / reduced motion)
+  if (o.bellRinging()) {
+    const ph = o.reducedMotion ? 0 : Math.floor(t * 8) % 4;
+    const dx = ph === 1 ? -1 : ph === 3 ? 1 : 0;
+    rect(c, "#d9a441", 106 + dx, 43, 6, 3); rect(c, "#f6d88a", 107 + dx, 42, 4, 1);
+    rect(c, "#8a6a42", 108 + dx, 46, 2, 1);
+    if (dx < 0) { rect(c, "#fff6d0", 104, 42, 1, 2); rect(c, "#fff6d0", 103, 40, 1, 1); }
+    else if (dx > 0) { rect(c, "#fff6d0", 107, 40, 1, 1); rect(c, "#fff6d0", 111, 40, 1, 1); }
+    else if (o.reducedMotion) { rect(c, "#fff6d0", 104, 42, 1, 2); rect(c, "#fff6d0", 115, 42, 1, 2); rect(c, "#fff6d0", 109, 40, 1, 1); } // static "ringing" cue
+  }
 }
 
 // ---------- scene ----------
@@ -1472,7 +1513,8 @@ export function drawScene(c: Ctx, o: Office) {
   drawLights(c, t);
   drawAmbientBelow(c, o, night);
   drawAmbientAbove(c, o, night);
-  drawNpc(c, t);
+  drawNpc(c, t, o);
+  LOOPING = o.loopIds;
 
   // resting campfire glow + rain go under every entity so characters stay crisp
   for (const e of o.employees.values()) {
@@ -1537,21 +1579,24 @@ export function drawScene(c: Ctx, o: Office) {
       if (Math.floor(t * 4) % 2 === 0 || o.selectedId === e.id) drawAlert(c, e.x, e.y - CH_H - 1);
     } else {
       const em = bubbleOf(e, t);
-      if (em) drawBubble(c, e.x, e.y - CH_H - 1, em);
+      // opaque 🔁 badge over a looping adventurer; alternates with any other bubble (static under reduced motion)
+      if (isLooping(e) && (!em || o.reducedMotion || Math.floor(t * 1.5) % 2 === 0)) drawBubble(c, e.x, e.y - CH_H - 1, "🔁");
+      else if (em) drawBubble(c, e.x, e.y - CH_H - 1, em);
     }
+    if (isLooping(e)) drawBerserk(c, e, t, o.reducedMotion);
     const lu = t - e.lvlAt;
     if (lu >= 0 && lu < 2.2 && e.state !== "LEAVING") {
       const u = lu / 2.2;
       c.globalAlpha = u > 0.75 ? (1 - u) / 0.25 : 1;
       c.font = '800 7.5px ui-sans-serif, system-ui, sans-serif'; c.textAlign = "center"; c.textBaseline = "middle";
-      const ly = Math.round(e.y - CH_H - 20 - (bubbleOf(e, t) || e.act === "handup" ? 15 : 0) - eob(Math.min(1, lu * 2)) * 6);
+      const ly = Math.round(e.y - CH_H - 20 - (bubbleOf(e, t) || e.act === "handup" || isLooping(e) ? 15 : 0) - eob(Math.min(1, lu * 2)) * 6);
       outlined(c, `LEVEL UP! Lv.${e.lvlTo}`, Math.max(34, Math.min(W - 34, Math.round(e.x))), ly, "#ffe14a");
       c.globalAlpha = 1;
     }
     if (o.selectedId === e.id) {
       const bounce = Math.floor(o.realTime * 4) % 2;
       duelOffsetInto(e, t);
-      const ax = Math.round(e.x + DP.dx), ay = Math.round(e.y + DP.dy - 28 - (bubbleOf(e, t) || e.act === "handup" ? 16 : 0) - bounce);
+      const ax = Math.round(e.x + DP.dx), ay = Math.round(e.y + DP.dy - 28 - (bubbleOf(e, t) || e.act === "handup" || isLooping(e) ? 16 : 0) - bounce);
       rect(c, "#f2c14e", ax - 3, ay - 3, 7, 1); rect(c, "#f2c14e", ax - 2, ay - 2, 5, 1);
       rect(c, "#f2c14e", ax - 1, ay - 1, 3, 1); rect(c, "#f2c14e", ax, ay, 1, 1);
     }
@@ -1562,7 +1607,7 @@ export function drawScene(c: Ctx, o: Office) {
     c.globalAlpha = 0.9;
     rect(c, "#f2c14e", Math.round(hv.x + DP.dx - CH_W / 2) - 1, Math.round(hv.y + DP.dy - CH_H) - 1, CH_W + 2, 1);
     c.globalAlpha = 1;
-    drawTag(c, hv, hv.y + DP.dy - CH_H - 3 - (bubbleOf(hv, t) || (hv.state === "SEATED" && hv.act === "handup") ? 17 : 0), DP.dx);
+    drawTag(c, hv, hv.y + DP.dy - CH_H - 3 - (bubbleOf(hv, t) || (hv.state === "SEATED" && hv.act === "handup") || isLooping(hv) ? 17 : 0), DP.dx);
   }
   c.restore(); // end of shaken scene; screen-space overlays below
   drawAlertVignette(c, o);

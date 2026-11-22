@@ -31,7 +31,29 @@ export interface TerritoryMsg { claims: { sid: string; files: string[] }[]; conf
 export interface ConflictRow { key: string; file: string; sids: string[]; names: string[]; level: "overlap" | "clash"; since: number }
 export const conflictKey = (c: { file: string; level: string }): string => `${c.file}|${c.level}`;
 
+export type AttentionKind = "permission" | "loop" | "asked" | "context" | "done";
+/** a row of the server's Lookout Bell queue */
+export interface AttentionMsgRow { key: string; sid: string; kind: AttentionKind; since: number; text: string; detail?: string; copy?: string }
+/** a queue row joined with the adventurer it is about (only sessions the guild knows) */
+export interface AttentionRow extends AttentionMsgRow { tag: string; project: string }
+/** rows that make the bell ring (the tab title leaves permission out: the ❗ already counts it) */
+export function bellCount(rows: readonly { kind: AttentionKind }[], withPermission = true): number {
+  let n = 0;
+  for (const r of rows) if (r.kind === "loop" || r.kind === "asked" || (withPermission && r.kind === "permission")) n++;
+  return n;
+}
+const ATTN_KINDS: readonly string[] = ["permission", "loop", "asked", "context", "done"];
+/** ids of the next queue row after the selected one (wraps); first row when nothing in the queue is selected */
+export function nextAttentionId(rows: readonly { sid: string }[], selectedId: string | null): string | null {
+  const ids: string[] = [];
+  for (const r of rows) if (!ids.includes(r.sid)) ids.push(r.sid);
+  if (!ids.length) return null;
+  const i = selectedId ? ids.indexOf(selectedId) : -1;
+  return ids[(i + 1) % ids.length];
+}
+
 export interface SnapshotMsg {
+  attention?: AttentionMsgRow[];
   territory?: TerritoryMsg;
   sessions?: { session_id: string; cwd?: string; interns?: string[]; context?: CtxMsg | null; waiting?: boolean }[];
   events?: HookEvt[];
@@ -417,8 +439,10 @@ export interface OfficeView {
   waiting?: WaitingRow[];
   /** live territory conflicts (non-dismissed), unfiltered like `waiting` */
   conflicts?: ConflictRow[];
+  /** Lookout Bell queue (non-dismissed rows of adventurers the guild knows, already ordered) */
+  attention?: AttentionRow[];
 }
-export const EMPTY_VIEW: OfficeView = { roster: [], log: [], hoverId: null, selectedId: null, hiddenCount: 0, hiddenIds: [], waiting: [], conflicts: [] };
+export const EMPTY_VIEW: OfficeView = { roster: [], log: [], hoverId: null, selectedId: null, hiddenCount: 0, hiddenIds: [], waiting: [], conflicts: [], attention: [] };
 
 declare global {
   interface Window { officeEvent?: (evt: HookEvt) => void }
@@ -499,6 +523,13 @@ export class Office {
   /** territory (server state, full replacement). Dismissals are per conflictKey; never persisted. */
   private claimN = new Map<string, number>();
   private conflicts: TerritoryConflict[] = [];
+  /** Lookout Bell queue (server state, full replacement) and per-row-key dismissals; never persisted */
+  private attn: AttentionMsgRow[] = [];
+  private attnDismissed = new Set<string>();
+  private attnVer = 0;
+  /** sessions with a live, non-dismissed loop row (drawn as "berserk") */
+  readonly loopIds = new Set<string>();
+  private attnRowsCache: AttentionRow[] | null = null;
   /** key -> Infinity while the conflict is live, else the time its dismissal expires (kept briefly so clash->overlap flaps stay dismissed) */
   private dismissed = new Map<string, number>();
   /** clash conflictKeys already fought out by a finished duel: their contested strip / flag / link are no longer drawn */
@@ -521,7 +552,7 @@ export class Office {
   private tmpPt: Pt = { x: 0, y: 0 };
   private terrFxAt = 0;
   private terrVer = 0;
-  private bumpTerr() { this.terrVer++; this.rowsCache = null; }
+  private bumpTerr() { this.terrVer++; this.rowsCache = null; this.attnRowsCache = null; }
   private filter: GuildFilter = { query: "", hideStray: false };
   /** isHidden cache; invalidated by bumping hidVer (filter/events/snapshot) or when the act changes */
   private hidVer = 0;
@@ -725,6 +756,47 @@ export class Office {
   addSession() { this.sim?.addSession(); }
   setSpeed(n: number) { this.speed = n; }
   setPaused(b: boolean) { this.paused = b; }
+  /** Replace the Lookout Bell queue. Malformed rows are skipped; dismissals of rows that vanished are forgotten. */
+  setAttention(rows: AttentionMsgRow[] | null | undefined) {
+    const out: AttentionMsgRow[] = [];
+    if (Array.isArray(rows)) {
+      for (const r of rows.slice(0, 50)) {
+        if (!r || typeof r !== "object" || typeof r.sid !== "string" || !r.sid || typeof r.key !== "string" || !r.key) continue;
+        if (!ATTN_KINDS.includes(r.kind) || typeof r.text !== "string") continue;
+        out.push({
+          key: r.key.slice(0, 200), sid: r.sid, kind: r.kind, since: Number.isFinite(Number(r.since)) ? Number(r.since) : 0, text: r.text.slice(0, 200),
+          ...(typeof r.detail === "string" ? { detail: r.detail.slice(0, 200) } : {}),
+          ...(typeof r.copy === "string" ? { copy: r.copy.slice(0, 600) } : {}),
+        });
+      }
+    }
+    const keys = new Set(out.map((r) => r.key));
+    for (const k of this.attnDismissed) if (!keys.has(k)) this.attnDismissed.delete(k);
+    this.attn = out;
+    this.bumpAttn();
+  }
+  dismissAttention(key: string) { if (this.attn.some((r) => r.key === key)) { this.attnDismissed.add(key); this.bumpAttn(); } }
+  private bumpAttn() {
+    this.attnVer++; this.attnRowsCache = null;
+    this.loopIds.clear();
+    for (const r of this.attn) if (r.kind === "loop" && !this.attnDismissed.has(r.key)) this.loopIds.add(r.sid);
+    this.dirty = true;
+  }
+  /** rows to show: not dismissed, session known to the guild */
+  attentionRows(): AttentionRow[] {
+    if (this.attnRowsCache) return this.attnRowsCache;
+    const out: AttentionRow[] = [];
+    for (const r of this.attn) {
+      const e = this.employees.get(r.sid);
+      if (!e || this.attnDismissed.has(r.key)) continue;
+      out.push({ ...r, tag: e.tag, project: e.project });
+    }
+    return (this.attnRowsCache = out);
+  }
+  /** the bell rings while someone needs the user right now */
+  bellRinging(): boolean {
+    return bellCount(this.attentionRows()) > 0;
+  }
   setHover(id: string | null) { if (this.hoverId !== id) { this.hoverId = id; this.dirty = true; } }
   select(id: string | null) { this.selectedId = id; this.selectedUntil = this.realTime + 3; this.dirty = true; }
 
@@ -736,6 +808,7 @@ export class Office {
     this.ended.clear();
     this.endedAgents.clear();
     this.ctxMap.clear();
+    this.attn = []; this.attnDismissed.clear(); this.bumpAttn();
     this.claimN.clear(); this.conflicts = []; this.dismissed.clear(); this.seenClash.clear(); this.seenOverlap.clear(); this.pendingClash.clear(); this.bumpTerr();
     this.duels.length = 0; this.duelAt.clear(); this.duelWait.clear(); this.glareAt.clear(); this.tugs.length = 0; this.editFailAt.clear();
     for (const p of this.particles) p.on = false;
@@ -1195,7 +1268,7 @@ export class Office {
 
   private signature(): string {
     let s = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
-    s += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}`;
+    s += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}`;
     for (const e of this.employees.values()) {
       if (this.isHidden(e)) { s += `;h${e.id}${this.isWaiting(e) ? "w" + this.statusOf(e) : ""}`; continue; }
       const cf = this.ctxFrac(e.id);
@@ -1242,7 +1315,7 @@ export class Office {
         interns: e.interns.size, internList: [...e.interns.values()].map(internRow), desk: e.deskIdx, look: e.look, act: this.rosterAct(e),
         level: e.lv, xp: e.xp, xpNext: xpNeed(e.lv), gold: e.gold, kills: e.kills, hp: e.hearts, hpMax: MAX_HEARTS,
       };});
-    return { roster, log: this.log.slice(), hoverId: this.hoverId, selectedId: this.selectedId, treasury: this.treasury, hiddenCount, hiddenIds, waiting, conflicts };
+    return { roster, log: this.log.slice(), hoverId: this.hoverId, selectedId: this.selectedId, treasury: this.treasury, hiddenCount, hiddenIds, waiting, conflicts, attention: this.attentionRows() };
   }
 
   private rosterAct(e: Employee): RosterAct {
@@ -1674,6 +1747,7 @@ export class Office {
     for (const e of [...this.employees.values()]) if (!ids.has(e.id)) { e.returning = false; this.leave(e); }
     if (!this.log.length) for (const ev of [...(snap.events ?? [])]) this.pushLog(ev);
     if (snap.territory !== undefined) this.setTerritory(snap.territory, true);
+    if (snap.attention !== undefined) this.setAttention(snap.attention);
     this.hidVer++;
     this.dirty = true;
   }

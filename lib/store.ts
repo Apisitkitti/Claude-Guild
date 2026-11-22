@@ -1,5 +1,6 @@
 import { readContext, type ContextUsage } from "@/lib/transcript";
 import { TerritoryTracker } from "@/lib/territory";
+import { AttentionTracker, type AttentionRow } from "@/lib/attention";
 
 // In-memory event + session store shared by route handlers.
 // Kept on globalThis so it survives dev hot-reloads and is shared across route modules.
@@ -26,6 +27,8 @@ type Session = {
   context: ContextUsage | null;
   /** main agent is blocked on the user (permission prompt) — lets a reloaded page restore the ❗ */
   waiting: boolean;
+  /** when `waiting` last turned true (cleared with it) */
+  waitingSince: number | null;
 };
 
 type Client = (chunk: string) => void;
@@ -45,16 +48,18 @@ type Store = {
   ctxSeq: Map<string, number>; // per-session sequence; in-flight reads with a stale seq are dropped
   ctxInflight: number;
   territory: TerritoryTracker;
+  attention: AttentionTracker;
+  attentionJson: string;
 };
 
-const STORE_VERSION = 8; // bump when Store shape changes so dev HMR rebuilds it
+const STORE_VERSION = 10; // bump when Store shape changes so dev HMR rebuilds it
 
 const g = globalThis as typeof globalThis & { __claudeOffice?: Store & { version?: number } };
 
 type Timers = { ping: ReturnType<typeof setInterval>; sweep: ReturnType<typeof setInterval> };
 
 function createStore(): Store & { version: number; timers: Timers } {
-  const store = { events: [], sessions: new Map(), ended: new Map(), clients: new Set(), ctxTimers: new Map(), ctxSeq: new Map(), ctxInflight: 0, territory: new TerritoryTracker(), startedAt: Date.now(), version: STORE_VERSION } as unknown as Store & {
+  const store = { events: [], sessions: new Map(), ended: new Map(), clients: new Set(), ctxTimers: new Map(), ctxSeq: new Map(), ctxInflight: 0, territory: new TerritoryTracker(), attention: new AttentionTracker(), attentionJson: "[]", startedAt: Date.now(), version: STORE_VERSION } as unknown as Store & {
     version: number;
     timers: Timers;
   };
@@ -65,6 +70,8 @@ function createStore(): Store & { version: number; timers: Timers } {
     const tombCutoff = Date.now() - TOMBSTONE_MS;
     for (const [id, at] of store.ended) if (at < tombCutoff) store.ended.delete(id);
     if (store.territory.sweep(Date.now())) broadcastTerritory(store);
+    store.attention.sweep(Date.now());
+    refreshAttention(store);
   }, 30_000);
   ping.unref?.();
   sweep.unref?.();
@@ -102,7 +109,21 @@ function broadcastTerritory(s: Store) {
   broadcastRaw(s, `event: territory\ndata: ${JSON.stringify(s.territory.snapshot())}\n\n`);
 }
 
+function attentionQueue(s: Store): AttentionRow[] {
+  return s.attention.queue(Date.now());
+}
+
+/** recompute the Lookout Bell queue; broadcast iff it changed. Never persisted. */
+function refreshAttention(s: Store) {
+  const json = JSON.stringify(attentionQueue(s));
+  if (json === s.attentionJson) return;
+  s.attentionJson = json;
+  broadcastRaw(s, `event: attention\ndata: ${json}\n\n`);
+}
+
 function dropSession(id: string) {
+  store.attention.dropSession(id);
+  refreshAttention(store);
   if (store.territory.dropSession(id, Date.now())) broadcastTerritory(store);
   store.sessions.delete(id);
   const t = store.ctxTimers.get(id);
@@ -153,10 +174,15 @@ function scheduleContext(id: string, transcriptPath: string) {
         if ("compacted" in c) {
           s.context = null;
           broadcastContext(id, null);
+          store.attention.setContext(id, null, Date.now());
+          refreshAttention(store);
           return;
         }
         s.context = c;
         broadcastContext(id, c);
+        // a guessed limit would raise a false "context nearly full": skip those
+        store.attention.setContext(id, c.limit > 0 && !c.limitGuessed ? c.used / c.limit : null, Date.now());
+        refreshAttention(store);
       })
       .catch(() => {})
       .finally(() => {
@@ -179,6 +205,8 @@ function handleContext(evt: HookEvent, transcriptPath: unknown) {
     const s = store.sessions.get(id)!;
     s.context = null;
     broadcastContext(id, null);
+    store.attention.setContext(id, null, Date.now());
+    refreshAttention(store);
     if (name === "PreCompact") return;
   }
   if (CTX_READ_EVENTS.has(name) && typeof transcriptPath === "string" && transcriptPath) scheduleContext(id, transcriptPath);
@@ -196,7 +224,7 @@ function updateSessions(evt: HookEvent) {
   else if (store.ended.has(id)) return; // late event after SessionEnd: don't resurrect
   let s = store.sessions.get(id);
   if (!s) {
-    s = { session_id: id, cwd: evt.cwd ?? "", firstSeen: evt.receivedAt, lastSeen: evt.receivedAt, lastEvent: null, interns: new Set(), context: null, waiting: false };
+    s = { session_id: id, cwd: evt.cwd ?? "", firstSeen: evt.receivedAt, lastSeen: evt.receivedAt, lastEvent: null, interns: new Set(), context: null, waiting: false, waitingSince: null };
     store.sessions.set(id, s);
     if (store.sessions.size > MAX_SESSIONS) {
       let oldest: string | null = null;
@@ -214,8 +242,13 @@ function updateSessions(evt: HookEvent) {
   s.lastEvent = evt.hook_event_name ?? null;
   if (!evt.agent_id) {
     const n = evt.hook_event_name;
-    if (n === "PermissionRequest" || (n === "Notification" && evt.notification_type === "permission_prompt")) s.waiting = true;
-    else if (n === "PreToolUse" || n === "PostToolUse" || n === "PostToolUseFailure" || n === "UserPromptSubmit" || n === "Stop" || n === "SessionStart") s.waiting = false;
+    if (n === "PermissionRequest" || (n === "Notification" && evt.notification_type === "permission_prompt")) {
+      if (!s.waiting) s.waitingSince = evt.receivedAt;
+      s.waiting = true;
+    } else if (n === "PreToolUse" || n === "PostToolUse" || n === "PostToolUseFailure" || n === "UserPromptSubmit" || n === "Stop" || n === "SessionStart") {
+      s.waiting = false;
+      s.waitingSince = null;
+    }
   }
   if (evt.cwd) s.cwd = evt.cwd;
   // SubagentStart/Stop carry agent_id of the subagent itself.
@@ -264,7 +297,18 @@ export function addEvent(raw: Record<string, unknown>) {
       if (store.territory.onEvent(evt, evt.receivedAt)) broadcastTerritory(store);
     } catch {}
   }
+  if (!lateAfterEnd) {
+    try {
+      store.attention.ingest(raw, evt.receivedAt); // RAW event: tool_response / last_assistant_message are already gone from `evt`
+    } catch {}
+  }
   updateSessions(evt);
+  try {
+    const sid = evt.session_id;
+    const sess = sid ? store.sessions.get(sid) : undefined;
+    if (sid && sess) store.attention.setWaiting(sid, sess.waiting ? sess.waitingSince : null);
+    refreshAttention(store);
+  } catch {}
   logEvent(evt);
   broadcastRaw(store, `data: ${JSON.stringify(evt)}\n\n`);
   try {
@@ -277,6 +321,7 @@ export function snapshot() {
     sessions: [...store.sessions.values()].map((s) => ({ ...s, interns: [...s.interns] })),
     events: store.events.slice(-SNAPSHOT_EVENTS),
     territory: store.territory.snapshot(),
+    attention: attentionQueue(store),
   };
 }
 

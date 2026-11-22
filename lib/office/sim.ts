@@ -1,4 +1,4 @@
-import type { Employee, HookEvt, Office } from "./engine";
+import type { AttentionMsgRow, Employee, HookEvt, Office } from "./engine";
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const randInt = (a: number, b: number) => Math.floor(rand(a, b + 1));
@@ -53,6 +53,8 @@ export class Simulator {
     this.addSession();
     this.nextAdd = o.clock + rand(8, 20);
     this.spawn(this.territory());
+    this.spawn(this.attention());
+    this.spawn(this.attentionSync());
   }
 
   /** how often each class pairing has duelled in this demo (so cycles rotate through sword / magic / arrow matchups) */
@@ -98,6 +100,64 @@ export class Simulator {
         this.o.setTerritory({ claims: [], conflicts: [] });
       }
       yield rand(45, 65);
+    }
+  }
+
+  /** demo-only extra rows (loop / asked); permission rows are derived from whoever really has a hand up */
+  private demoRows: AttentionMsgRow[] = [];
+  private permSince = new Map<string, number>();
+  private attnSig = "";
+  private pushAttention(rows?: AttentionMsgRow[]) {
+    if (rows) this.demoRows = rows;
+    const out: AttentionMsgRow[] = [];
+    const seen = new Set<string>();
+    for (const e of this.o.employees.values()) {
+      if (e.state !== "SEATED" || e.act !== "handup" || !this.active.has(e.id)) continue;
+      seen.add(e.id);
+      let since = this.permSince.get(e.id);
+      if (since === undefined) { since = Date.now(); this.permSince.set(e.id, since); }
+      out.push({ key: `${e.id}|permission|${since}`, sid: e.id, kind: "permission", since, text: "รออนุญาตจากคุณ (permission)" });
+    }
+    for (const id of [...this.permSince.keys()]) if (!seen.has(id)) this.permSince.delete(id);
+    for (const r of this.demoRows) out.push(r);
+    const sig = out.map((r) => r.key + "|" + r.text).join("\n");
+    if (sig === this.attnSig) return;
+    this.attnSig = sig;
+    this.o.setAttention(out);
+  }
+  /** keeps the demo queue in step with who is actually waiting on screen */
+  private *attentionSync(): Gen {
+    for (;;) { this.pushAttention(); yield 1; }
+  }
+
+  /** demo-only: one adventurer loops on a failing command (berserk + queue row), later another leaves a question (bell + row) */
+  private *attention(): Gen {
+    yield rand(14, 22);
+    for (;;) {
+      const live = () => [...this.o.employees.values()].filter((e) => e.state === "SEATED" && this.active.has(e.id));
+      let l = live();
+      if (l.length) {
+        const a = pick(l);
+        const t0 = Date.now();
+        const cmd = pick(["npm test", "npx tsc --noEmit", "pnpm build"]);
+        for (let n = 3; n <= 5; n++) {
+          this.pushAttention([{
+            key: `${a.id}|loop|demo`, sid: a.id, kind: "loop", since: t0, text: `วนลูป: Bash ${cmd} ล้มซ้ำ ${n} ครั้ง`, detail: "Error: expected 3 but received 2",
+            copy: `คุณรัน \`${cmd}\` แล้วล้มด้วย error เดิม ${n} ครั้ง: Error: expected 3 but received 2. หยุดลองซ้ำ อธิบายสาเหตุก่อนแล้วเปลี่ยนวิธี`,
+          }]);
+          yield rand(5, 7);
+        }
+        this.pushAttention([]);
+      }
+      yield rand(10, 16);
+      l = live();
+      if (l.length) {
+        const b = pick(l);
+        this.pushAttention([{ key: `${b.id}|asked|demo`, sid: b.id, kind: "asked", since: Date.now(), text: "น่าจะรอคำตอบคุณ (เดา)", detail: "…ต้องการให้ผมใช้ Prisma หรือ Drizzle ดีไหมครับ?" }]);
+        yield rand(14, 20);
+        this.pushAttention([]);
+      }
+      yield rand(40, 60);
     }
   }
 

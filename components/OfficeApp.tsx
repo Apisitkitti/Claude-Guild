@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { EMPTY_VIEW, Office, type InternRow, type OfficeView, type RosterAct, type RosterRow, type WaitingRow, type ConflictRow } from "@/lib/office/engine";
+import { EMPTY_VIEW, Office, bellCount, nextAttentionId, type AttentionRow, type InternRow, type OfficeView, type RosterAct, type RosterRow, type WaitingRow, type ConflictRow } from "@/lib/office/engine";
 import { charSprite } from "@/lib/office/sprites";
 import { CLASS_LABEL, type Look } from "@/lib/office/palette";
 import { connectLive } from "@/lib/office/live";
@@ -145,6 +145,42 @@ function ConflictItem({ c, onSelect, onDismiss }: { c: ConflictRow; onSelect: (i
   );
 }
 
+const ATTN_ICON: Record<AttentionRow["kind"], string> = { permission: "❗", loop: "🔁", asked: "💬", context: "🗜️", done: "✅" };
+
+function ageText(since: number, now: number): string {
+  const s = Math.max(0, Math.round((now - since) / 1000));
+  if (s < 60) return `รอ ${s} วินาที`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `รอ ${m} นาที` : `รอ ${Math.floor(m / 60)} ชม. ${m % 60} นาที`;
+}
+
+function AttentionItem({ r, now, selected, onSelect, onDismiss }: { r: AttentionRow; now: number; selected: boolean; onSelect: () => void; onDismiss: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    if (!r.copy) return;
+    try {
+      navigator.clipboard.writeText(r.copy).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => {});
+    } catch {}
+  };
+  return (
+    <li className={`attn ${r.kind}${selected ? " hl" : ""}`}>
+      <button type="button" className="asel" onClick={onSelect} title={r.detail ? `${r.text} — ${r.detail}` : r.text}>
+        <span className="aico" aria-hidden="true">{ATTN_ICON[r.kind]}</span>
+        <span className="atxt">
+          <b>{r.tag} <span className="aproj">{r.project}</span></b>
+          <span className="areason">{r.text}</span>
+          {r.detail && <span className="adetail">{r.detail}</span>}
+        </span>
+        <span className="aage">{ageText(r.since, now)}</span>
+      </button>
+      <div className="aact">
+        {r.copy && <button type="button" className="acopy" onClick={copy} title="คัดลอกข้อความไปแปะให้ Claude session นี้">{copied ? "✓ คัดลอกแล้ว" : "📋 Copy"}</button>}
+        <button type="button" className="adismiss" onClick={onDismiss} aria-label={`ปิดแถว ${r.tag}`} title="ปิดแถวนี้">✕</button>
+      </div>
+    </li>
+  );
+}
+
 function Avatar({ look }: { look: Look }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -265,11 +301,50 @@ export default function OfficeApp() {
   const conflicts = useMemo(() => view.conflicts ?? [], [view.conflicts]);
   const clashes = useMemo(() => (mode === "live" ? conflicts.filter((c) => c.level === "clash") : []), [conflicts, mode]);
   const clashN = clashes.length;
+  const attention = useMemo(() => view.attention ?? [], [view.attention]);
+  // permission waits are already counted by the ❗ in the title
+  const bellN = useMemo(() => bellCount(attention, false), [attention]);
+  /** select an adventurer; if the query filter hides it, relax the filter first (also used by notification clicks) */
+  const revealSelect = useCallback((id: string) => {
+    const off = officeRef.current;
+    if (!off) return;
+    if (off.isHidden(off.employees.get(id))) {
+      setFq("");
+      off.setFilter({ query: "" });
+      try { localStorage.setItem("guild.filter", JSON.stringify({ query: "", hideStray: off.getFilter().hideStray })); } catch {}
+    }
+    off.select(id);
+  }, []);
   useEffect(() => {
     if (baseTitle.current === null) return;
-    const parts = [waitingN > 0 ? `❗(${waitingN})` : "", clashN > 0 ? `⚔️(${clashN})` : ""].filter(Boolean);
+    const parts = [bellN > 0 ? `🔔(${bellN})` : "", waitingN > 0 ? `❗(${waitingN})` : "", clashN > 0 ? `⚔️(${clashN})` : ""].filter(Boolean);
     document.title = parts.length ? `${parts.join(" ")} Claude Guild` : baseTitle.current;
-  }, [waitingN, clashN]);
+  }, [waitingN, clashN, bellN]);
+  // age labels tick; `N` jumps to the next adventurer in the queue
+  const [nowMs, setNowMs] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 10000);
+    const first = setTimeout(() => setNowMs(Date.now()), 0);
+    return () => { clearInterval(id); clearTimeout(first); };
+  }, []);
+  const lastN = useRef<string | null>(null);
+  const attentionRef = useRef<AttentionRow[]>([]);
+  const selectedRef = useRef<string | null>(null);
+  useEffect(() => { attentionRef.current = attention; selectedRef.current = view.selectedId; }, [attention, view.selectedId]);
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if ((ev.key !== "n" && ev.key !== "N") || ev.ctrlKey || ev.metaKey || ev.altKey || ev.defaultPrevented) return;
+      const t = ev.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      const rows = attentionRef.current;
+      const id = nextAttentionId(rows, selectedRef.current ?? lastN.current);
+      if (!id) return;
+      lastN.current = id;
+      revealSelect(id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [revealSelect]);
   // null until the first live snapshot has been applied (baseline); reset whenever the data source changes
   const prevClash = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -315,19 +390,12 @@ export default function OfficeApp() {
         });
         n.onclick = () => {
           window.focus();
-          const off = officeRef.current;
-          if (off?.isHidden(off.employees.get(r.id))) {
-            // relax the query filter so the session is visible, then select it
-            setFq("");
-            off.setFilter({ query: "" });
-            try { localStorage.setItem("guild.filter", JSON.stringify({ query: "", hideStray: off.getFilter().hideStray })); } catch {}
-          }
-          off?.select(r.id);
+          revealSelect(r.id);
           n.close();
         };
       } catch {}
     }
-  }, [waiting, view.roster, view.hiddenIds]);
+  }, [waiting, view.roster, view.hiddenIds, revealSelect]);
 
   const toggleCollapsed = () => {
     setCollapsed((c) => {
@@ -400,6 +468,7 @@ export default function OfficeApp() {
       },
       onEvent: (e) => o.event(e),
       onTerritory: (m) => o.setTerritory(m),
+      onAttention: (rows) => o.setAttention(rows),
       onContext: (m) => { if (m && typeof m.session_id === "string") o.setContext(m.session_id, m.used, m.limit, !!m.limitGuessed); },
       onStatus: (s) => {
         if (s === "open") { opened = true; setConn("connected"); } else { errored = true; setConn(opened ? "reconnecting" : "connecting"); }
@@ -533,6 +602,27 @@ export default function OfficeApp() {
           </div>
         </div>
         <aside className="panel" hidden={collapsed}>
+          <h2>
+            <button className="sec" onClick={() => toggleSec("attn")} aria-expanded={!secHidden.attn} aria-controls="sec-attn">
+              {secHidden.attn ? "▸" : "▾"} 🔔 คิวของคุณ <small>({attention.length})</small>
+            </button>
+          </h2>
+          <div className="attnsec" id="sec-attn" hidden={!!secHidden.attn}>
+            <ul className="attns" aria-live="polite">
+              {attention.length === 0 && <li className="empty">ไม่มีใครต้องการคุณตอนนี้</li>}
+              {attention.map((r) => (
+                <AttentionItem
+                  key={r.key}
+                  r={r}
+                  now={nowMs || r.since}
+                  selected={r.sid === view.selectedId}
+                  onSelect={() => { lastN.current = r.sid; revealSelect(r.sid); }}
+                  onDismiss={() => officeRef.current?.dismissAttention(r.key)}
+                />
+              ))}
+            </ul>
+            <p className="terrnote">กด N เพื่อไปคนถัดไปในคิว · “น่าจะรอคำตอบคุณ” เป็นการเดาจากท้ายข้อความ · เตือนได้ แต่ขวางไม่ได้</p>
+          </div>
           <h2>
             <button className="sec" onClick={() => toggleSec("roster")} aria-expanded={!secHidden.roster} aria-controls="sec-roster">
               {secHidden.roster ? "▸" : "▾"} นักผจญภัย <small>({view.roster.length})</small>

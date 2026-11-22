@@ -1,10 +1,11 @@
-import type { HookEvt, SnapshotMsg, TerritoryMsg } from "./engine";
+import type { AttentionMsgRow, HookEvt, SnapshotMsg, TerritoryMsg } from "./engine";
 
 export interface LiveHandlers {
   onSnapshot(s: SnapshotMsg): void;
   onEvent(e: HookEvt): void;
   onContext?(m: { session_id: string; used: number | null; limit: number | null; limitGuessed?: boolean }): void;
   onTerritory?(m: TerritoryMsg): void;
+  onAttention?(rows: AttentionMsgRow[]): void;
   onStatus(s: "open" | "error"): void;
 }
 
@@ -35,6 +36,9 @@ export function connectLive(h: LiveHandlers): { close(): void } {
     });
     src.addEventListener("territory", (ev) => {
       try { h.onTerritory?.(JSON.parse((ev as MessageEvent).data)); } catch { /* ignore bad frame */ }
+    });
+    src.addEventListener("attention", (ev) => {
+      try { h.onAttention?.(JSON.parse((ev as MessageEvent).data)); } catch { /* ignore bad frame */ }
     });
     src.onmessage = (ev) => {
       try { h.onEvent(JSON.parse(ev.data)); } catch { /* ignore bad frame */ }
