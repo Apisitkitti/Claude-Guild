@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=cursor' >/dev/null 2>&1 &); echo '{}'",
+        "timeout": 3
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=cursor' >/dev/null 2>&1 &); echo '{\"continue\":true}'",
+        "timeout": 3
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=cursor' >/dev/null 2>&1 &); echo '{}'",
+        "timeout": 3
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=cursor' >/dev/null 2>&1 &); echo '{}'",
+        "timeout": 3
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=cursor' >/dev/null 2>&1 &); echo '{}'",
+        "timeout": 3
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=cursor' >/dev/null 2>&1 &); echo '{}'",
+        "timeout": 3
+      }
+    ],
+    "stop": [
+      {
+        "command": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=cursor' >/dev/null 2>&1 &); echo '{}'",
+        "timeout": 3
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=cursor' >/dev/null 2>&1 &); true",
+        "timeout": 3
+      }
+    ]
+  }
+}

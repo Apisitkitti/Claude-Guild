@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=sessionStart' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=sessionEnd' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=userPromptSubmitted' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=preToolUse' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=postToolUse' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=postToolUseFailure' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "permissionRequest": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=permissionRequest' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=agentStop' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "subagentStart": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=subagentStart' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "subagentStop": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=subagentStop' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "preCompact": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=preCompact' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ],
+    "notification": [
+      {
+        "type": "command",
+        "bash": "payload=$(cat); (printf '%s' \"$payload\" | curl -s --max-time 1 -X POST -H 'Content-Type: application/json' --data-binary @- 'http://localhost:5050/events?source=copilot&event=notification' >/dev/null 2>&1 &); true",
+        "timeoutSec": 3
+      }
+    ]
+  }
+}
