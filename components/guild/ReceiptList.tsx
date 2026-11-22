@@ -1,6 +1,7 @@
 import { RECEIPT_VERDICT_TEXT, receiptSummary, type ReceiptRow } from "@/lib/office/engine";
 
 import { agoText } from "./format";
+import { useReceiptDismissals } from "./hooks/useReceiptDismissals";
 import { SectionHeading } from "./Section";
 
 function ReceiptItem({
@@ -8,11 +9,13 @@ function ReceiptItem({
   now,
   selected,
   onSelect,
+  onDismiss,
 }: {
   r: ReceiptRow;
   now: number;
   selected: boolean;
   onSelect: () => void;
+  onDismiss: () => void;
 }) {
   const chips: [string, string, number, string][] = [
     ["📝", "ไฟล์", r.files, "แก้ไฟล์สำเร็จ (ไม่ซ้ำ)"],
@@ -53,6 +56,15 @@ function ReceiptItem({
           {r.staleRed && r.verdict !== "red" ? " · ยังแดงจากรอบก่อน" : ""}
         </span>
       </button>
+      <button
+        type="button"
+        className="rdismiss"
+        onClick={onDismiss}
+        aria-label={`ซ่อนใบเสร็จ ${r.tag}`}
+        title="ซ่อนใบนี้"
+      >
+        ✕
+      </button>
     </li>
   );
 }
@@ -72,21 +84,35 @@ export function ReceiptList({
   onToggle: () => void;
   onJump: (sid: string) => void;
 }) {
+  const { visible, dismiss, clearAll } = useReceiptDismissals(rows);
   return (
     <>
-      <SectionHeading id="rcpt" hidden={hidden} onToggle={onToggle} count={rows.length}>
+      <SectionHeading id="rcpt" hidden={hidden} onToggle={onToggle} count={visible.length}>
         📜 ใบเสร็จ
       </SectionHeading>
       <div className="rcptsec" id="sec-rcpt" hidden={hidden}>
+        {visible.length > 0 && (
+          <div className="rcptbar">
+            <button
+              type="button"
+              className="rclear"
+              onClick={clearAll}
+              title="ซ่อนใบเสร็จทั้งหมดตอนนี้ ใบใหม่จะยังขึ้นตามปกติ"
+            >
+              ล้างทั้งหมด
+            </button>
+          </div>
+        )}
         <ul className="rcpts">
-          {rows.length === 0 && <li className="empty">ยังไม่มีใบเสร็จ — ออกเมื่อ session จบรอบ (Stop)</li>}
-          {rows.map((r) => (
+          {visible.length === 0 && <li className="empty">ยังไม่มีใบเสร็จ — ออกเมื่อ session จบรอบ (Stop)</li>}
+          {visible.map((r) => (
             <ReceiptItem
               key={r.id}
               r={r}
               now={now || r.closedAt}
               selected={r.sid === selectedId}
               onSelect={() => onJump(r.sid)}
+              onDismiss={() => dismiss(r.id)}
             />
           ))}
         </ul>
