@@ -1,6 +1,8 @@
 import { m } from "@/paraglide/messages";
 
+import { ToolTally, type DungeonStats } from "./dungeon";
 import {
+  ALLY_PORTAL,
   DESK_COUNT,
   DUEL_HALF,
   WORLD_H,
@@ -9,14 +11,20 @@ import {
   CH_H,
   CH_W,
   DOOR,
+  GATE_MOUTH,
   HEARTH,
+  campSquirePoint,
   duelMidOfDesks,
   monsterSpot,
+  routeBoss,
+  routeFromPortal,
   routeIn,
   routeLeave,
   routePromote,
+  routeToPortal,
   routeToTavern,
   seatPoint,
+  squirePoint,
   type Pt,
 } from "./layout";
 import { BOSS_KINDS, lookFor, MONSTER_KINDS, type BossKind, type Look, type MonsterKind } from "./palette";
@@ -295,6 +303,28 @@ const FX_MON_DEATH = { dx: 4, lift: 12, n: 14, speed: 50, up: 60, life: 0.7 };
 const FX_BOSS_BURST = { dx: 4, lift: 12, n: 16, speed: 56 };
 const FX_MON_FLEE = { dx: 4, lift: 12, n: 10, speed: 36 };
 
+// -- the two gates: boss walk, ally portal, squires, compact trip
+const BOSS_SPEED = 48;
+const SQUIRE_SPEED = 46;
+/** squires step out of the portal at most this often (sim seconds) so a swarm never piles up */
+const SQUIRE_STAGGER_S = 0.7;
+/** squires walking at once (in + out); the rest wait inside the portal */
+const SQUIRE_WALK_MAX = 6;
+const SQUIRE_SLOTS = 2;
+const SQUIRE_SNAP_DIST = 0.5;
+const PORTAL_PULSE_S = 0.6;
+const PORTAL_SWIRL_S = 4;
+const COMPACT_REST_S = 3;
+const COMPACT_BUBBLE_S = 2;
+const MANA_FLASH_S = 1.2;
+const GATE_BURST = { n: 12, speed: 40, up: 30, life: 0.7 };
+const PORTAL_BURST = { n: 8, speed: 26, up: 20, life: 0.6, lift: 6 };
+const PORTAL_COLS = ["#7fe7ee", "#4aa3ff", "#ffffff"];
+const GATE_COLS = ["#ff5a5a", "#ffb870", "#6a2a7a"];
+const MANA_COLS = ["#4aa3ff", "#a98be0", "#ffd75a", "#7fe7ee"];
+const MANA_REFILL_BURST = { n: 10, speed: 30, lift: 10 };
+const LEAVER_MAX = 12;
+
 export interface HookEvt {
   session_id?: string;
   hook_event_name?: string;
@@ -449,7 +479,18 @@ export interface SnapshotMsg {
 }
 
 export type Act = "thinking" | "reading" | "typing" | "bash" | "phone" | "mcp" | "sticky" | "handup";
-export type EState = "ENTERING" | "SEATED" | "STRETCH" | "TO_COFFEE" | "DRINK" | "FROM_COFFEE" | "LEAVING" | "DUEL";
+export type EState =
+  | "ENTERING"
+  | "SEATED"
+  | "STRETCH"
+  | "TO_COFFEE"
+  | "DRINK"
+  | "FROM_COFFEE"
+  | "LEAVING"
+  | "DUEL"
+  | "TO_PORTAL"
+  | "IN_PORTAL"
+  | "FROM_PORTAL";
 
 // ---- territory duels ----
 export type DuelStyle = "sword" | "magic" | "arrow";
@@ -770,6 +811,8 @@ const DUST_COLS = ["#d8c9a0", "#b59a6a", "#ffffff"];
 const styleOf = (cls: string): DuelStyle =>
   cls === "mage" || cls === "cleric" ? "magic" : cls === "ranger" ? "arrow" : "sword";
 
+/** wait = still inside the ally portal; snap = placed straight at its spot (no walk); in = walking out to its master; here = standing at its spot */
+export type InternPhase = "wait" | "snap" | "in" | "here";
 export interface Intern {
   id: string;
   label: string;
@@ -780,6 +823,20 @@ export interface Intern {
   since: number;
   count: number;
   failed?: boolean;
+  /** where it stands now (px) and the walk it is on */
+  x: number;
+  y: number;
+  face: 1 | -1;
+  phase: InternPhase;
+  path: Pt[];
+}
+/** a squire that is done (SubagentStop) and walks back into the ally portal */
+export interface Leaver {
+  id: string;
+  x: number;
+  y: number;
+  face: 1 | -1;
+  path: Pt[];
 }
 export interface InternRow {
   id: string;
@@ -791,13 +848,18 @@ export interface InternRow {
   needsYou: boolean;
   failed: boolean;
 }
-const newIntern = (id: string, label: string, clock: number, born = clock): Intern => ({
+const newIntern = (id: string, label: string, clock: number, born = clock, phase: InternPhase = "wait"): Intern => ({
   id,
   label: label || "squire",
   born,
   act: "idle",
   since: clock,
   count: 0,
+  x: ALLY_PORTAL.x,
+  y: ALLY_PORTAL.y,
+  face: 1,
+  phase,
+  path: [],
 });
 
 export interface Employee {
@@ -816,6 +878,8 @@ export interface Employee {
   state: EState;
   act: Act;
   actSince: number;
+  /** real-time (Office.realTime) when the current hand-up began; the ledger counts waiting on the user in real seconds */
+  handAt: number;
   stateSince: number;
   bubble: string | null;
   tempBubble: { e: string; until: number } | null;
@@ -850,6 +914,12 @@ export interface Employee {
   /** boss currently standing in for the monster (a tool that ran > 30s) */
   boss: BossKind | null;
   bossAt: number;
+  /** Office.realTime when the boss appeared (the longest-fight record is real seconds) */
+  bossReal: number;
+  /** the boss is still walking out of the dungeon gate: remaining waypoints (monPos is its current position) */
+  bossPath: Pt[];
+  /** +1 while the walking boss heads right (its sprite faces left by default) */
+  bossFace: 1 | -1;
   /** progression */
   lv: number;
   xp: number;
@@ -885,6 +955,9 @@ export interface Employee {
   evCount: number;
   /** the server listed this session in a snapshot `sessions` array (a real, tracked session) */
   known: boolean;
+  /** PreCompact seen: the next context reading is the post-compact one (mana bar flashes when it lands) */
+  compactPending: boolean;
+  manaFlashUntil: number;
 }
 
 export interface Particle {
@@ -989,7 +1062,7 @@ export interface WaitingRow {
   status: string;
   hidden: boolean;
 }
-export type RosterAct = Act | "enter" | "leave" | "stretch" | "coffee" | "intern_handup";
+export type RosterAct = Act | "enter" | "leave" | "stretch" | "coffee" | "compact" | "intern_handup";
 export interface RosterRow {
   id: string;
   tag: string;
@@ -1034,7 +1107,21 @@ export interface OfficeView {
   attention?: AttentionRow[];
   /** Receipt Ledger: closed turns, newest first */
   receipts?: ReceiptRow[];
+  /** counters behind the dungeon-gate card */
+  dungeon: DungeonStats;
 }
+export const EMPTY_DUNGEON: DungeonStats = {
+  since: 0,
+  entered: 0,
+  left: 0,
+  live: 0,
+  monsters: 0,
+  bosses: 0,
+  bossesAlive: 0,
+  longestBossS: 0,
+  waitS: 0,
+  topTools: [],
+};
 export const EMPTY_VIEW: OfficeView = {
   roster: [],
   log: [],
@@ -1046,6 +1133,7 @@ export const EMPTY_VIEW: OfficeView = {
   conflicts: [],
   attention: [],
   receipts: [],
+  dungeon: EMPTY_DUNGEON,
 };
 
 declare global {
@@ -1185,6 +1273,28 @@ export class Office {
     this.rowsCache = null;
     this.attnRowsCache = null;
   }
+  // ---- the two gates (render reads these) ----
+  /** hover / open state of the dungeon card: the gate gets a highlight */
+  gateLit = false;
+  /** bosses on the field right now (the dungeon gate glows red while > 0) */
+  bossAlive = 0;
+  /** squires walking back into the ally portal */
+  readonly leavers: Leaver[] = [];
+  /** the portal flashes until this clock time (a squire passed) / swirls in mana colours (a compact trip) */
+  portalPulseUntil = 0;
+  portalSwirlUntil = 0;
+  private portalNextAt = 0;
+  private stats = {
+    since: Date.now(),
+    entered: 0,
+    left: 0,
+    monsters: 0,
+    bosses: 0,
+    longestBossS: 0,
+    waitS: 0,
+  };
+  private tools = new ToolTally();
+  private statsVer = 0;
   private filter: GuildFilter = { query: "", hideStray: false };
   /** isHidden cache; invalidated by bumping hidVer (filter/events/snapshot) or when the act changes */
   private hidVer = 0;
@@ -1606,6 +1716,9 @@ export class Office {
       this.dirty = true;
     }
   }
+  setGateLit(lit: boolean) {
+    this.gateLit = lit;
+  }
   select(id: string | null) {
     this.selectedId = id;
     this.selectedUntil = this.realTime + SELECT_HOLD_S;
@@ -1645,6 +1758,14 @@ export class Office {
     this.banners = [];
     this.trauma = 0;
     this.flash = 0;
+    this.leavers.length = 0;
+    this.bossAlive = 0;
+    this.portalPulseUntil = 0;
+    this.portalSwirlUntil = 0;
+    this.portalNextAt = 0;
+    this.stats = { since: Date.now(), entered: 0, left: 0, monsters: 0, bosses: 0, longestBossS: 0, waitS: 0 };
+    this.tools.clear();
+    this.statsVer++;
     this.dirty = true;
     this.emit(true);
   }
@@ -1664,6 +1785,23 @@ export class Office {
     }
     this.ctxMap.delete(sid); // re-insert = most recent
     this.ctxMap.set(sid, { used, limit, guessed: !!guessed });
+    const compacting = this.employees.get(sid);
+    if (compacting?.compactPending) {
+      // the first reading after a PreCompact is the real post-compact context: flash the mana bar, invent nothing
+      compacting.compactPending = false;
+      compacting.manaFlashUntil = this.clock + MANA_FLASH_S;
+      this.burst(
+        compacting.x,
+        compacting.y + MANA_REFILL_BURST.lift,
+        MANA_REFILL_BURST.n,
+        MANA_COLS,
+        MANA_REFILL_BURST.speed,
+        0,
+        PORTAL_BURST.life,
+        1,
+        true,
+      );
+    }
     if (this.ctxMap.size > CTX_MAP_MAX) this.ctxMap.delete(this.ctxMap.keys().next().value as string);
     this.dirty = true;
   }
@@ -2433,6 +2571,7 @@ export class Office {
   private signature(): string {
     let sig = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
     sig += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}|R${this.rcptVer}`;
+    sig += `|D${this.statsVer}:${this.bossAlive}`;
     for (const emp of this.employees.values()) {
       if (this.isHidden(emp)) {
         sig += `;h${emp.id}${this.isWaiting(emp) ? "w" + this.statusOf(emp) : ""}`;
@@ -2528,10 +2667,45 @@ export class Office {
       conflicts,
       attention: this.attentionRows(),
       receipts: this.receiptRows(),
+      dungeon: this.dungeonStats(),
     };
   }
 
+  /** finished waits on the user (permission hand-ups) + the ones still going, in real seconds */
+  private waitTotal(): number {
+    let total = this.stats.waitS;
+    for (const emp of this.employees.values())
+      if (emp.act === "handup" && emp.state !== "LEAVING") total += this.realTime - emp.handAt;
+    return total;
+  }
+  /** counters behind the dungeon-gate card; everything counts since the page opened (or the last Live/Demo switch) */
+  dungeonStats(): DungeonStats {
+    let live = 0,
+      bossesAlive = 0;
+    for (const emp of this.employees.values()) {
+      if (emp.state !== "LEAVING") live++;
+      if (emp.boss) bossesAlive++;
+    }
+    return {
+      since: this.stats.since,
+      entered: this.stats.entered,
+      left: this.stats.left,
+      live,
+      monsters: this.stats.monsters,
+      bosses: this.stats.bosses,
+      bossesAlive,
+      longestBossS: this.stats.longestBossS,
+      waitS: this.waitTotal(),
+      topTools: this.tools.top(),
+    };
+  }
+  private bumpStats() {
+    this.statsVer++;
+    this.dirty = true;
+  }
+
   private rosterAct(emp: Employee): RosterAct {
+    if (emp.act === "handup" && this.onTrip(emp)) return "handup"; // waiting on you beats the walk
     switch (emp.state) {
       case "ENTERING":
         return "enter";
@@ -2543,13 +2717,33 @@ export class Office {
       case "FROM_COFFEE":
       case "DRINK":
         return "coffee";
+      case "TO_PORTAL":
+      case "IN_PORTAL":
+      case "FROM_PORTAL":
+        return "compact";
     }
     if (emp.act !== "handup")
       for (const intern of emp.interns.values()) if (intern.act === "handup") return "intern_handup";
     return emp.act;
   }
 
+  /** walking to / from the tavern or the ally portal, or resting in it */
+  private onTrip(emp: Employee): boolean {
+    switch (emp.state) {
+      case "TO_COFFEE":
+      case "DRINK":
+      case "FROM_COFFEE":
+      case "TO_PORTAL":
+      case "IN_PORTAL":
+      case "FROM_PORTAL":
+        return true;
+      default:
+        return false;
+    }
+  }
+
   statusOf(emp: Employee): string {
+    if (emp.act === "handup" && this.onTrip(emp)) return m.status_handup();
     switch (emp.state) {
       case "ENTERING":
         return m.status_enter();
@@ -2565,6 +2759,12 @@ export class Office {
         return m.status_drink();
       case "DUEL":
         return m.status_duel();
+      case "TO_PORTAL":
+        return m.status_to_portal();
+      case "IN_PORTAL":
+        return m.status_in_portal();
+      case "FROM_PORTAL":
+        return m.status_from_portal();
     }
     if (emp.hurtUntil > this.clock) return m.status_hurt();
     if (emp.boss && emp.act !== "handup") return m.status_boss();
@@ -2645,6 +2845,14 @@ export class Office {
     this.updateDuels();
     this.updateTerritoryFx(dt);
     for (const emp of [...this.employees.values()]) this.updateEmployee(emp, dt);
+    if (this.reducedMotion !== this.motionApplied) {
+      this.motionApplied = this.reducedMotion;
+      if (this.reducedMotion) this.settleMotion();
+    }
+    this.updateSquires(dt);
+    let bosses = 0;
+    for (const emp of this.employees.values()) if (emp.boss) bosses++;
+    this.bossAlive = bosses;
   }
 
   // ---------- effects ----------
@@ -2869,7 +3077,7 @@ export class Office {
         emp.y = target.y;
         rem -= dist;
         emp.path.shift();
-        if (emp.state === "TO_COFFEE") emp.trail.push(target);
+        if (emp.state === "TO_COFFEE" || emp.state === "TO_PORTAL") emp.trail.push(target);
         if (target.wait && emp.path.length) {
           emp.holdUntil = this.clock + target.wait;
           if (emp.state === "LEAVING") emp.lootAt = this.clock;
@@ -2896,12 +3104,42 @@ export class Office {
       this.clock - emp.lastEventAt > IDLE_GRACE_S * Math.max(1, this.speed)
     )
       this.leave(emp);
+    if (emp.boss && emp.bossPath.length) this.walkBoss(emp, dt);
     switch (emp.state) {
       case "ENTERING":
         if (this.move(emp, dt)) this.sit(emp);
         break;
       case "FROM_COFFEE":
+      case "FROM_PORTAL":
         if (this.move(emp, dt)) this.sit(emp);
+        break;
+      case "TO_PORTAL":
+        if (this.move(emp, dt)) {
+          emp.state = "IN_PORTAL";
+          emp.stateSince = this.clock;
+          emp.facing = 1;
+          this.portalPulseUntil = this.clock + PORTAL_PULSE_S;
+          this.burst(
+            ALLY_PORTAL.x,
+            ALLY_PORTAL.y - PORTAL_BURST.lift,
+            PORTAL_BURST.n,
+            MANA_COLS,
+            PORTAL_BURST.speed,
+            -PORTAL_BURST.up,
+            PORTAL_BURST.life,
+            1,
+            true,
+          );
+        }
+        break;
+      case "IN_PORTAL":
+        if (this.clock - emp.stateSince >= COMPACT_REST_S) {
+          emp.state = "FROM_PORTAL";
+          emp.stateSince = this.clock;
+          emp.path = [...emp.trail].reverse();
+          emp.trail = [];
+          this.portalPulseUntil = this.clock + PORTAL_PULSE_S;
+        }
         break;
       case "DUEL":
         if (emp.path.length) this.move(emp, dt); // updateDuels() owns the phase changes
@@ -2981,6 +3219,54 @@ export class Office {
     if (emp.state !== "SEATED" && emp.tempBubble && this.clock > emp.tempBubble.until) emp.tempBubble = null;
   }
 
+  private motionApplied = false;
+  /** reduced motion was switched on mid-walk: everything on the move snaps to where it was heading */
+  private settleMotion() {
+    this.leavers.length = 0;
+    for (const emp of [...this.employees.values()]) {
+      if (emp.boss && emp.bossPath.length && emp.deskIdx >= 0) {
+        emp.monPos = monsterSpot(emp.deskIdx);
+        emp.bossPath = [];
+        emp.bossFace = -1;
+      }
+      for (const intern of emp.interns.values()) if (intern.phase === "in") intern.phase = "snap";
+      if (emp.state === "TO_PORTAL" || emp.state === "IN_PORTAL" || emp.state === "FROM_PORTAL") {
+        emp.path = [];
+        emp.trail = [];
+        this.sit(emp);
+      }
+    }
+    this.dirty = true;
+  }
+
+  /** the boss walks out of the dungeon gate along the bridge and road to its fight spot (monPos follows it) */
+  private walkBoss(emp: Employee, dt: number) {
+    const pos = emp.monPos;
+    if (!pos) {
+      emp.bossPath = [];
+      return;
+    }
+    let rem = BOSS_SPEED * dt;
+    while (rem > 0 && emp.bossPath.length) {
+      const target = emp.bossPath[0];
+      const dx = target.x - pos.x,
+        dy = target.y - pos.y;
+      const dist = Math.hypot(dx, dy);
+      if (dx !== 0) emp.bossFace = dx > 0 ? 1 : -1;
+      if (dist <= rem) {
+        pos.x = target.x;
+        pos.y = target.y;
+        rem -= dist;
+        emp.bossPath.shift();
+      } else {
+        pos.x += (dx / dist) * rem;
+        pos.y += (dy / dist) * rem;
+        rem = 0;
+      }
+    }
+    if (!emp.bossPath.length) emp.bossFace = -1; // arrived: face the adventurer
+  }
+
   private sit(emp: Employee) {
     const spot = seatPoint(emp.deskIdx, emp.slot);
     emp.x = spot.x;
@@ -3011,6 +3297,10 @@ export class Office {
 
   private leave(emp: Employee) {
     if (emp.state === "LEAVING") return;
+    this.stats.left++;
+    if (emp.act === "handup") this.stats.waitS += this.realTime - emp.handAt;
+    this.bumpStats();
+    this.sendSquiresHome(emp);
     emp.duel = null;
     emp.coffeeAfter = false; // updateDuels() sends the opponent home
     const path: Pt[] = routeLeave(emp.x, emp.y);
@@ -3035,6 +3325,8 @@ export class Office {
     emp.sticky = false;
     emp.hurtUntil = 0;
     emp.boss = null;
+    emp.bossPath = [];
+    emp.compactPending = false;
     emp.pending.clear();
     emp.resting = false;
     emp.toolCalls = 0;
@@ -3097,6 +3389,8 @@ export class Office {
   }
 
   private reenter(emp: Employee) {
+    this.stats.entered++;
+    this.bumpStats();
     const { desk, slot } = this.pickSeat(emp.id);
     emp.deskIdx = desk;
     emp.slot = slot;
@@ -3156,6 +3450,7 @@ export class Office {
       state: seated ? "SEATED" : "ENTERING",
       act: "thinking",
       actSince: this.clock,
+      handAt: 0,
       stateSince: this.clock,
       bubble: null,
       tempBubble: null,
@@ -3186,6 +3481,9 @@ export class Office {
       monHpMax: 3,
       boss: null,
       bossAt: -1,
+      bossReal: 0,
+      bossPath: [],
+      bossFace: -1,
       lv: 1,
       xp: 0,
       gold: 0,
@@ -3213,6 +3511,8 @@ export class Office {
       sawStart: false,
       evCount: 0,
       known: false,
+      compactPending: false,
+      manaFlashUntil: 0,
     };
     const sv = this.demo ? undefined : this.progress[id];
     if (sv) {
@@ -3224,6 +3524,8 @@ export class Office {
     if (!seated) emp.path = routeIn(desk, slot).slice(1);
     else if (desk >= 0) this.spawnMonster(emp, true);
     this.employees.set(id, emp);
+    if (!seated) this.stats.entered++; // sessions found already seated in a snapshot were in the guild before
+    this.bumpStats();
     this.bumpTerr(); // conflict rows depend on who is present
     this.recheckPending();
     this.dirty = true;
@@ -3266,11 +3568,15 @@ export class Office {
         emp.lastEventAt = this.clock;
         continue;
       }
-      if (session.waiting && emp.act !== "handup") this.setAct(emp, "handup", "❗");
+      if (session.waiting && emp.act !== "handup") {
+        this.cutTrip(emp);
+        this.setAct(emp, "handup", "❗");
+      }
       const want = new Set(session.interns ?? []);
-      for (const key of [...emp.interns.keys()]) if (!want.has(key)) emp.interns.delete(key);
+      for (const key of [...emp.interns.keys()]) if (!want.has(key)) this.removeIntern(emp, key);
       for (const agent of want)
-        if (!emp.interns.has(agent)) emp.interns.set(agent, newIntern(agent, "squire", this.clock, this.clock - 1));
+        if (!emp.interns.has(agent))
+          emp.interns.set(agent, newIntern(agent, "squire", this.clock, this.clock - 1, "snap"));
     }
     for (const emp of [...this.employees.values()])
       if (!ids.has(emp.id)) {
@@ -3402,6 +3708,11 @@ export class Office {
       return;
     }
 
+    // a hand going up is shown at once, even mid-walk (tavern or portal): the walk turns back, the rest queues as before
+    if (this.isHandupEvt(evt) && this.cutTrip(emp)) {
+      this.setAct(emp, "handup", "❗");
+      return;
+    }
     switch (emp.state) {
       case "SEATED":
         this.applyEvent(emp, evt);
@@ -3422,9 +3733,49 @@ export class Office {
         emp.tempBubble = null;
         this.enqueue(emp, evt);
         break;
+      case "TO_PORTAL":
+      case "IN_PORTAL": // the session is moving again: cut the trip short and walk back
+        emp.state = "FROM_PORTAL";
+        emp.path = [...emp.trail].reverse();
+        emp.trail = [];
+        emp.tempBubble = null;
+        this.enqueue(emp, evt);
+        break;
       default:
         this.enqueue(emp, evt);
     }
+  }
+
+  /** PermissionRequest, or a Notification that asks for permission (what applyEvent turns into a raised hand) */
+  private isHandupEvt(evt: HookEvt): boolean {
+    const name = str(evt.hook_event_name);
+    if (name === "PermissionRequest") return true;
+    return (
+      name === "Notification" &&
+      (HANDUP_NOTIFS.has(str(evt.notification_type)) || str(evt.message).toLowerCase().includes("permission"))
+    );
+  }
+  /** Turn a tavern / portal walk around (back to the seat). True when the adventurer is on such a trip. */
+  private cutTrip(emp: Employee): boolean {
+    switch (emp.state) {
+      case "TO_COFFEE":
+      case "DRINK":
+        emp.state = "FROM_COFFEE";
+        break;
+      case "TO_PORTAL":
+      case "IN_PORTAL":
+        emp.state = "FROM_PORTAL";
+        break;
+      case "FROM_COFFEE":
+      case "FROM_PORTAL":
+        return true;
+      default:
+        return false;
+    }
+    emp.path = [...emp.trail].reverse();
+    emp.trail = [];
+    emp.tempBubble = null;
+    return true;
   }
 
   private enqueue(emp: Employee, evt: HookEvt) {
@@ -3433,6 +3784,11 @@ export class Office {
   }
 
   private setAct(emp: Employee, act: Act, bubble: string | null = null, note: Employee["note"] = null) {
+    if (emp.act === "handup" && act !== "handup") {
+      this.stats.waitS += this.realTime - emp.handAt;
+      this.bumpStats();
+    }
+    if (act === "handup" && emp.act !== "handup") emp.handAt = this.realTime;
     if (emp.act !== act) emp.actSince = this.clock;
     emp.act = act;
     emp.bubble = bubble;
@@ -3457,6 +3813,8 @@ export class Office {
         break;
       case "PreToolUse": {
         const tool = str(evt.tool_name);
+        this.tools.add(tool);
+        this.bumpStats();
         if (!AGENT_TOOLS.has(tool) && !USER_WAIT_TOOLS.has(tool)) {
           const id = str(evt.tool_use_id) || `#${this.pendSeq++}`;
           if (!emp.pending.has(id) && emp.pending.size >= MAX_PENDING)
@@ -3495,8 +3853,7 @@ export class Office {
         this.setAct(emp, "handup", "❗");
         break;
       case "PreCompact":
-        this.setAct(emp, "thinking");
-        emp.tempBubble = { e: "🗜️", until: clock + 2 };
+        this.onCompact(emp, coffee);
         break;
       case "Notification": {
         const nt = str(evt.notification_type);
@@ -3613,6 +3970,8 @@ export class Office {
     emp.qKills++;
     emp.qGold += gold;
     this.treasury += gold;
+    this.stats.monsters++;
+    this.bumpStats();
     this.defeatMonster(emp);
     this.pop(mp.x - XP_POP_DX, mp.y - XP_POP_LIFT, "+5xp", "#8ee8ff", false, false, LOOT_POP_DUR);
     this.pop(mp.x + GOLD_POP_DX, mp.y - GOLD_POP_LIFT, `+${gold}g`, "#f2c14e", false, false, LOOT_POP_DUR);
@@ -3681,6 +4040,7 @@ export class Office {
     const kinds = BOSS_KINDS as readonly BossKind[];
     emp.boss = kinds[(h32(emp.id) + emp.monN) % kinds.length];
     emp.bossAt = this.clock;
+    emp.bossReal = this.realTime;
     emp.monDead = false;
     emp.monAppearAt = this.clock;
     emp.monRespawnAt = Infinity;
@@ -3695,8 +4055,34 @@ export class Office {
       FX_MON_DEATH.up,
       FX_MON_DEATH.life,
     );
+    emp.bossPath = [];
+    emp.bossFace = -1;
+    if (!this.reducedMotion) {
+      // the boss comes out of the dungeon gate and walks the bridge + road to the fight; monPos follows it
+      emp.monPos = { x: GATE_MOUTH.x, y: GATE_MOUTH.y };
+      emp.bossPath = routeBoss(emp.deskIdx);
+      this.burst(
+        GATE_MOUTH.x,
+        GATE_MOUTH.y - FX_MON_DEATH.lift,
+        GATE_BURST.n,
+        GATE_COLS,
+        GATE_BURST.speed,
+        GATE_BURST.up,
+        GATE_BURST.life,
+        1,
+        true,
+      );
+    }
     this.addBanner("boss", `BOSS! ${emp.boss.toUpperCase()}`);
     this.addTrauma(1);
+    this.bumpStats();
+  }
+
+  private endBossFight(emp: Employee) {
+    this.stats.longestBossS = Math.max(this.stats.longestBossS, this.realTime - emp.bossReal);
+    emp.bossPath = [];
+    emp.bossFace = -1;
+    this.bumpStats();
   }
 
   private bossDown(emp: Employee) {
@@ -3706,6 +4092,8 @@ export class Office {
     emp.qKills++;
     emp.qGold += 10;
     this.treasury += 10;
+    this.stats.bosses++;
+    this.endBossFight(emp);
     emp.boss = null;
     emp.monDead = true;
     emp.monDeadAt = this.clock;
@@ -3739,6 +4127,7 @@ export class Office {
 
   /** boss runs away (tool failed / interrupted): no loot */
   private bossLeaves(emp: Employee) {
+    this.endBossFight(emp);
     emp.boss = null;
     emp.monDead = true;
     emp.monDeadAt = this.clock;
@@ -3754,17 +4143,179 @@ export class Office {
       );
   }
 
-  // ---------- interns ----------
+  // ---------- compact trip (ally portal) ----------
+  /** can this adventurer walk to the portal now: seated, no fight in flight, nobody waiting on the user */
+  private compactReady(emp: Employee): boolean {
+    return (
+      emp.state === "SEATED" &&
+      (emp.deskIdx >= 0 || emp.slot >= 0) &&
+      !emp.duel &&
+      !emp.boss &&
+      emp.pending.size === 0 &&
+      emp.act !== "handup" &&
+      !this.isWaiting(emp)
+    );
+  }
+
+  /**
+   * PreCompact: the portal swirls in mana colours. A free adventurer walks there, rests inside for a moment and walks
+   * back (any event that arrives cuts the rest short). A busy one (tool in flight, boss, duel, hand up) stays put and
+   * just gets the 🌀 bubble. The mana bar is never touched: it follows the next real context reading.
+   */
+  private onCompact(emp: Employee, canWalk: boolean) {
+    const walk = canWalk && !this.reducedMotion && this.compactReady(emp);
+    this.portalSwirlUntil = this.clock + PORTAL_SWIRL_S;
+    emp.compactPending = true;
+    this.setAct(emp, "thinking");
+    if (!walk) {
+      emp.tempBubble = { e: "🌀", until: this.clock + COMPACT_BUBBLE_S };
+      return;
+    }
+    const route = routeToPortal(emp.x, emp.y);
+    emp.state = "TO_PORTAL";
+    emp.stateSince = this.clock;
+    emp.trail = [{ x: emp.x, y: emp.y }];
+    emp.path = route;
+    emp.holdUntil = 0;
+    this.dirty = true;
+  }
+
+  // ---------- interns (squires) ----------
+  /** where squire number `slot` of this adventurer stands */
+  private squireSpot(emp: Employee, slot: number): Pt {
+    return emp.deskIdx >= 0 ? squirePoint(emp.deskIdx, slot) : campSquirePoint(emp.slot, slot);
+  }
+
+  /** squires that were standing out walk back into the portal (they never pile up: capped, the rest just vanish) */
+  private sendSquiresHome(emp: Employee) {
+    if (this.reducedMotion || this.isHidden(emp) || (emp.deskIdx < 0 && emp.slot < 0)) return;
+    let slot = 0;
+    for (const intern of emp.interns.values()) {
+      if (slot++ >= SQUIRE_SLOTS) break;
+      this.squireLeaves(intern);
+    }
+  }
+  private squireLeaves(intern: Intern) {
+    if (intern.phase === "wait" || intern.phase === "snap" || this.reducedMotion) return;
+    if (this.leavers.length >= LEAVER_MAX) return;
+    this.leavers.push({
+      id: intern.id,
+      x: intern.x,
+      y: intern.y,
+      face: intern.face,
+      path: routeToPortal(intern.x, intern.y),
+    });
+  }
+  private removeIntern(emp: Employee, id: string) {
+    let slot = 0;
+    for (const key of emp.interns.keys()) {
+      if (key === id) break;
+      slot++;
+    }
+    const intern = emp.interns.get(id);
+    if (intern && slot < SQUIRE_SLOTS && !this.isHidden(emp)) this.squireLeaves(intern);
+    emp.interns.delete(id);
+  }
+
+  private vanishAtPortal() {
+    this.portalPulseUntil = this.clock + PORTAL_PULSE_S;
+    this.burst(
+      ALLY_PORTAL.x,
+      ALLY_PORTAL.y - PORTAL_BURST.lift,
+      PORTAL_BURST.n,
+      PORTAL_COLS,
+      PORTAL_BURST.speed,
+      -PORTAL_BURST.up,
+      PORTAL_BURST.life,
+      1,
+      true,
+    );
+  }
+
+  /** Squires step out of the ally portal (staggered, capped) and walk to their master; finished ones walk back in. */
+  private updateSquires(dt: number) {
+    let walking = this.leavers.length;
+    for (const emp of this.employees.values()) {
+      if (emp.state === "LEAVING" || (emp.deskIdx < 0 && emp.slot < 0)) continue;
+      const calm = this.reducedMotion || this.isHidden(emp); // no walk, no portal effects
+      let slot = 0;
+      for (const intern of emp.interns.values()) {
+        if (slot >= SQUIRE_SLOTS) break; // the rest wait inside the portal (the +N badge counts them)
+        const target = this.squireSpot(emp, slot++);
+        if (intern.phase === "in") walking++;
+        else if (intern.phase === "snap" || (intern.phase === "here" && calm)) {
+          intern.x = target.x;
+          intern.y = target.y;
+          intern.phase = "here";
+        } else if (intern.phase === "wait") {
+          if (calm) intern.phase = "snap";
+          else if (this.clock >= this.portalNextAt && walking < SQUIRE_WALK_MAX) {
+            intern.x = ALLY_PORTAL.x;
+            intern.y = ALLY_PORTAL.y;
+            intern.path = routeFromPortal(target.x, target.y);
+            intern.phase = "in";
+            walking++;
+            this.portalNextAt = this.clock + SQUIRE_STAGGER_S;
+            this.vanishAtPortal();
+          }
+        } else if (Math.hypot(target.x - intern.x, target.y - intern.y) > SQUIRE_SNAP_DIST) {
+          // standing, but its slot moved (a squire before it left, or the master changed spot): walk over
+          intern.path = [{ x: target.x, y: target.y }];
+          intern.phase = "in";
+          walking++;
+        }
+        if (intern.phase === "in") this.stepSquire(intern, target, dt);
+      }
+    }
+    for (let i = this.leavers.length - 1; i >= 0; i--) {
+      const leaver = this.leavers[i];
+      this.stepWalker(leaver, dt);
+      if (!leaver.path.length) {
+        this.leavers.splice(i, 1);
+        this.vanishAtPortal();
+      }
+    }
+  }
+  private stepSquire(intern: Intern, target: Pt, dt: number) {
+    if (intern.path.length) intern.path[intern.path.length - 1] = { x: target.x, y: target.y }; // the master may have moved
+    this.stepWalker(intern, dt);
+    if (!intern.path.length) {
+      intern.x = target.x;
+      intern.y = target.y;
+      intern.phase = "here";
+    }
+  }
+  private stepWalker(walker: { x: number; y: number; face: 1 | -1; path: Pt[] }, dt: number) {
+    let rem = SQUIRE_SPEED * dt;
+    while (rem > 0 && walker.path.length) {
+      const target = walker.path[0];
+      const dx = target.x - walker.x,
+        dy = target.y - walker.y;
+      const dist = Math.hypot(dx, dy);
+      if (dx !== 0) walker.face = dx > 0 ? 1 : -1;
+      if (dist <= rem) {
+        walker.x = target.x;
+        walker.y = target.y;
+        rem -= dist;
+        walker.path.shift();
+      } else {
+        walker.x += (dx / dist) * rem;
+        walker.y += (dy / dist) * rem;
+        rem = 0;
+      }
+    }
+  }
+
   private internLifecycle(emp: Employee, evt: HookEvt) {
     const id = str(evt.agent_id);
     if (str(evt.hook_event_name) === "SubagentStart") {
-      if (id) emp.interns.set(id, newIntern(id, str(evt.agent_type), this.clock));
+      if (id && !emp.interns.has(id)) emp.interns.set(id, newIntern(id, str(evt.agent_type), this.clock));
     } else {
       if (id) this.endedAgents.set(id, Date.now());
-      if (id && emp.interns.has(id)) emp.interns.delete(id);
+      if (id && emp.interns.has(id)) this.removeIntern(emp, id);
       else if (!id) {
         const firstKey = emp.interns.keys().next();
-        if (!firstKey.done) emp.interns.delete(firstKey.value);
+        if (!firstKey.done) this.removeIntern(emp, firstKey.value);
       }
     }
     this.dirty = true;
@@ -3780,6 +4331,8 @@ export class Office {
         emp.interns.set(id, intern);
       }
       const tn = str(evt.tool_name);
+      this.tools.add(tn);
+      this.bumpStats();
       intern.act = READ_TOOLS.has(tn) ? "reading" : "typing";
       intern.tool = tn;
       intern.detail = toolDetail(evt);

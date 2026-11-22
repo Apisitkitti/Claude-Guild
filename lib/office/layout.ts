@@ -164,6 +164,66 @@ export const HEARTH = { x: 47, y: 14, w: 22, h: 38 };
 export const DUNGEON = { x: 342, y: 50 };
 export const BRIDGE_X = 340;
 
+// ---- the two gates ----
+/** Click / hover area of the dungeon gate (the stone arch + torches), logical px. */
+export const DUNGEON_HIT: Rect = { x: 318, y: 18, w: 48, h: 36 };
+/** Where a boss steps out of the dungeon (just inside the arch). */
+export const GATE_MOUTH: Pt = { x: DUNGEON.x, y: DUNGEON.y - 1 };
+const BRIDGE_TOP_Y = 53;
+const BRIDGE_END_Y = 74;
+/** The dirt trail south of the bridge ends here; bosses fan out from this row. */
+const TRAIL_END_Y = 90;
+const BOSS_LANE_DX = 18;
+const WORLD_EDGE_MARGIN = 8;
+/** Boss walk: gate mouth -> over the bridge -> down the trail -> along the northern edge of the battle rows -> goal. Excludes the start. */
+export const routeBoss = (desk: number): Pt[] => {
+  const goal = monsterSpot(desk);
+  const pts: Pt[] = [
+    { x: BRIDGE_X, y: BRIDGE_TOP_Y },
+    { x: BRIDGE_X, y: BRIDGE_END_Y },
+    { x: BRIDGE_X, y: TRAIL_END_Y },
+  ];
+  if (desk < GRID_COLS) pts.push({ x: goal.x, y: TRAIL_END_Y });
+  else {
+    // lower row: a free lane just right of the monster column, then back left onto the goal
+    const lane = Math.min(goal.x + BOSS_LANE_DX, WORLD_W - WORLD_EDGE_MARGIN);
+    pts.push({ x: lane, y: TRAIL_END_Y }, { x: lane, y: goal.y });
+  }
+  pts.push({ ...goal });
+  return dedupe(pts);
+};
+
+/**
+ * The ally portal: a teal rune circle on the free strip of grass between the main road (bottom edge ~y 134) and the
+ * lower battle plots (top ~y 154). x 246 sits in the 20px gap between the column-1 adventurer corridor (x 228) and
+ * the column-1 boss lane (x 268), so no road, plot, desk or wall is under it and nobody's route crosses the ring.
+ */
+export const ALLY_PORTAL: Pt = { x: 246, y: 145 };
+export const PORTAL_RX = 10;
+export const PORTAL_RY = 4;
+/** hall-side road row used to enter/leave the portal from the upper battle row */
+const PORTAL_ROAD_MARGIN = 8;
+/** From wherever the character stands -> the portal centre (excludes the start). Upper area: down to the road, along it, then in. */
+export const routeToPortal = (x: number, y: number): Pt[] => {
+  const pts: Pt[] =
+    y < ROAD_Y + PORTAL_ROAD_MARGIN
+      ? [
+          { x, y: ROAD_Y },
+          { x: ALLY_PORTAL.x, y: ROAD_Y },
+        ]
+      : [{ x, y: ALLY_PORTAL.y }];
+  pts.push({ ...ALLY_PORTAL });
+  return dedupe([{ x, y }, ...pts]).slice(1);
+};
+/** Portal centre -> a point in the wilderness (excludes the start). */
+export const routeFromPortal = (x: number, y: number): Pt[] => {
+  const back = routeToPortal(x, y); // ... -> portal centre
+  const pts: Pt[] = [];
+  for (let i = back.length - 2; i >= 0; i--) pts.push(back[i]);
+  pts.push({ x, y });
+  return dedupe([{ ...ALLY_PORTAL }, ...pts]).slice(1);
+};
+
 // ---- territory: land plots + duels ----
 export interface Rect {
   x: number;

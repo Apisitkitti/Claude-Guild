@@ -304,6 +304,132 @@ button:active {
   border: 3px solid var(--color-wood-canvas);
   box-sizing: content-box;
 }
+.stagebox {
+  position: relative;
+}
+.gatehit,
+.gatehit:hover,
+.gatehit:active {
+  position: absolute;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-xs);
+  box-shadow: none;
+  transform: none;
+  cursor: pointer;
+}
+.gatehit:focus-visible {
+  outline: 2px solid var(--color-gold-bright);
+  outline-offset: 1px;
+}
+.dcard {
+  position: absolute;
+  right: 6px;
+  z-index: 3;
+  width: min(320px, calc(100% - 12px));
+  overflow-y: auto;
+  padding: 8px 10px 9px;
+  color: var(--color-ink);
+  background: var(--color-parchment);
+  border: 2px solid var(--color-parchment-edge);
+  border-radius: var(--radius-md);
+  box-shadow:
+    var(--shadow-raise),
+    0 8px 20px var(--color-shade-hard);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.dcard header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.dcard h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+}
+.dcard header button {
+  padding: 0 8px;
+  font-size: var(--text-md);
+  line-height: 1.4;
+  color: var(--color-ink);
+  background: transparent;
+  border: 1px solid var(--color-parchment-edge);
+  box-shadow: none;
+}
+.dcard header button:hover {
+  color: var(--color-danger-dark);
+  border-color: var(--color-danger-dark);
+}
+.dcard dl {
+  margin: 0;
+}
+.dcard .drow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dcard dt {
+  color: var(--color-ink-dim);
+}
+.dcard dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+}
+.dcard dd small {
+  display: block;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--color-danger-dark);
+}
+.dcard h3 {
+  margin: 8px 0 2px;
+  font-size: var(--text-sm);
+  color: var(--color-ink-dim);
+  font-weight: 400;
+}
+.dcard ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: tool;
+}
+.dcard li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  counter-increment: tool;
+}
+.dcard li::before {
+  content: counter(tool) ".";
+  width: 1.4em;
+  flex: none;
+  color: var(--color-ink-dim);
+}
+.dcard li span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dcard .dnone,
+.dcard .dnote {
+  margin: 2px 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-dim);
+}
+.dcard .dnote {
+  margin-top: 8px;
+  padding-top: 5px;
+  border-top: 1px dashed var(--color-parchment-edge);
+}
 .panel {
   width: 300px;
   flex: none;

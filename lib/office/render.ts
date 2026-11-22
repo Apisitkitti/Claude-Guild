@@ -14,6 +14,7 @@ import {
   type Office,
 } from "./engine";
 import {
+  ALLY_PORTAL,
   BACK_WALL_H,
   BAR,
   BRIDGE_X,
@@ -22,7 +23,10 @@ import {
   COUNTER_BOX,
   DESK_COUNT,
   DUNGEON,
+  DUNGEON_HIT,
   GATE_OPEN,
+  PORTAL_RX,
+  PORTAL_RY,
   WORLD_H,
   HALL_W,
   HEARTH,
@@ -250,6 +254,34 @@ const drawDungeon = (ctx: Ctx) => {
   ctx.globalAlpha = 0.8;
   for (let i = 0; i < 10; i++) rect(ctx, "#3f7f4a", x - 24 + ((i * 7) % 46), y - 16 + ((i * 5) % 9), 2, 2);
   ctx.globalAlpha = 1;
+};
+
+// The dungeon gate is its own sprite (not part of the cached background) so it can shake while a boss is out.
+const GATE_PAD = 32;
+const GATE_W = 64;
+const GATE_H = 40;
+let gateSprite: HTMLCanvasElement | null = null;
+const buildGateSprite = (): HTMLCanvasElement => {
+  const canvas = document.createElement("canvas");
+  canvas.width = GATE_W;
+  canvas.height = GATE_H;
+  const ctx = canvas.getContext("2d")!;
+  ctx.translate(GATE_PAD - DUNGEON.x, GATE_PAD - DUNGEON.y);
+  drawDungeon(ctx);
+  return canvas;
+};
+const SHAKE_X = [0, 1, 0, -1, 1, 0, -1, 0];
+const SHAKE_Y = [0, 0, -1, 0, 0, 1, 0, 0];
+/** how far the gate is shaken this frame (0 while no boss is out, and always 0 under reduced motion) */
+const gateShake = (office: Office, time: number): { dx: number; dy: number } => {
+  if (office.bossAlive <= 0 || office.reducedMotion) return { dx: 0, dy: 0 };
+  const tick = Math.floor(time * 24);
+  return { dx: SHAKE_X[tick % SHAKE_X.length], dy: SHAKE_Y[tick % SHAKE_Y.length] };
+};
+const drawGate = (ctx: Ctx, office: Office, time: number) => {
+  if (!gateSprite) gateSprite = buildGateSprite();
+  const { dx, dy } = gateShake(office, time);
+  ctx.drawImage(gateSprite, DUNGEON.x - GATE_PAD + dx, DUNGEON.y - GATE_PAD + dy);
 };
 
 const drawRoad = (ctx: Ctx) => {
@@ -691,7 +723,6 @@ const buildBg = (): HTMLCanvasElement => {
   drawBackdrop(ctx);
   drawGrass(ctx);
   drawStream(ctx);
-  drawDungeon(ctx);
   drawRoad(ctx);
   drawHall(ctx);
   drawHallDecor(ctx);
@@ -874,7 +905,7 @@ const drawEnvAnim = (ctx: Ctx, time: number) => {
 };
 
 // emissive things drawn after the night overlay
-const drawLights = (ctx: Ctx, time: number) => {
+const drawLights = (ctx: Ctx, time: number, office: Office) => {
   // fireplace
   const hx = HEARTH.x + 5;
   for (let i = 0; i < 6; i++) {
@@ -888,11 +919,142 @@ const drawLights = (ctx: Ctx, time: number) => {
   // candle on the counter
   rect(ctx, GOLD, 113, 40 + (Math.floor(time * 8) % 2), 2, 2);
   // wall + gate torches
-  TORCHES.forEach((point, i) => blitB(ctx, "torch" + ((Math.floor(time * 6) + i) % 2), point.x, point.y));
-  // dungeon glow
-  ctx.globalAlpha = 0.25 + 0.15 * Math.sin(time * 2);
-  rect(ctx, "#7b5ea7", DUNGEON.x - 6, DUNGEON.y - 18, 12, 16);
+  const boss = office.bossAlive > 0;
+  const { dx, dy } = gateShake(office, time);
+  TORCHES.forEach((point, i) => {
+    const dungeonTorch = i >= TORCHES.length - 2;
+    const sx = dungeonTorch ? dx : 0,
+      sy = dungeonTorch ? dy : 0;
+    blitB(ctx, "torch" + ((Math.floor(time * 6) + i) % 2), point.x + sx, point.y + sy);
+    if (dungeonTorch && boss) drawTorchFlare(ctx, point.x + sx, point.y + sy, time, office.reducedMotion, i);
+  });
+  // dungeon glow: purple normally, red while a boss is out (static under reduced motion)
+  if (boss) {
+    ctx.globalAlpha = office.reducedMotion ? 0.55 : 0.45 + 0.2 * Math.sin(time * 9);
+    rect(ctx, "#ff3b2a", DUNGEON.x - 8 + dx, DUNGEON.y - 22 + dy, 16, 22);
+    ctx.globalAlpha = office.reducedMotion ? 0.3 : 0.2 + 0.15 * Math.sin(time * 9 + 1);
+    rect(ctx, "#ffb070", DUNGEON.x - 4 + dx, DUNGEON.y - 16 + dy, 8, 12);
+  } else {
+    ctx.globalAlpha = 0.25 + 0.15 * Math.sin(time * 2);
+    rect(ctx, "#7b5ea7", DUNGEON.x - 6, DUNGEON.y - 18, 12, 16);
+  }
   ctx.globalAlpha = 1;
+  if (office.gateLit) drawGateBrackets(ctx);
+};
+
+/** a boss is out: the dungeon torches flare up (taller red/orange flame + a halo) */
+const drawTorchFlare = (ctx: Ctx, x: number, y: number, time: number, still: boolean, seed: number) => {
+  const flick = still ? 1 : Math.floor(2 + 2 * Math.abs(Math.sin(time * 11 + seed * 1.7)));
+  ctx.globalAlpha = 0.25;
+  rect(ctx, "#ff3b2a", x - 5, y - 16, 10, 10);
+  ctx.globalAlpha = 1;
+  rect(ctx, "#ff5a2a", x - 2, y - 11 - flick, 4, flick + 2);
+  rect(ctx, "#ffd24a", x - 1, y - 11 - flick + 1, 2, flick);
+};
+
+/** hover / open highlight on the clickable gate: four opaque gold corner brackets */
+const drawGateBrackets = (ctx: Ctx) => {
+  const { x, y, w, h } = DUNGEON_HIT;
+  const len = 6;
+  for (const [cx, cy, sx, sy] of [
+    [x, y, 1, 1],
+    [x + w - 1, y, -1, 1],
+    [x, y + h - 1, 1, -1],
+    [x + w - 1, y + h - 1, -1, -1],
+  ] as const) {
+    rect(ctx, GOLD, sx > 0 ? cx : cx - len + 1, cy, len, 1);
+    rect(ctx, GOLD, cx, sy > 0 ? cy : cy - len + 1, 1, len);
+  }
+};
+
+// ---------- the ally portal ----------
+const MANA_RUNES = ["#4aa3ff", "#a98be0", "#ffd75a", "#7fe7ee", "#ff9ad5"];
+const PORTAL_RUNES = 8;
+/** pixel ellipse filled with one colour, centred on (cx, cy) */
+const fillEllipse = (ctx: Ctx, color: string, cx: number, cy: number, rx: number, ry: number) => {
+  for (let dy = -ry; dy <= ry; dy++) {
+    const half = Math.round(rx * Math.sqrt(Math.max(0, 1 - (dy / (ry + 0.6)) * (dy / (ry + 0.6)))));
+    rect(ctx, color, cx - half, cy + dy, half * 2 + 1, 1);
+  }
+};
+const drawPortalPylon = (ctx: Ctx, px: number, py: number, glow: string) => {
+  rect(ctx, ST.dark, px - 1, py - 7, 3, 8);
+  rect(ctx, ST.hi, px - 1, py - 7, 1, 8);
+  rect(ctx, INK, px + 1, py - 7, 1, 8);
+  rect(ctx, glow, px, py - 10, 1, 3);
+  rect(ctx, "#ffffff", px, py - 10, 1, 1);
+};
+/** Friendly teal rune circle where squires come and go and adventurers go to compact their memory. Drawn under every entity. */
+const drawAllyPortal = (ctx: Ctx, office: Office, time: number) => {
+  const { x: cx, y: cy } = ALLY_PORTAL;
+  const swirl = office.portalSwirlUntil > time;
+  const pulse = office.portalPulseUntil > time;
+  const still = office.reducedMotion;
+  const spin = still ? 0.6 : time * (swirl ? 5 : 1.1);
+  const manaColor = (i: number) => MANA_RUNES[(i + (still ? 0 : Math.floor(time * 6))) % MANA_RUNES.length];
+  // soft halo on the grass
+  ctx.globalAlpha = swirl || pulse ? 0.42 : 0.26;
+  fillEllipse(ctx, swirl ? "#a98be0" : "#4fc3c9", cx, cy, PORTAL_RX + 4, PORTAL_RY + 2);
+  ctx.globalAlpha = 1;
+  drawPortalPylon(ctx, cx - PORTAL_RX, cy - 1, swirl ? manaColor(0) : "#7fe7ee");
+  // stone rim, dark water, bright core
+  fillEllipse(ctx, "#2a4a5a", cx, cy, PORTAL_RX, PORTAL_RY);
+  fillEllipse(ctx, "#0f3347", cx, cy, PORTAL_RX - 2, PORTAL_RY - 1);
+  fillEllipse(ctx, swirl ? "#3a2f7a" : "#1d6a86", cx, cy, PORTAL_RX - 4, PORTAL_RY - 2);
+  fillEllipse(
+    ctx,
+    pulse ? "#ffffff" : swirl ? manaColor(2) : "#7fe7ee",
+    cx,
+    cy,
+    PORTAL_RX - 7,
+    Math.max(1, PORTAL_RY - 3),
+  );
+  // three swirl arms
+  for (let arm = 0; arm < 3; arm++) {
+    for (let step = 1; step <= 6; step++) {
+      const radius = step * 1.1;
+      const angle = spin * 2 + (arm * Math.PI * 2) / 3 + step * 0.55;
+      rect(
+        ctx,
+        swirl ? manaColor(arm + step) : step % 2 ? "#bff7fb" : "#4fc3c9",
+        cx + Math.cos(angle) * radius * 1.3,
+        cy + Math.sin(angle) * radius * 0.45,
+        1,
+        1,
+      );
+    }
+  }
+  // rune ticks around the rim
+  for (let i = 0; i < PORTAL_RUNES; i++) {
+    const angle = spin + (i * Math.PI * 2) / PORTAL_RUNES;
+    rect(
+      ctx,
+      swirl ? manaColor(i) : i % 2 ? "#bff7fb" : "#4fc3c9",
+      cx + Math.cos(angle) * (PORTAL_RX - 1),
+      cy + Math.sin(angle) * (PORTAL_RY - 0.4) - 0.5,
+      2,
+      1,
+    );
+  }
+  // rising light column
+  for (let row = 0; row < 16; row++) {
+    const half = Math.round(3 * (1 - row / 20));
+    ctx.globalAlpha = (swirl || pulse ? 0.34 : 0.2) * (1 - row / 17);
+    rect(ctx, swirl ? manaColor(row >> 2) : "#aef6ff", cx - half, cy - 1 - row, half * 2 + 1, 1);
+  }
+  ctx.globalAlpha = 1;
+  for (let k = 0; k < 5; k++) {
+    const rise = still ? 4 + k * 3 : (time * 14 + k * 7) % 18;
+    rect(
+      ctx,
+      k % 2 ? "#ffffff" : swirl ? manaColor(k) : "#7fe7ee",
+      cx + (still ? k - 2 : Math.sin(time * 3 + k * 2) * 3),
+      cy - 2 - rise,
+      1,
+      1,
+    );
+  }
+  drawPortalPylon(ctx, cx + PORTAL_RX, cy - 1, swirl ? manaColor(3) : "#7fe7ee");
 };
 
 // ---------- juice helpers ----------
@@ -1623,7 +1785,7 @@ const drawAlertVignette = (ctx: Ctx, office: Office) => {
   let age = Infinity; // age of the freshest alert: a long-standing one calms down
   for (const emp of office.employees.values()) {
     // hidden (filtered) waiting sessions still raise the alert
-    if (emp.state === "SEATED" && emp.act === "handup") age = Math.min(age, office.clock - emp.actSince);
+    if (waitsOnYou(emp)) age = Math.min(age, office.clock - emp.actSince);
     for (const it of emp.interns.values()) if (it.act === "handup") age = Math.min(age, office.clock - it.since);
   }
   if (age === Infinity) return;
@@ -1669,6 +1831,11 @@ const drawRain = (ctx: Ctx, office: Office) => {
   ctx.stroke();
 };
 
+const onPortalTrip = (emp: Employee): boolean =>
+  emp.state === "TO_PORTAL" || emp.state === "IN_PORTAL" || emp.state === "FROM_PORTAL";
+/** a hand is up: seated, or on the way to / from the portal (the ❗ must not wait for the walk to end) */
+const waitsOnYou = (emp: Employee): boolean => emp.act === "handup" && (emp.state === "SEATED" || onPortalTrip(emp));
+
 // ---------- squires ----------
 const drawBadge = (ctx: Ctx, txt: string, x: number, y: number) => {
   ctx.font = TAG_FONT;
@@ -1682,14 +1849,29 @@ const drawBadge = (ctx: Ctx, txt: string, x: number, y: number) => {
   ctx.fillText(txt, x, y - 2.3);
 };
 
-const drawSquire = (
-  ctx: Ctx,
-  emp: Employee,
-  it: Employee["interns"] extends Map<string, infer V> ? V : never,
-  k: number,
-  time: number,
-) => {
-  const spot = emp.deskIdx >= 0 ? squirePoint(emp.deskIdx, k) : campSquirePoint(emp.slot, k);
+type Squire = Employee["interns"] extends Map<string, infer V> ? V : never;
+/** a squire on the move (out of the portal to its master, or back in): walk frames, mirrored when heading left */
+const drawSquireWalk = (ctx: Ctx, x: number, y: number, face: 1 | -1, time: number) => {
+  shadow(ctx, x, y, 8);
+  const frame = Math.floor(time * 8) % 2;
+  const sprite = internSprite("walk", frame);
+  const px = Math.round(x - sprite.width / 2),
+    py = Math.round(y - sprite.height) - frame;
+  if (face < 0) {
+    ctx.save();
+    ctx.translate(px + sprite.width, py);
+    ctx.scale(-1, 1);
+    ctx.drawImage(sprite, 0, 0);
+    ctx.restore();
+  } else ctx.drawImage(sprite, px, py);
+};
+
+const drawSquire = (ctx: Ctx, emp: Employee, it: Squire, k: number, time: number) => {
+  if (it.phase === "in") {
+    drawSquireWalk(ctx, it.x, it.y, it.face, time);
+    return;
+  }
+  const spot = it.phase === "snap" ? squireSpotOf(emp, k) : { x: it.x, y: it.y };
   shadow(ctx, spot.x, spot.y, 8);
   let sprite: HTMLCanvasElement;
   let dx = 0;
@@ -1709,6 +1891,8 @@ const drawSquire = (
 };
 
 // ---------- adventurers ----------
+const squireSpotOf = (emp: Employee, slot: number) =>
+  emp.deskIdx >= 0 ? squirePoint(emp.deskIdx, slot) : campSquirePoint(emp.slot, slot);
 let duelDxNow = 0,
   duelDyNow = 0;
 const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => {
@@ -1733,6 +1917,11 @@ const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => 
           ? { pose: "cheer", frame: Math.floor(time * 4) % 2 }
           : { pose: "idle", frame: 0 };
       return { pose: "walk", frame: Math.floor(time * 8) % 4 };
+    case "TO_PORTAL":
+    case "FROM_PORTAL":
+      return { pose: "walk", frame: Math.floor(time * 8) % 4 };
+    case "IN_PORTAL":
+      return { pose: "cast", frame: Math.floor(time * 6) % 2 };
     case "STRETCH":
       return { pose: "cheer", frame: Math.floor(time * 3) % 2 };
     case "DRINK":
@@ -1740,7 +1929,7 @@ const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => 
   }
   if (emp.resting) return { pose: "rest", frame: Math.floor(time * 1.2) % 2 };
   if (emp.hurtUntil > time) return { pose: "hurt", frame: Math.floor(time * 10) % 2 };
-  const hasMon = !!emp.monPos && !emp.monDead;
+  const hasMon = !!emp.monPos && !emp.monDead && !emp.bossPath.length; // a boss still walking out is too far to fight
   switch (emp.act) {
     case "typing":
     case "mcp":
@@ -1809,9 +1998,11 @@ const drawMonster = (ctx: Ctx, emp: Employee, time: number) => {
     if (age < 0.2) return;
     const seated = emp.state === "SEATED";
     const asleep = emp.resting;
+    const walking = emp.bossPath.length > 0; // a boss still walking out of the dungeon gate
     const hit =
       seated &&
       !asleep &&
+      !walking &&
       ((emp.act === "bash" && (time * 2.5) % 1 < 0.3) || (emp.act === "typing" && (time * 3) % 1 < 0.2));
     const frame = asleep ? 0 : Math.floor(time * 3 + emp.order) % 2;
     let lunge = 0;
@@ -1826,7 +2017,14 @@ const drawMonster = (ctx: Ctx, emp: Employee, time: number) => {
     const bob = asleep || Math.floor(time * 2 + emp.order) % 2 === 0 ? 0 : -1;
     const sx = Math.round(cx - sprite.width / 2 + lunge + (hit ? 1 : 0)),
       sy = Math.round(pos.y - sprite.height + bob);
-    ctx.drawImage(sprite, sx, sy);
+    if (walking && emp.bossFace > 0) {
+      // sprites face left: mirror while the boss heads right
+      ctx.save();
+      ctx.translate(sx + sprite.width, sy);
+      ctx.scale(-1, 1);
+      ctx.drawImage(sprite, 0, 0);
+      ctx.restore();
+    } else ctx.drawImage(sprite, sx, sy);
     if (emp.flashUntil > time) ctx.drawImage(tinted(sprite, "#ffffff"), sx, sy);
     if (emp.monLungeUntil > time) {
       ctx.globalAlpha = 0.3;
@@ -1859,7 +2057,17 @@ const manaBar = (ctx: Ctx, emp: Employee, time: number, office: Office) => {
     x = Math.round(emp.x - width / 2),
     y = Math.round(emp.y + 13);
   const color =
-    frac > 0.9 ? (Math.floor(time * 3) % 2 === 0 ? "#ff5a5a" : "#ff8f8f") : frac > 0.7 ? "#f2c14e" : "#4aa3ff";
+    emp.manaFlashUntil > time
+      ? Math.floor(time * 8) % 2 === 0
+        ? "#ffffff"
+        : "#bfe3ff"
+      : frac > 0.9
+        ? Math.floor(time * 3) % 2 === 0
+          ? "#ff5a5a"
+          : "#ff8f8f"
+        : frac > 0.7
+          ? "#f2c14e"
+          : "#4aa3ff";
   rect(ctx, INK, x - 1, y - 1, width + 2, 4);
   rect(ctx, "#1f2b4a", x, y, width, 2);
   if (frac > 0) rect(ctx, color, x, y, Math.max(1, Math.round(width * frac)), 2);
@@ -1906,10 +2114,10 @@ const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office) => {
   if (emp.duel && emp.duel.phase === "fight" && !emp.duel.still) return; // the duel replaces the usual monster fight effects
   if (emp.deskIdx >= 0 && emp.hearts === 0 && !emp.resting)
     blitC(ctx, "sweat" + (Math.floor(time * 3) % 2), emp.x - 9, emp.y - 22);
-  if (emp.slashUntil > time && emp.monPos && !emp.monDead)
+  if (emp.slashUntil > time && emp.monPos && !emp.monDead && !emp.bossPath.length)
     hitFx(ctx, emp, emp.monPos.x + (emp.boss ? 4 : 0), emp.monPos.y, time, 20, 1);
 
-  const monster = emp.monPos && !emp.monDead ? emp.monPos : null;
+  const monster = emp.monPos && !emp.monDead && !emp.bossPath.length ? emp.monPos : null;
   const mx = monster ? monster.x : emp.x + 22;
   const my = emp.y;
   const fight = !!monster && time - emp.monAppearAt > 0.3;
@@ -2014,6 +2222,7 @@ const drawBerserk = (ctx: Ctx, emp: Employee, time: number, still: boolean) => {
 
 const bubbleOf = (emp: Employee, time: number): string | null => {
   if (emp.state === "DRINK") return "🍺";
+  if (onPortalTrip(emp)) return emp.act === "handup" ? "❗" : "🌀";
   if (emp.state !== "SEATED") return null;
   if (emp.tempBubble) return emp.tempBubble.e;
   if (emp.bubble === "❗") return Math.floor(time * 4) % 2 === 0 ? "❗" : null;
@@ -2206,6 +2415,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   }
   ctx.drawImage(bg, 0, 0);
   drawEnvAnim(ctx, time);
+  drawGate(ctx, office, time);
   // Lighting tints only the environment; characters, monsters and emissive things stay solid and full-colour.
   ctx.drawImage(overlay!, 0, 0);
   if (office.rain > 0) {
@@ -2215,7 +2425,8 @@ export const drawScene = (ctx: Ctx, office: Office) => {
     ctx.fillStyle = `rgba(20,30,60,${0.07 * office.rain})`;
     ctx.fillRect(0, 0, HALL_W, WORLD_H);
   }
-  drawLights(ctx, time);
+  drawLights(ctx, time, office);
+  drawAllyPortal(ctx, office, time); // under every entity: nobody is ever drawn beneath its translucent glow
   drawAmbientBelow(ctx, office, night);
   drawAmbientAbove(ctx, office, night);
   drawNpc(ctx, time, office);
@@ -2260,8 +2471,9 @@ export const drawScene = (ctx: Ctx, office: Office) => {
       for (const it of emp.interns.values()) {
         if (k >= 2) break;
         const squireSlot = k++;
+        if (it.phase === "wait") continue; // still inside the ally portal
         ents.push({
-          y: (camp ? campSquirePoint(emp.slot, squireSlot) : squirePoint(emp.deskIdx, squireSlot)).y,
+          y: it.phase === "snap" ? squireSpotOf(emp, squireSlot).y : it.y,
           fn: () => drawSquire(ctx, emp, it, squireSlot, time),
         });
       }
@@ -2273,6 +2485,9 @@ export const drawScene = (ctx: Ctx, office: Office) => {
       }
     }
   }
+  // finished squires walking back into the portal
+  for (const leaver of office.leavers)
+    ents.push({ y: leaver.y, fn: () => drawSquireWalk(ctx, leaver.x, leaver.y, leaver.face, time) });
   // camp overflow beyond the last slot: stacked on it, badge shows how many
   let stacked = 0;
   for (const emp of office.employees.values()) if (emp.deskIdx < 0 && emp.slot >= CAMP_MAX) stacked++;
@@ -2290,7 +2505,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   // bubbles, highlights, tags
   for (const emp of office.employees.values()) {
     if (office.isHidden(emp)) continue;
-    if (emp.state === "SEATED" && emp.act === "handup" && !emp.tempBubble) {
+    if (waitsOnYou(emp) && !emp.tempBubble) {
       if (Math.floor(time * 4) % 2 === 0 || office.selectedId === emp.id) drawAlert(ctx, emp.x, emp.y - CH_H - 1);
     } else {
       const emote = bubbleOf(emp, time);
@@ -2352,13 +2567,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
     drawTag(
       ctx,
       hovered,
-      hovered.y +
-        DP.dy -
-        CH_H -
-        3 -
-        (bubbleOf(hovered, time) || (hovered.state === "SEATED" && hovered.act === "handup") || isLooping(hovered)
-          ? 17
-          : 0),
+      hovered.y + DP.dy - CH_H - 3 - (bubbleOf(hovered, time) || waitsOnYou(hovered) || isLooping(hovered) ? 17 : 0),
       DP.dx,
     );
   }

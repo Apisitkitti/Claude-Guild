@@ -63,7 +63,7 @@ const OfficeApp = () => {
         onToggleCollapsed={toggleCollapsed}
       />
       <div className="main">
-        <Stage canvasRef={canvasRef} stageRef={stageRef} scale={scale} officeRef={officeRef} />
+        <Stage canvasRef={canvasRef} stageRef={stageRef} scale={scale} officeRef={officeRef} dungeon={view.dungeon} />
         <SidePanel
           view={view}
           attention={attention}

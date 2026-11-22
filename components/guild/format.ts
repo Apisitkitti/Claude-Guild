@@ -72,6 +72,16 @@ export const agoText = (at: number, now: number): string => {
     : m.age_ago_hours({ h: hours, min: restMinutes });
 };
 
+/** a length of time in seconds as "45s", "3m 05s" or "1h 12m" in the viewer's language */
+export const durText = (totalSeconds: number): string => {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  if (minutes < 1) return m.dungeon_dur_seconds({ s: seconds });
+  return minutes < MINUTES_PER_HOUR
+    ? m.dungeon_dur_minutes({ min: minutes, s: seconds % SECONDS_PER_MINUTE })
+    : m.dungeon_dur_hours({ h: Math.floor(minutes / MINUTES_PER_HOUR), min: minutes % MINUTES_PER_HOUR });
+};
+
 /** quest-log label of an event kind: the two guild-made kinds are worded, hook/tool names stay as they are */
 export const kindLabel = (kind: string): string => {
   return kind === KIND_RECEIPT ? m.log_kind_receipt() : kind === KIND_CLASH ? m.log_kind_clash() : kind;

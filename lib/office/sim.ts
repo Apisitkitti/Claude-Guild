@@ -27,7 +27,8 @@ const W_GLOB = 5;
 const W_EDIT = 22;
 const W_WRITE = 6;
 const W_BASH = 15;
-const W_SMALL = 4; // WebSearch, Agent, linear MCP
+const W_SMALL = 4; // WebSearch, linear MCP
+const W_AGENT = 9; // Agent: calls squires out of the ally portal
 const W_TODO = 5;
 
 // ---- demo pacing: session spawning ----
@@ -78,7 +79,9 @@ const CONTEXT_LIMIT = 200_000;
 const CONTEXT_START: Range = { min: 8000, max: 60_000 };
 const CONTEXT_GROWTH: Range = { min: 1500, max: 9000 };
 const CONTEXT_COMPACT_AT = 0.97;
-const CONTEXT_COMPACT_CHANCE = 0.01;
+const CONTEXT_COMPACT_CHANCE = 0.03;
+/** after PreCompact the demo session idles this long (the compaction), then reports the shrunken context */
+const COMPACT_PAUSE: Range = { min: 15, max: 18 };
 const CONTEXT_AFTER_COMPACT: Range = { min: 10_000, max: 30_000 };
 const STARTUP_DELAY: Range = { min: 2, max: 4 };
 const PROMPT_COUNT: Range = { min: 2, max: 4 };
@@ -86,7 +89,7 @@ const PROMPT_PAUSE: Range = { min: 1, max: 2 };
 const STEP_COUNT: Range = { min: 4, max: 10 };
 const PERMISSION_CHANCE = 0.08;
 const PERMISSION_WAIT: Range = { min: 3, max: 6 };
-const BOSS_CHANCE = 0.08;
+const BOSS_CHANCE = 0.16;
 const BOSS_TOOL_TIME: Range = { min: 34, max: 42 };
 const BASH_TIME: Range = { min: 3, max: 8 };
 const TOOL_TIME: Range = { min: 0.8, max: 5 };
@@ -98,6 +101,13 @@ const STEP_PAUSE: Range = { min: 0.3, max: 1.5 };
 const LONG_BREAK_CHANCE = 0.25;
 const LONG_BREAK: Range = { min: 85, max: 110 };
 const SHORT_BREAK: Range = { min: 6, max: 15 };
+
+// ---- demo pacing: ally portal showcase (extra squires + compact trips, so the portal is seen regularly) ----
+const ALLY_START_DELAY: Range = { min: 9, max: 14 };
+const ALLY_GAP: Range = { min: 16, max: 26 };
+const ALLY_SQUIRES: Range = { min: 2, max: 4 };
+const ALLY_SQUIRE_GAP: Range = { min: 0.2, max: 0.5 };
+const ALLY_RETRY_S = 2;
 
 // ---- demo pacing: interns ----
 const INTERN_START_DELAY = 0.3;
@@ -133,7 +143,7 @@ const WEIGHTS: [string, number][] = [
   ["Write", W_WRITE],
   ["Bash", W_BASH],
   ["WebSearch", W_SMALL],
-  ["Agent", W_SMALL],
+  ["Agent", W_AGENT],
   ["TodoWrite", W_TODO],
   ["mcp__linear__list_issues", W_SMALL],
 ];
@@ -186,6 +196,47 @@ export class Simulator {
     this.spawn(this.attention());
     this.spawn(this.attentionSync());
     this.spawn(this.receipts());
+    this.spawn(this.ally());
+  }
+
+  /** demo-only: now and then a calm adventurer calls a few squires out of the ally portal, or goes there to compact */
+  private *ally(): Gen {
+    yield span(ALLY_START_DELAY);
+    let compactNext = false;
+    for (;;) {
+      const calm = [...this.o.employees.values()].filter(
+        (emp) => emp.state === "SEATED" && this.active.has(emp.id) && emp.pending.size === 0 && emp.act === "thinking",
+      );
+      if (!calm.length) {
+        yield ALLY_RETRY_S;
+        continue;
+      }
+      const emp = pick(calm);
+      if (compactNext) {
+        this.wantCompact.add(emp.id); // the session's own loop compacts at its next step, then idles for the whole trip
+      } else {
+        const count = spanInt(ALLY_SQUIRES);
+        for (let k = 0; k < count; k++) {
+          this.spawn(this.intern(emp.id, emp.cwd));
+          yield span(ALLY_SQUIRE_GAP);
+        }
+      }
+      compactNext = !compactNext;
+      yield span(ALLY_GAP);
+    }
+  }
+
+  /** sessions the showcase wants to see compact; their loop does it between two steps so nothing cuts the trip short */
+  private wantCompact = new Set<string>();
+  /** the (fake) context of each demo session, shared so a compaction from outside the session loop sticks */
+  private used = new Map<string, number>();
+  /** PreCompact now; the shrunken context is reported a few seconds later (the real server also clears it first) */
+  private compact(id: string) {
+    const project = this.active.get(id);
+    if (!project) return;
+    this.used.set(id, spanInt(CONTEXT_AFTER_COMPACT));
+    this.emit({ session_id: id, cwd: "/Users/me/Practice/" + project, hook_event_name: "PreCompact", trigger: "auto" });
+    this.o.setContext(id, null, null);
   }
 
   /** how often each class pairing has duelled in this demo (so cycles rotate through sword / magic / arrow matchups) */
@@ -435,9 +486,9 @@ export class Simulator {
     const send = (name: string, extra: Record<string, unknown> = {}) =>
       this.emit({ ...base, hook_event_name: name, ...extra });
     // fake context window: grows with work, occasionally "compacts" (drops back down)
-    let used = spanInt(CONTEXT_START);
+    this.used.set(id, spanInt(CONTEXT_START));
     const limit = CONTEXT_LIMIT;
-    const push = () => this.o.setContext(id, used, limit, false);
+    const push = () => this.o.setContext(id, this.used.get(id) ?? 0, limit, false);
     push();
     yield 0;
     send("SessionStart", { source: "startup" });
@@ -448,10 +499,14 @@ export class Simulator {
       yield span(PROMPT_PAUSE);
       const steps = spanInt(STEP_COUNT);
       for (let stepIdx = 0; stepIdx < steps; stepIdx++) {
-        used += spanInt(CONTEXT_GROWTH);
-        if (used > limit * CONTEXT_COMPACT_AT || Math.random() < CONTEXT_COMPACT_CHANCE) {
-          used = spanInt(CONTEXT_AFTER_COMPACT);
-          send("PreCompact", { trigger: "auto" });
+        this.used.set(id, (this.used.get(id) ?? 0) + spanInt(CONTEXT_GROWTH));
+        if (
+          this.wantCompact.delete(id) ||
+          (this.used.get(id) ?? 0) > limit * CONTEXT_COMPACT_AT ||
+          Math.random() < CONTEXT_COMPACT_CHANCE
+        ) {
+          this.compact(id);
+          yield span(COMPACT_PAUSE);
         }
         push();
         const tool = pickTool();
@@ -486,6 +541,8 @@ export class Simulator {
     }
     send("SessionEnd", { reason: "prompt_input_exit" });
     this.active.delete(id);
+    this.used.delete(id);
+    this.wantCompact.delete(id);
   }
 
   private *intern(sid: string, cwd: string): Gen {
