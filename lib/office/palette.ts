@@ -38,8 +38,8 @@ export const classLabel = (cls: AdvClass): string => CLASS_LABEL[cls]();
 export type MonsterKind = "slime" | "goblin" | "bat" | "skeleton" | "mushroom";
 export const MONSTER_KINDS: MonsterKind[] = ["slime", "goblin", "bat", "skeleton", "mushroom"];
 
-export type BossKind = "ogre" | "dragon";
-export const BOSS_KINDS: BossKind[] = ["ogre", "dragon"];
+export type BossKind = "ogre" | "dragon" | "lich";
+export const BOSS_KINDS: BossKind[] = ["ogre", "dragon", "lich"];
 
 const PAL_SHIRT_A = 9;
 const PAL_SHIRT_B = 10;

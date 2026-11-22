@@ -257,24 +257,26 @@ export const DUNGEON_HIT: Rect = { x: 318, y: 18, w: 48, h: 36 };
 export const GATE_MOUTH: Pt = { x: DUNGEON.x, y: DUNGEON.y - 1 };
 const BRIDGE_TOP_Y = 53;
 const BRIDGE_END_Y = 74;
-/** The dirt trail south of the bridge ends here; bosses fan out from this row. */
-const TRAIL_END_Y = 90;
-const BOSS_LANE_DX = 18;
-const WORLD_EDGE_MARGIN = 8;
-/** Boss walk: gate mouth -> over the bridge -> down the trail -> along the northern edge of the battle rows -> goal. Excludes the start. */
+/** Boss feet walk this row just south of the river: above every adventurer box (they start at y 78, their HP bars at 76). */
+const BOSS_WALK_Y = 75;
+/** Lower-row bosses use the road between the battle rows, a box-height below the upper row's feet. */
+const BOSS_ROAD_OFFSET = 10;
+const BOSS_ROAD_Y = ROAD_Y + BOSS_ROAD_OFFSET;
+/** Drawn centre of the lane beside the hall wall that carries lower-row bosses down to the road. */
+const BOSS_LANE_X = 142;
+/** a boss is drawn this far right of its position (see bossSprites BOSS_DX); the route is written in drawn x */
+const BOSS_DRAW_DX = 12;
+/**
+ * Boss walk: gate mouth -> over the bridge -> along the river bank above the battle rows -> (lower row: down the lane
+ * by the hall wall and along the road) -> straight down its own column to the goal. Never crosses another fight
+ * spot's adventurer / monster box. Excludes the start.
+ */
 export const routeBoss = (desk: number): Pt[] => {
   const goal = monsterSpot(desk);
-  const pts: Pt[] = [
-    { x: BRIDGE_X, y: BRIDGE_TOP_Y },
-    { x: BRIDGE_X, y: BRIDGE_END_Y },
-    { x: BRIDGE_X, y: TRAIL_END_Y },
-  ];
-  if (desk < GRID_COLS) pts.push({ x: goal.x, y: TRAIL_END_Y });
-  else {
-    // lower row: a free lane just right of the monster column, then back left onto the goal
-    const lane = Math.min(goal.x + BOSS_LANE_DX, WORLD_W - WORLD_EDGE_MARGIN);
-    pts.push({ x: lane, y: TRAIL_END_Y }, { x: lane, y: goal.y });
-  }
+  const via = (drawnX: number, y: number): Pt => ({ x: drawnX - BOSS_DRAW_DX, y });
+  const pts: Pt[] = [via(BRIDGE_X, BRIDGE_TOP_Y), via(BRIDGE_X, BRIDGE_END_Y), via(BRIDGE_X, BOSS_WALK_Y)];
+  if (desk < GRID_COLS) pts.push({ x: goal.x, y: BOSS_WALK_Y });
+  else pts.push(via(BOSS_LANE_X, BOSS_WALK_Y), via(BOSS_LANE_X, BOSS_ROAD_Y), { x: goal.x, y: BOSS_ROAD_Y });
   pts.push({ ...goal });
   return dedupe(pts);
 };

@@ -69,7 +69,14 @@ const eslintConfig = defineConfig([
   },
   {
     // Pixel-art drawing data: coordinates and sizes are the content itself.
-    files: ["lib/office/sprites.ts", "lib/office/npcSprites.ts", "lib/office/render.ts", "tests/**"],
+    files: [
+      "lib/office/sprites.ts",
+      "lib/office/npcSprites.ts",
+      "lib/office/bossSprites.ts",
+      "lib/office/monsterSprites.ts",
+      "lib/office/render.ts",
+      "tests/**",
+    ],
     rules: { "@typescript-eslint/no-magic-numbers": "off" },
   },
   prettier,

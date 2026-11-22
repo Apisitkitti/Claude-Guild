@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { bossCenterX } from "@/lib/office/bossSprites";
 import type { Employee, Office } from "@/lib/office/engine";
 import {
   ALLY_BRIDGE_X,
@@ -57,6 +58,8 @@ const sampleAlong = (start: Pt, path: Pt[]): Pt[] => {
   }
   return out;
 };
+/** boss positions as drawn: the sprite is centred right of its position */
+const drawn = (points: Pt[]): Pt[] => points.map((point) => ({ x: bossCenterX(point.x), y: point.y }));
 const expectDryAndInside = (points: Pt[], bridgeX = BRIDGE_X) => {
   for (const point of points) {
     expect(point.x).toBeGreaterThanOrEqual(HALL_W);
@@ -104,7 +107,7 @@ describe("dungeon gate: boss emergence", () => {
     for (let desk = 0; desk < DESK_COUNT; desk++) {
       const path = routeBoss(desk);
       expect(path[path.length - 1]).toEqual(monsterSpot(desk));
-      expectDryAndInside(sampleAlong(GATE_MOUTH, path));
+      expectDryAndInside(drawn(sampleAlong(GATE_MOUTH, path)));
     }
   });
 
@@ -123,10 +126,10 @@ describe("dungeon gate: boss emergence", () => {
       tick(office, 0.05);
       seen.push({ ...employee.monPos! });
     }
-    expectDryAndInside(seen);
-    expect(seen.some((point) => Math.abs(point.x - BRIDGE_X) < 1 && point.y > WATER_Y0 && point.y < WATER_Y1)).toBe(
-      true,
-    );
+    expectDryAndInside(drawn(seen));
+    expect(
+      drawn(seen).some((point) => Math.abs(point.x - BRIDGE_X) < 1 && point.y > WATER_Y0 && point.y < WATER_Y1),
+    ).toBe(true);
     expect(employee.bossPath).toEqual([]);
     expect(employee.monPos).toEqual(goal);
     expect(employee.bossFace).toBe(-1);

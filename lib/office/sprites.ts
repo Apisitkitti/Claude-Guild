@@ -1,13 +1,4 @@
-import {
-  ADV_CLASSES,
-  INTERN_LOOK,
-  SPRITE_COLORS,
-  fnv1a,
-  type AdvClass,
-  type BossKind,
-  type Look,
-  type MonsterKind,
-} from "./palette";
+import { ADV_CLASSES, INTERN_LOOK, SPRITE_COLORS, fnv1a, type AdvClass, type Look } from "./palette";
 
 const cache = new Map<string, HTMLCanvasElement>();
 
@@ -19,7 +10,7 @@ const mkCanvas = (width: number, height: number): HTMLCanvasElement => {
 };
 
 // ---------------------------------------------------------------- colour helpers
-const mix = (colorA: string, colorB: string, amount: number): string => {
+export const mix = (colorA: string, colorB: string, amount: number): string => {
   const rgbA = parseInt(colorA.slice(1), 16),
     rgbB = parseInt(colorB.slice(1), 16);
   const hexChannel = (shift: number) => {
@@ -31,10 +22,10 @@ const mix = (colorA: string, colorB: string, amount: number): string => {
   };
   return "#" + hexChannel(16) + hexChannel(8) + hexChannel(0);
 };
-const lighten = (color: string, amount: number) => mix(color, "#ffffff", amount);
+export const lighten = (color: string, amount: number) => mix(color, "#ffffff", amount);
 const darken = (color: string, amount: number) => mix(color, "#000000", amount);
 
-const INK = "#14121f";
+export const INK = "#14121f";
 const sat = (color: string, amount: number): string => {
   const rgb = parseInt(color.slice(1), 16);
   const red = (rgb >>> 16) & 255,
@@ -47,7 +38,7 @@ const sat = (color: string, amount: number): string => {
       .padStart(2, "0");
   return "#" + adjust(red) + adjust(green) + adjust(blue);
 };
-const luma = (color: string): number => {
+export const luma = (color: string): number => {
   const rgb = parseInt(color.slice(1), 16);
   return 0.3 * ((rgb >>> 16) & 255) + 0.59 * ((rgb >>> 8) & 255) + 0.11 * (rgb & 255);
 };
@@ -77,10 +68,12 @@ const PAPER = "#efe2c0",
 const FEATHER = "#f4f1ea";
 
 // ---------------------------------------------------------------- pixel grid
-class Grid {
+export class Grid {
   cells: (string | null)[];
   dx = 0;
   dy = 0;
+  /** cells painted by outline() (so a hurt flash can keep the silhouette dark) */
+  inked = new Set<number>();
   constructor(
     readonly width: number,
     readonly height: number,
@@ -118,10 +111,17 @@ class Grid {
             if ((dx || dy) && nx >= 0 && nx < width && ny >= 0 && ny < height) neighbour = cells[ny * width + nx];
           }
         }
-        if (neighbour) out[y * width + x] = mix(neighbour, INK, 0.8);
+        if (neighbour) {
+          out[y * width + x] = mix(neighbour, INK, 0.8);
+          this.inked.add(y * width + x);
+        }
       }
     }
     this.cells = out;
+  }
+  /** like recolor, but leaves the outline cells alone */
+  recolorFill(transform: (color: string) => string) {
+    this.cells = this.cells.map((color, at) => (color && !this.inked.has(at) ? transform(color) : color));
   }
   recolor(transform: (color: string) => string) {
     this.cells = this.cells.map((color) => (color ? transform(color) : color));
@@ -1362,454 +1362,6 @@ export const internSprite = (pose: InternPose, frame: number): HTMLCanvasElement
   let sprite = cache.get(key);
   if (!sprite) {
     sprite = buildIntern(pose, frameIdx);
-    cache.set(key, sprite);
-  }
-  return sprite;
-};
-
-// ---------------------------------------------------------------- monsters (<=16x16, facing LEFT)
-const buildMonster = (kind: MonsterKind, frame: number, hurt: boolean): HTMLCanvasElement => {
-  const grid = new Grid(16, 16);
-  const beat = frame;
-  switch (kind) {
-    case "slime": {
-      const base = "#5fc46a",
-        hi = "#a8f0ac",
-        sh = "#3a9450",
-        dk = "#2a6e3c";
-      const rows: Array<[number, number, number]> =
-        beat === 0
-          ? [
-              [5, 6, 9],
-              [6, 4, 11],
-              [7, 3, 12],
-              [8, 2, 13],
-              [9, 2, 13],
-              [10, 2, 13],
-              [11, 2, 13],
-              [12, 3, 12],
-            ]
-          : [
-              [7, 5, 10],
-              [8, 3, 12],
-              [9, 2, 13],
-              [10, 1, 14],
-              [11, 1, 14],
-              [12, 2, 13],
-            ];
-      const top = rows[0][0],
-        bot = rows[rows.length - 1][0];
-      for (const [y, x0, x1] of rows) {
-        grid.row(y, x0, x1, base);
-        grid.set(x1, y, sh);
-        if (y >= bot - 1) grid.row(y, x0, x1, sh);
-      }
-      grid.row(bot, rows[rows.length - 1][1], rows[rows.length - 1][2], dk);
-      grid.set(rows[1][1] + 1, top + 1, hi);
-      grid.set(rows[1][1] + 2, top + 1, hi);
-      grid.set(rows[2][1] + 1, top + 2, hi);
-      const ey = top + 3;
-      for (const x of [5, 8]) {
-        grid.set(x, ey, EYE);
-        grid.set(x, ey + 1, EYE);
-        grid.set(x, ey, WHITE);
-      }
-      grid.row(ey + 2, 6, 7, dk);
-      break;
-    }
-    case "goblin": {
-      const skin = "#6fb04f",
-        sh = "#4a8a3a",
-        hi = "#97d36f",
-        cloth = "#8b5e3c",
-        clothSh = "#5c3d28";
-      // legs
-      grid.rect(5, 13, 6, 14, sh);
-      grid.rect(9, 13, 10, 14, sh);
-      grid.row(14, 4, 6, "#4a3426");
-      grid.row(14, 9, 11, "#4a3426");
-      grid.dy = beat;
-      // body
-      grid.rect(5, 9, 10, 12, cloth);
-      grid.rect(10, 9, 10, 12, clothSh);
-      grid.row(12, 5, 10, clothSh);
-      grid.set(7, 10, WOOD_HI);
-      grid.set(8, 11, WOOD_HI);
-      // right (back) arm
-      grid.rect(11, 9, 11, 11, skin);
-      grid.set(11, 12, sh);
-      // head + ears
-      grid.rect(5, 3, 10, 8, skin);
-      grid.row(3, 5, 10, hi);
-      grid.rect(10, 4, 10, 8, sh);
-      grid.set(4, 5, skin);
-      grid.set(3, 5, skin);
-      grid.set(2, 4, skin);
-      grid.set(3, 4, hi);
-      grid.set(11, 5, sh);
-      grid.set(12, 5, sh);
-      grid.set(13, 4, sh);
-      grid.set(6, 5, "#ffd84a");
-      grid.set(6, 6, EYE);
-      grid.set(8, 5, "#ffd84a");
-      grid.set(8, 6, EYE);
-      grid.row(4, 6, 7, sh);
-      grid.row(4, 8, 9, sh);
-      grid.set(5, 7, sh);
-      grid.row(8, 6, 9, "#3a1f2a");
-      grid.set(6, 8, WHITE);
-      grid.set(9, 8, WHITE);
-      // left (front) arm + club
-      grid.set(4, 10, skin);
-      grid.set(3, 11, skin);
-      grid.rect(1, 5, 3, 8, WOOD_HI);
-      grid.row(8, 1, 3, WOOD);
-      grid.set(3, 5, WOOD_SH);
-      grid.set(1, 5, WOOD);
-      grid.set(0 + 1, 4, STEEL_SH);
-      grid.set(3, 4, STEEL_SH);
-      grid.rect(2, 9, 2, 11, WOOD);
-      grid.set(2, 12, WOOD_SH);
-      grid.dy = 0;
-      break;
-    }
-    case "bat": {
-      const base = "#8a5ac0",
-        sh = "#5f3a90",
-        hi = "#b58be0",
-        wing = "#6b3fa0",
-        bone = "#4a2878";
-      const wings: Array<[number, number, number]> =
-        beat === 0
-          ? [
-              [3, 1, 2],
-              [4, 1, 4],
-              [5, 2, 5],
-              [6, 3, 5],
-              [7, 4, 5],
-            ]
-          : [
-              [7, 4, 5],
-              [8, 2, 5],
-              [9, 1, 5],
-              [10, 1, 3],
-              [11, 1, 2],
-            ];
-      for (const [y, x0, x1] of wings) {
-        for (let x = x0; x <= x1; x++) {
-          grid.set(x, y, x === x0 ? bone : wing);
-          grid.set(15 - x, y, 15 - x === 15 - x0 ? bone : wing);
-        }
-      }
-      grid.rect(6, 6, 9, 9, base);
-      grid.row(10, 7, 8, base);
-      grid.rect(9, 6, 9, 9, sh);
-      grid.set(7, 10, sh);
-      grid.set(8, 10, sh);
-      grid.set(6, 5, base);
-      grid.set(6, 4, sh);
-      grid.set(9, 5, base);
-      grid.set(9, 4, sh);
-      grid.set(7, 6, hi);
-      grid.set(6, 6, hi);
-      grid.set(6, 7, "#ff5a5a");
-      grid.set(8, 7, "#ff5a5a");
-      grid.set(7, 9, WHITE);
-      grid.set(8, 9, WHITE);
-      break;
-    }
-    case "skeleton": {
-      const bone = "#ece6d2",
-        sh = "#b9b19a",
-        dk = "#2a2438";
-      // legs first (static), upper body bobs over them
-      grid.rect(6, 12, 6, 14, sh);
-      grid.rect(9, 12, 9, 14, sh);
-      grid.row(14, 5, 6, bone);
-      grid.row(14, 9, 10, bone);
-      grid.dy = beat;
-      grid.row(11, 6, 9, sh);
-      grid.rect(5, 8, 10, 10, bone);
-      grid.row(9, 5, 10, sh);
-      grid.set(7, 8, dk);
-      grid.set(8, 8, dk);
-      grid.row(10, 5, 10, bone);
-      grid.set(7, 10, sh);
-      grid.set(8, 10, sh);
-      grid.rect(7, 7, 8, 7, sh);
-      // skull
-      grid.row(2, 6, 9, bone);
-      grid.rect(5, 3, 10, 6, bone);
-      grid.row(7, 6, 9, bone);
-      grid.row(2, 6, 7, WHITE);
-      grid.rect(10, 3, 10, 6, sh);
-      grid.rect(6, 4, 7, 5, dk);
-      grid.rect(9, 4, 9, 5, dk);
-      grid.set(6, 5, "#ff5a5a");
-      grid.set(9, 5, "#ff5a5a");
-      grid.set(8, 6, dk);
-      grid.row(7, 6, 9, bone);
-      grid.set(7, 7, dk);
-      grid.set(9, 7, dk);
-      // arms
-      grid.rect(11, 8, 11, 10, bone);
-      grid.set(11, 11, sh);
-      grid.set(4, 8, bone);
-      grid.set(4, 9, bone);
-      grid.set(3, 10, bone);
-      // sword
-      for (let y = 2; y <= 8; y++) grid.set(2, y, y % 2 ? "#a9a39a" : "#8c867d");
-      grid.set(2, 1, "#c9c4bb");
-      grid.row(9, 1, 3, WOOD_SH);
-      grid.set(3, 9, WOOD_SH);
-      grid.set(2, 10, bone);
-      grid.set(2, 11, WOOD);
-      grid.dy = 0;
-      break;
-    }
-    case "mushroom": {
-      const cap = "#d9434f",
-        hi = "#f2707a",
-        sh = "#a82e3d",
-        under = "#7d2230";
-      const stem = "#f1e3c4",
-        stemSh = "#cdb98e";
-      // feet + stem (static)
-      grid.rect(5, 8, 10, 12, stem);
-      grid.rect(10, 8, 10, 12, stemSh);
-      grid.row(13, 5, 6, stemSh);
-      grid.row(13, 9, 10, stemSh);
-      grid.row(12, 5, 10, stemSh);
-      // face on stem
-      for (const x of [6, 9]) {
-        grid.set(x, 10, EYE);
-        grid.set(x, 11, EYE);
-      }
-      grid.set(5, 11, "#f2a0a8");
-      grid.set(7, 12, MOUTH);
-      grid.set(8, 12, MOUTH);
-      grid.set(6, 10, WHITE);
-      grid.dy = beat;
-      const rows: Array<[number, number, number]> = [
-        [2, 6, 9],
-        [3, 4, 11],
-        [4, 3, 12],
-        [5, 2, 13],
-        [6, 2, 13],
-      ];
-      for (const [y, x0, x1] of rows) {
-        grid.row(y, x0, x1, cap);
-        grid.set(x1, y, sh);
-      }
-      grid.row(7, 2, 13, under);
-      grid.row(7, 4, 11, sh);
-      grid.set(5, 2 + 1, hi);
-      grid.set(6, 3, hi);
-      grid.set(4, 4, hi);
-      // spots
-      grid.rect(4, 4, 5, 5, WHITE);
-      grid.rect(9, 3, 10, 4, WHITE);
-      grid.set(12, 6, WHITE);
-      grid.set(8, 6, WHITE);
-      grid.set(7, 5, WHITE);
-      grid.dy = 0;
-      break;
-    }
-  }
-  grid.outline();
-  if (hurt) {
-    grid.recolor((color) => (luma(color) < 55 ? color : lighten(mix(color, "#ff3b3b", 0.4), 0.55)));
-  }
-  return grid.toCanvas();
-};
-
-/** Monster sprite, facing LEFT (toward the adventurer). hurt=true draws a white/red flash variant. */
-export const monsterSprite = (kind: MonsterKind, frame: number, hurt: boolean): HTMLCanvasElement => {
-  const frameIdx = normFrame(frame, 2);
-  const key = `m|${kind}|${frameIdx}|${hurt ? 1 : 0}`;
-  let sprite = cache.get(key);
-  if (!sprite) {
-    sprite = buildMonster(kind, frameIdx, hurt);
-    cache.set(key, sprite);
-  }
-  return sprite;
-};
-
-// ---------------------------------------------------------------- bosses (24x24, facing LEFT)
-const ell = (grid: Grid, cx: number, cy: number, rx: number, ry: number, color: string) => {
-  for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++) {
-    for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
-      const dx = (x - cx) / (rx + 0.35),
-        dy = (y - cy) / (ry + 0.35);
-      if (dx * dx + dy * dy <= 1) grid.set(x, y, color);
-    }
-  }
-};
-const tri = (grid: Grid, vertA: [number, number], vertB: [number, number], vertC: [number, number], color: string) => {
-  const sgn = (v1: number[], v2: number[], v3: number[]) =>
-    (v1[0] - v3[0]) * (v2[1] - v3[1]) - (v2[0] - v3[0]) * (v1[1] - v3[1]);
-  for (let y = 0; y < grid.height; y++) {
-    for (let x = 0; x < grid.width; x++) {
-      const pt = [x + 0.5, y + 0.5];
-      const d1 = sgn(pt, vertA, vertB),
-        d2 = sgn(pt, vertB, vertC),
-        d3 = sgn(pt, vertC, vertA);
-      const neg = d1 < 0 || d2 < 0 || d3 < 0,
-        pos = d1 > 0 || d2 > 0 || d3 > 0;
-      if (!(neg && pos)) grid.set(x, y, color);
-    }
-  }
-};
-const line = (grid: Grid, x0: number, y0: number, x1: number, y1: number, color: string) => {
-  const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
-  for (let i = 0; i <= steps; i++)
-    grid.set(Math.round(x0 + ((x1 - x0) * i) / steps), Math.round(y0 + ((y1 - y0) * i) / steps), color);
-};
-
-const buildBoss = (kind: BossKind, frame: number, hurt: boolean): HTMLCanvasElement => {
-  const grid = new Grid(24, 24);
-  const BONE = "#f0e8d0";
-  if (kind === "ogre") {
-    const SK = "#6a9a4a",
-      HI = "#93c466",
-      SHD = "#44693a",
-      DK = "#2f4a2a",
-      CL = "#7a4a2b",
-      CL_SH = "#5c3622";
-    // club (behind)
-    grid.rect(18, 2 + frame, 22, 7 + frame, WOOD);
-    grid.rect(18, 2 + frame, 18, 7 + frame, WOOD_HI);
-    grid.rect(22, 2 + frame, 22, 7 + frame, WOOD_SH);
-    grid.set(20, 3 + frame, BONE);
-    grid.set(19, 6 + frame, BONE);
-    grid.set(21, 5 + frame, BONE);
-    grid.rect(19, 8 + frame, 21, 17 + frame, WOOD);
-    grid.rect(19, 8 + frame, 19, 17 + frame, WOOD_HI);
-    grid.rect(21, 8 + frame, 21, 17 + frame, WOOD_SH);
-    // legs
-    const le = 21 - frame,
-      re = 20 + frame;
-    grid.rect(6, 18, 10, le, SK);
-    grid.rect(10, 18, 10, le, SHD);
-    grid.row(le, 5, 10, DK);
-    grid.rect(13, 18, 17, re, SK);
-    grid.rect(17, 18, 17, re, SHD);
-    grid.row(re, 12, 17, DK);
-    // torso
-    ell(grid, 12, 13 + frame, 7, 6, SK);
-    for (let y = 7; y <= 20; y++) for (let x = 16; x <= 20; x++) if (grid.cells[y * 24 + x] === SK) grid.set(x, y, SHD);
-    ell(grid, 10, 14 + frame, 3, 3, HI);
-    grid.rect(7, 17 + frame, 16, 19, CL);
-    grid.row(19, 7, 16, CL_SH);
-    grid.set(10, 17 + frame, CL_SH);
-    grid.set(13, 18 + frame, CL_SH);
-    // head
-    ell(grid, 7, 6 + frame, 4, 3, SK);
-    grid.set(5, 3 + frame, HI);
-    grid.set(6, 3 + frame, HI);
-    grid.set(11, 4 + frame, SK);
-    grid.set(12, 4 + frame, SK);
-    grid.set(12, 5 + frame, SHD);
-    grid.set(3, 6 + frame, SHD);
-    grid.row(4 + frame, 4, 6, DK);
-    grid.set(7, 5 + frame, DK);
-    grid.set(5, 5 + frame, "#ff5a3a");
-    grid.set(8, 5 + frame, "#ff5a3a");
-    grid.row(8 + frame, 4, 9, DK);
-    grid.set(4, 7 + frame, BONE);
-    grid.set(4, 8 + frame, BONE);
-    grid.set(7, 7 + frame, BONE);
-    grid.set(7, 8 + frame, BONE);
-    // arms
-    grid.rect(3, 11 + frame, 5, 15 + frame, SK);
-    grid.rect(3, 11 + frame, 3, 15 + frame, HI);
-    grid.rect(3, 15 + frame, 5, 17 + frame, HI);
-    grid.row(17 + frame, 3, 5, SHD);
-    grid.rect(16, 9 + frame, 18, 12 + frame, SK);
-    grid.rect(18, 12 + frame, 21, 14 + frame, SK);
-    grid.row(14 + frame, 18, 21, SHD);
-  } else {
-    const RED = "#c8402f",
-      HI = "#ee6a4a",
-      SHD = "#8a2a24",
-      BELLY = "#f2c46a",
-      BSH = "#d9a04a";
-    const WING = "#e0773a",
-      WHI = "#f0a050",
-      EYEC = "#ffe14a";
-    // wing (behind)
-    if (frame === 0) {
-      tri(grid, [12, 11], [17, 1], [22, 7], WING);
-      tri(grid, [12, 11], [22, 7], [20, 14], WING);
-      line(grid, 12, 11, 17, 1, SHD);
-      line(grid, 12, 11, 22, 7, SHD);
-      line(grid, 12, 11, 20, 14, SHD);
-      grid.set(15, 5, WHI);
-      grid.set(16, 4, WHI);
-    } else {
-      tri(grid, [12, 11], [15, 5], [22, 11], WING);
-      tri(grid, [12, 11], [22, 11], [20, 17], WING);
-      line(grid, 12, 11, 15, 5, SHD);
-      line(grid, 12, 11, 22, 11, SHD);
-      line(grid, 12, 11, 20, 17, SHD);
-      grid.set(15, 8, WHI);
-      grid.set(17, 9, WHI);
-    }
-    // tail
-    grid.rect(15, 15, 19, 17, RED);
-    grid.row(17, 15, 19, SHD);
-    grid.rect(19, 17 - frame, 21, 18 - frame, RED);
-    grid.set(22, 17 - frame, SHD);
-    grid.set(22, 18 - frame, HI);
-    // legs
-    grid.rect(9, 18, 10, 19, RED);
-    grid.rect(8, 20, 10, 20, SHD);
-    grid.rect(14, 18, 15, 19, RED);
-    grid.rect(13, 20, 15, 20, SHD);
-    // body
-    ell(grid, 12, 14, 5, 4, RED);
-    for (let y = 16; y <= 18; y++)
-      for (let x = 14; x <= 17; x++) if (grid.cells[y * 24 + x] === RED) grid.set(x, y, SHD);
-    ell(grid, 10, 15, 3, 3, BELLY);
-    grid.row(17, 8, 12, BSH);
-    grid.set(11, 11, HI);
-    grid.set(12, 11, HI);
-    grid.set(13, 12, HI);
-    // neck + head
-    grid.rect(8, 9, 11, 13, RED);
-    grid.set(8, 10, HI);
-    grid.rect(8, 11, 9, 13, BELLY);
-    const hy = frame;
-    ell(grid, 6, 8 + hy, 3, 3, RED);
-    grid.rect(2, 8 + hy, 4, 10 + hy, RED);
-    grid.row(10 + hy, 2, 5, SHD);
-    grid.set(3, 10 + hy, BONE);
-    grid.set(5, 10 + hy, BONE);
-    grid.set(2, 8 + hy, SHD);
-    grid.set(5, 7 + hy, EYEC);
-    grid.set(4, 6 + hy, SHD);
-    grid.set(5, 6 + hy, SHD);
-    grid.set(5, 5 + hy, HI);
-    grid.set(7, 5 + hy, BONE);
-    grid.set(8, 4 + hy, BONE);
-    grid.set(9, 3 + hy, BONE);
-    grid.set(9, 5 + hy, BONE);
-    grid.set(10, 4 + hy, BONE);
-    grid.set(11, 3 + hy, BONE);
-  }
-  grid.outline();
-  if (hurt) grid.recolor((color) => (luma(color) < 55 ? color : lighten(mix(color, "#ff3b3b", 0.4), 0.55)));
-  return grid.toCanvas();
-};
-
-/** Boss sprite (24x24), facing LEFT. hurt=true draws a white/red flash variant. */
-export const bossSprite = (kind: BossKind, frame: number, hurt: boolean): HTMLCanvasElement => {
-  const k: BossKind = kind === "dragon" ? "dragon" : "ogre";
-  const frameIdx = normFrame(frame, 2);
-  const key = `b|${k}|${frameIdx}|${hurt ? 1 : 0}`;
-  let sprite = cache.get(key);
-  if (!sprite) {
-    sprite = buildBoss(k, frameIdx, hurt);
     cache.set(key, sprite);
   }
   return sprite;

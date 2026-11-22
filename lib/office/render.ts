@@ -1,3 +1,4 @@
+import { bossCenterX, bossSprite } from "./bossSprites";
 import {
   CHEERS_S,
   DUEL_FLOURISH,
@@ -54,8 +55,9 @@ import {
   standSlot,
   CAMP_MAX,
 } from "./layout";
+import { monsterSprite } from "./monsterSprites";
 import { bardSprite, chefSprite, innkeeperSprite } from "./npcSprites";
-import { bossSprite, butterflySprite, charSprite, internSprite, monsterSprite, prop, type Pose } from "./sprites";
+import { butterflySprite, charSprite, internSprite, prop, type Pose } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
 const rect = (ctx: Ctx, color: string, x: number, y: number, width: number, height: number) => {
@@ -1527,7 +1529,7 @@ const iconBlocked = (office: Office, cx: number, cy: number): boolean => {
     const pos = emp.monPos;
     if (pos && !emp.monDead) {
       const sprite = emp.boss ? bossSprite(emp.boss, 0, false) : monsterSprite(emp.monKind, 0, false);
-      const mcx = pos.x + (emp.boss ? 4 : 0);
+      const mcx = emp.boss ? bossCenterX(pos.x) : pos.x;
       if (hitsBox(mcx - sprite.width / 2, pos.y - sprite.height - 7, mcx + sprite.width / 2, pos.y, cx, cy))
         return true;
     }
@@ -2378,16 +2380,20 @@ const drawMonster = (ctx: Ctx, emp: Employee, time: number) => {
       !asleep &&
       !walking &&
       ((emp.act === "bash" && (time * 2.5) % 1 < 0.3) || (emp.act === "typing" && (time * 3) % 1 < 0.2));
-    const frame = asleep ? 0 : Math.floor(time * 3 + emp.order) % 2;
+    // the menace frames (fire breath...) are for the fight only; walking out and idling use the calm pair
+    const fighting = seated && !walking && (emp.act === "bash" || emp.act === "typing");
+    const frame = asleep ? 0 : Math.floor(time * 3 + emp.order) % (emp.boss && !fighting ? 2 : 4);
     let lunge = 0;
-    if (emp.monLungeUntil > time)
-      lunge = -Math.round(9 * Math.sin(Math.min(1, 1 - (emp.monLungeUntil - time) / 0.4) * Math.PI));
-    else if (emp.hurtUntil > time) lunge = -3;
-    if (emp.monKnockUntil > time) lunge += 2;
     const boss = emp.boss;
     const sprite = boss ? bossSprite(boss, frame, hit) : monsterSprite(emp.monKind, frame, hit);
-    const cx = pos.x + (boss ? 4 : 0);
-    shadow(ctx, cx, pos.y, Math.min(boss ? 22 : 14, sprite.width));
+    const cx = boss ? bossCenterX(pos.x) : pos.x;
+    if (emp.monLungeUntil > time) {
+      // lunge toward the adventurer, but never into its box
+      const reach = Math.max(0, Math.min(9, Math.round(cx - sprite.width / 2 - (emp.x + CH_W / 2))));
+      lunge = -Math.round(reach * Math.sin(Math.min(1, 1 - (emp.monLungeUntil - time) / 0.4) * Math.PI));
+    } else if (emp.hurtUntil > time) lunge = -3;
+    if (emp.monKnockUntil > time) lunge += 2;
+    shadow(ctx, cx, pos.y, Math.min(boss ? 26 : 14, sprite.width));
     const bob = asleep || Math.floor(time * 2 + emp.order) % 2 === 0 ? 0 : -1;
     const sx = Math.round(cx - sprite.width / 2 + lunge + (hit ? 1 : 0)),
       sy = Math.round(pos.y - sprite.height + bob);
@@ -2399,15 +2405,15 @@ const drawMonster = (ctx: Ctx, emp: Employee, time: number) => {
       ctx.drawImage(sprite, 0, 0);
       ctx.restore();
     } else ctx.drawImage(sprite, sx, sy);
-    if (emp.flashUntil > time) ctx.drawImage(tinted(sprite, "#ffffff"), sx, sy);
-    if (emp.monLungeUntil > time) {
+    if (!boss && emp.flashUntil > time) ctx.drawImage(tinted(sprite, "#ffffff"), sx, sy);
+    if (!boss && emp.monLungeUntil > time) {
       ctx.globalAlpha = 0.3;
       ctx.drawImage(tinted(sprite, "#ff2a2a"), sx, sy);
       ctx.globalAlpha = 1;
     }
     // HP bar
     const top = Math.round(pos.y - sprite.height) - (boss ? 6 : 5);
-    if (boss) hpBar(ctx, Math.round(cx), top, 24, 3, Math.max(0.12, 1 - (time - emp.bossAt) / 120));
+    if (boss) hpBar(ctx, Math.round(cx), top, 30, 3, Math.max(0.12, 1 - (time - emp.bossAt) / 120));
     else hpBar(ctx, Math.round(cx), top, 12, 2, emp.monHp / emp.monHpMax);
     if (asleep) blitC(ctx, "zzz", cx + 6, top - 5 - (Math.floor(time * 1.5) % 2));
   } else {
@@ -2489,10 +2495,10 @@ const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office) => {
   if (emp.deskIdx >= 0 && emp.hearts === 0 && !emp.resting)
     blitC(ctx, "sweat" + (Math.floor(time * 3) % 2), emp.x - 9, emp.y - 22);
   if (emp.slashUntil > time && emp.monPos && !emp.monDead && !emp.bossPath.length)
-    hitFx(ctx, emp, emp.monPos.x + (emp.boss ? 4 : 0), emp.monPos.y, time, 20, 1);
+    hitFx(ctx, emp, emp.boss ? bossCenterX(emp.monPos.x) : emp.monPos.x, emp.monPos.y, time, 20, 1);
 
   const monster = emp.monPos && !emp.monDead && !emp.bossPath.length ? emp.monPos : null;
-  const mx = monster ? monster.x : emp.x + 22;
+  const mx = monster ? (emp.boss ? bossCenterX(monster.x) : monster.x) : emp.x + 22;
   const my = emp.y;
   const fight = !!monster && time - emp.monAppearAt > 0.3;
   switch (emp.act) {
