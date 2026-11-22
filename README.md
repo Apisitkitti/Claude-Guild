@@ -6,6 +6,16 @@
 
 Next.js 16 (App Router) + TypeScript, Node 22 (`.nvmrc`), npm
 
+## ฟีเจอร์
+
+- **นักผจญภัยตาม session** — 5 อาชีพ (นักดาบ จอมเวท โจร นักบวช นักธนู) ตีมอนสเตอร์ตาม tool ที่ใช้, tool ที่รันนานกลายเป็นบอส, subagent เป็นลูกมือ, พักที่โรงเตี๊ยมตอนว่าง, เลเวล/XP/ทอง และแถบมานาบอก context
+- **⚔️ Territory Clash** — ไฟล์ที่ session กำลังแก้คือ "ที่ดิน" ของมัน ถ้า 2 session แก้ไฟล์เดียวกันจะขึ้นแถบพิพาท และถ้า edit ล้มเพราะอีกฝ่าย ทั้งคู่เดินออกมาดวลกันกลางลาน (ฝ่ายที่ edit ไม่ล้มชนะ)
+- **🔔 Lookout Bell** — คิว "ใครต้องการคุณก่อน": รอ permission › วนลูป (สั่งเดิม fail ด้วย error เดิม ≥3 ครั้งใน 5 นาที) › น่าจะรอคำตอบคุณ › context ใกล้เต็ม › เสร็จรอรีวิว · ปุ่ม 📋 Copy ข้อความเตือนไปแปะให้ Claude · กด `N` ไปตัวถัดไป · ตัวที่วนลูปขึ้น 🔁 และอาการคลั่ง
+- **📜 ใบเสร็จ** — สรุปผลลัพธ์จริงของแต่ละรอบ (ไฟล์ที่แก้, test แดง→เขียว, commit, งานที่ติ๊กเสร็จ) เก็บไว้ 2 ชม. หลัง session จบ
+- **🔒 ลบ secret** — token / API key / password / private key ถูกลบตั้งแต่ตอนรับ event ก่อนเก็บ, log หรือส่งออก
+
+Hook เป็นแบบ async: กิลด์ **เตือนได้แต่ขวางไม่ได้** และทุกอย่างอยู่ใน memory บนเครื่องคุณเท่านั้น
+
 ## รัน
 
 ```bash
@@ -28,7 +38,19 @@ npm run dev
 
 ## ต่อกับ Claude Code จริง (Live mode)
 
-เอา `hooks` จาก [hooks/settings.example.json](hooks/settings.example.json) ไป merge ใส่
+ง่ายสุด: ใช้สคริปต์ merge hook ให้ (dry-run ก่อน ดูว่าจะเปลี่ยนอะไร แล้วค่อยใส่ `--apply`; สำรองไฟล์เดิมให้อัตโนมัติ)
+
+```bash
+node scripts/install-hooks.mjs --global
+```
+
+```bash
+node scripts/install-hooks.mjs --global --apply
+```
+
+ถอดออก: `node scripts/install-hooks.mjs --global --uninstall --apply`
+
+หรือทำเอง: เอา `hooks` จาก [hooks/settings.example.json](hooks/settings.example.json) ไป merge ใส่
 
 - `~/.claude/settings.json` — ทุกโปรเจกต์
 - หรือ `<project>/.claude/settings.json` — เฉพาะโปรเจกต์นั้น
@@ -62,6 +84,7 @@ curl -X POST localhost:5050/events -H 'Content-Type: application/json' -d '{"ses
 ## Files
 
 - `lib/store.ts` — in-memory events/sessions + SSE clients (อยู่บน `globalThis` กัน hot-reload)
+- `lib/territory.ts` · `lib/attention.ts` · `lib/receipts.ts` · `lib/redact.ts` — ตัวติดตามฝั่ง server (ดินแดน, คิว Lookout Bell, ใบเสร็จ, ลบ secret)
 - `app/events/route.ts` — POST hook event · `app/events/stream/route.ts` — SSE · `app/health/route.ts`
 - `lib/office/` — canvas engine, sprites, simulator (TS ล้วน ไม่ผูก React)
 - `components/` — header, roster, event log (React)
@@ -70,3 +93,13 @@ curl -X POST localhost:5050/events -H 'Content-Type: application/json' -d '{"ses
 ## Known limitations
 
 - Claude Code sends no hook when a permission is approved, so the ❗ stays until the tool finishes (the red edge calms down after 60s).
+
+## Privacy
+
+- Everything stays in this process's memory on your machine; nothing is written to disk or sent anywhere.
+- Secrets are redacted from every event before it is stored, logged or streamed. Receipts keep counts only (no commands, file names or commit messages).
+- The server binds to `127.0.0.1` and rejects cross-origin requests. Don't expose it to a network or tunnel: it shows your file paths and commands.
+
+## License
+
+[MIT](LICENSE)
