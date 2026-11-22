@@ -203,6 +203,47 @@ export const routeChefServe = (): Pt[] => [
   { x: FEAST_LANE_X, y: CHEF_LANE_Y },
   { ...CHEF_HOME },
 ];
+/**
+ * The guild master: waits in the upper hall (clear of the board queue, the counter, the aisle row and the feast
+ * wing), walks out through the gate to stand just left of an adventurer at a battle spot, then walks back.
+ */
+export const GUILD_MASTER_HOME: Pt = { x: 62, y: 100 };
+/**
+ * He stands up-left of the adventurer's spot, BEHIND the row: 28 left, 34 up. His 16x24 box is [-36,-20] x [-58,-34]
+ * from the spot, which clears squire 0 (box [-23,-7] x [-22,2]), squire 1 ([-19,-3] x [-33,-9]), the adventurer's
+ * hearts / mana bar (below it), its bubble ([-7,7] x [-42,-27]) and the previous column's monster (right edge -28, top -20,
+ * HP bar top -26). A boss in the previous column reaches him (checked in canVisit).
+ */
+const GUILD_MASTER_DX = -28;
+const GUILD_MASTER_DY = -34;
+/** his stand point beside battle spot `desk`, written into `out` when given (no allocation in per-frame checks) */
+export const guildMasterStand = (desk: number, out: Pt = { x: 0, y: 0 }): Pt => {
+  out.x = SPOT_COLS[desk % GRID_COLS] + GUILD_MASTER_DX;
+  out.y = SPOT_ROWS[(desk / GRID_COLS) | 0] + GUILD_MASTER_DY;
+  return out;
+};
+/** home -> the aisle row -> the gate -> the road -> straight to his stand point beside battle spot `desk` (excludes the start) */
+export const routeGuildMaster = (desk: number): Pt[] => {
+  const stand = guildMasterStand(desk);
+  return dedupe([
+    { ...GUILD_MASTER_HOME },
+    { x: GUILD_MASTER_HOME.x, y: GATE_Y },
+    { ...GATE_IN },
+    { ...GATE_OUT },
+    { x: stand.x, y: ROAD_Y },
+    stand,
+  ]).slice(1);
+};
+/** from wherever he stands (hall or wilderness, on his routes) back home (excludes the start) */
+export const routeGuildMasterHome = (x: number, y: number): Pt[] => {
+  // still on the first leg (straight down from home to the aisle row): walk straight back up
+  if (x === GUILD_MASTER_HOME.x && y <= GATE_Y) return dedupe([{ x, y }, { ...GUILD_MASTER_HOME }]).slice(1);
+  const pts: Pt[] = [{ x, y }];
+  if (x > HALL_W) pts.push({ x, y: ROAD_Y }, { ...GATE_OUT });
+  if (x > GATE_IN.x) pts.push({ ...GATE_IN });
+  pts.push({ x: GUILD_MASTER_HOME.x, y: GATE_Y }, { ...GUILD_MASTER_HOME });
+  return dedupe(pts).slice(1);
+};
 /** where a plate lands on the table, in front of seat `seatIdx` */
 export const FEAST_PLATE_NEAR_DY = 9;
 export const FEAST_PLATE_FAR_DY = 5;

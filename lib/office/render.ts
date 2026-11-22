@@ -56,7 +56,7 @@ import {
   CAMP_MAX,
 } from "./layout";
 import { monsterSprite } from "./monsterSprites";
-import { bardSprite, chefSprite, innkeeperSprite } from "./npcSprites";
+import { bardSprite, chefSprite, guildMasterSprite, innkeeperSprite } from "./npcSprites";
 import { butterflySprite, charSprite, internSprite, prop, type Pose } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
@@ -1229,6 +1229,50 @@ const drawChef = (ctx: Ctx, office: Office, time: number) => {
   if (carrying) {
     const hx = Math.round(chef.x + chef.face * 8);
     drawDish(ctx, chef.plate, hx, Math.round(chef.y - 10));
+  }
+};
+
+const drawGuildMaster = (ctx: Ctx, office: Office, time: number) => {
+  const master = office.guildMaster;
+  const sprite =
+    master.phase === "talk"
+      ? guildMasterSprite("talk", Math.floor(time * 4))
+      : master.path.length
+        ? guildMasterSprite("walk", Math.floor(time * 8))
+        : guildMasterSprite("idle", office.reducedMotion ? 0 : Math.floor(time * 2));
+  shadow(ctx, master.x, master.y, 11);
+  const px = Math.round(master.x - CH_W / 2),
+    py = Math.round(master.y - CH_H);
+  if (master.face < 0) {
+    ctx.save();
+    ctx.translate(px + CH_W, py);
+    ctx.scale(-1, 1);
+    ctx.drawImage(sprite, 0, 0);
+    ctx.restore();
+  } else ctx.drawImage(sprite, px, py);
+};
+
+/**
+ * opaque speech bubble over the talking guild master: a red "!" when the adventurer needs the user, else three dots.
+ * He stands up-left behind the adventurer, so the bubble (shifted a little further left) sits above his head, clear of
+ * the adventurer's own bubble / status icon, its HP bars and the level-up text.
+ */
+const drawGuildMasterBubble = (ctx: Ctx, office: Office) => {
+  const master = office.guildMaster;
+  if (master.phase !== "talk") return;
+  const bx = Math.round(master.x - 14),
+    by = Math.round(master.y - CH_H - 12);
+  rect(ctx, "#2a1810", bx, by, 13, 11);
+  rect(ctx, "#fffaf0", bx + 1, by + 1, 11, 9);
+  rect(ctx, "#2a1810", bx + 11, by + 11, 3, 1); // tail, over his head
+  rect(ctx, "#fffaf0", bx + 12, by + 10, 1, 1);
+  if (master.alert) {
+    rect(ctx, "#d11a2a", bx + 6, by + 2, 1, 4);
+    rect(ctx, "#d11a2a", bx + 6, by + 7, 1, 1);
+  } else {
+    rect(ctx, "#2a1810", bx + 3, by + 6, 1, 1);
+    rect(ctx, "#2a1810", bx + 6, by + 6, 1, 1);
+    rect(ctx, "#2a1810", bx + 9, by + 6, 1, 1);
   }
 };
 
@@ -2885,12 +2929,14 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   }
   // the west wing: chef, bard and the long table take part in the depth sort (diners sit behind / in front of it)
   ents.push({ y: office.chef.y, fn: () => drawChef(ctx, office, time) });
+  ents.push({ y: office.guildMaster.y, fn: () => drawGuildMaster(ctx, office, time) });
   ents.push({ y: BARD_POS.y, fn: () => drawBard(ctx, office, time) });
   ents.push({ y: FEAST_TABLE.y + FEAST_TABLE.h - 2, fn: () => drawFeastTable(ctx, office, time) });
   ents.push({ y: NEAR_SETTINGS_Y, fn: () => drawSettings(ctx, office, time, false) });
   ents.sort((entA, entB) => entA.y - entB.y);
   for (const entity of ents) entity.fn();
   drawDuels(ctx, office, time);
+  drawGuildMasterBubble(ctx, office);
   drawLinkIcons(ctx, nLinks, time, office); // after entities: the opaque badge is never hidden
   drawParticles(ctx, office, false);
   drawPopups(ctx, office);

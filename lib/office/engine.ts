@@ -1,5 +1,6 @@
 import { m } from "@/paraglide/messages";
 
+import { bossCenterX, BOSS_H, BOSS_W } from "./bossSprites";
 import { ToolTally, type DungeonStats } from "./dungeon";
 import {
   ALLY_GATE_MOUTH,
@@ -18,10 +19,12 @@ import {
   DOOR,
   FEAST_SEATS,
   GATE_MOUTH,
+  GUILD_MASTER_HOME,
   HEARTH,
   VIEW_W,
   campSquirePoint,
   duelMidOfDesks,
+  guildMasterStand,
   monsterSpot,
   routeBoss,
   routeFromAllyGate,
@@ -30,11 +33,14 @@ import {
   routePromote,
   routeToAllyGate,
   routeChefServe,
+  routeGuildMaster,
+  routeGuildMasterHome,
   routeToBreak,
   seatPoint,
   squirePoint,
   type Pt,
 } from "./layout";
+import { MON_H, MON_W } from "./monsterSprites";
 import { BOSS_KINDS, lookFor, MONSTER_KINDS, type BossKind, type Look, type MonsterKind } from "./palette";
 import { drawScene } from "./render";
 
@@ -373,6 +379,20 @@ const BARD_REST_COUNT = 1;
 const BUSY_EVENTS = new Set(["PreToolUse", "PostToolUse", "UserPromptSubmit"]);
 const BUSY_MAX = 600;
 const CHEF_FACE_HOME = 1;
+
+// -- the guild master: waits at home, now and then walks out to talk to an adventurer
+/** sim seconds he waits at home between two visits (jittered), and how soon he looks again when nobody can be visited */
+const GM_IDLE_MIN_S = 12;
+const GM_IDLE_MAX_S = 20;
+const GM_RETRY_S = 3;
+/** sim seconds he stands and talks */
+const GM_TALK_S = 4;
+/** a duel closer than this to his stand point makes the visit unsafe */
+const GM_CLEAR_R = 34;
+/** rows above a monster / boss sprite taken by its HP bar (plus the outline) */
+const GM_MON_BAR_H = 6;
+const GM_BOSS_BAR_H = 7;
+const GM_FACE_HOME = 1;
 
 export interface HookEvt {
   session_id?: string;
@@ -1026,6 +1046,23 @@ export interface Chef {
   /** feast seat the plate is for */
   target: number;
 }
+/** the guild master: stands at his post, walks out to an adventurer (the Lookout Bell's first), talks, walks back */
+export interface GuildMaster {
+  x: number;
+  y: number;
+  face: 1 | -1;
+  /** waypoints still to walk (empty = standing still) */
+  path: Pt[];
+  phase: "home" | "out" | "talk" | "back";
+  /** session he is visiting ("" = none) */
+  targetId: string;
+  /** battle spot of that session when he set out (-1 = none): a reseat sends him home */
+  targetDesk: number;
+  /** the visit is for someone who needs the user (draws "!" instead of "...") */
+  alert: boolean;
+  /** clock time he next sets out (while home) / stops talking (while talking) */
+  until: number;
+}
 /** a plate on the feast table in front of one seat */
 export interface Dish {
   kind: number;
@@ -1354,6 +1391,20 @@ export class Office {
   readonly leavers: Leaver[] = [];
   // ---- the west wing (render reads these) ----
   readonly chef: Chef = { x: CHEF_HOME.x, y: CHEF_HOME.y, face: 1, path: [], holdUntil: 0, plate: -1, target: -1 };
+  readonly guildMaster: GuildMaster = {
+    x: GUILD_MASTER_HOME.x,
+    y: GUILD_MASTER_HOME.y,
+    face: GM_FACE_HOME,
+    path: [],
+    phase: "home",
+    targetId: "",
+    targetDesk: -1,
+    alert: false,
+    until: GM_IDLE_MIN_S,
+  };
+  /** reusable scratch points for the guild master's safety check (runs every frame while he is out) */
+  private gmStandPt: Pt = { x: 0, y: 0 };
+  private gmDuelPt: Pt = { x: 0, y: 0 };
   /** one slot per feast seat: the plate in front of it, if any */
   readonly dishes: (Dish | null)[] = FEAST_SEATS.map(() => null);
   /** reusable: the diners on screen and who sits in each feast seat (see feastDiners) */
@@ -4314,6 +4365,7 @@ export class Office {
     this.chef.holdUntil = 0;
     this.chef.plate = -1;
     this.chef.target = -1;
+    this.resetGuildMaster();
     this.dishes.fill(null);
     this.cheersAt = NEVER_S;
     this.cheersReal = NEVER_S;
@@ -4424,6 +4476,7 @@ export class Office {
       if (dish && (this.clock - dish.at > DISH_LIFE_S || !this.dinerSlots[i])) this.dishes[i] = null;
     }
     this.updateChef(dt, diners);
+    this.updateGuildMaster(dt);
     this.bardOn = this.bardShouldPlay(diners);
     if (this.reducedMotion) return;
     if (this.bardOn && this.clock >= this.nextNoteAt) {
@@ -4536,6 +4589,141 @@ export class Office {
         this.dishes[chef.target] = { kind: chef.plate, at: this.clock };
       chef.plate = -1;
     } else if (!chef.path.length) chef.face = CHEF_FACE_HOME;
+  }
+  // ---------- the guild master ----------
+  private resetGuildMaster() {
+    const master = this.guildMaster;
+    master.x = GUILD_MASTER_HOME.x;
+    master.y = GUILD_MASTER_HOME.y;
+    master.face = GM_FACE_HOME;
+    master.path = [];
+    master.phase = "home";
+    master.targetId = "";
+    master.targetDesk = -1;
+    master.alert = false;
+    master.until = this.clock + rand(GM_IDLE_MIN_S, GM_IDLE_MAX_S);
+  }
+  /**
+   * a battle-spot adventurer he can walk up to: seated, working, on screen, not in a duel or boss fight, no boss still
+   * walking out (its lane and road cross his route) and no duel fighter / meeting point / boss near his stand point
+   */
+  private canVisit(emp: Employee): boolean {
+    if (emp.state !== "SEATED" || emp.deskIdx < 0 || emp.duel || emp.boss || emp.resting || this.isHidden(emp))
+      return false;
+    const stand = guildMasterStand(emp.deskIdx, this.gmStandPt);
+    for (const other of this.employees.values()) {
+      if (other === emp) continue;
+      if (other.boss && other.bossPath.length) return false;
+      if (other.monPos && !other.monDead && this.monsterHitsStand(stand, other.monPos, !!other.boss)) return false;
+      if (other.duel && this.nearStand(stand, other.x, other.y)) return false;
+    }
+    for (const duel of this.duels) {
+      const left = this.employees.get(duel.l),
+        right = this.employees.get(duel.r);
+      if (!left || !right || left.deskIdx < 0 || right.deskIdx < 0) continue;
+      const mid = duelMidOfDesks(left.deskIdx, right.deskIdx, this.gmDuelPt);
+      if (this.nearStand(stand, mid.x, mid.y)) return false;
+    }
+    return true;
+  }
+  /** does a monster / boss at `pos` (sprite + HP bar) touch the 16x24 box he occupies at `stand`? */
+  private monsterHitsStand(stand: Pt, pos: Pt, boss: boolean): boolean {
+    const half = boss ? BOSS_W / 2 : MON_W / 2;
+    const top = pos.y - (boss ? BOSS_H + GM_BOSS_BAR_H : MON_H + GM_MON_BAR_H);
+    const cx = boss ? bossCenterX(pos.x) : pos.x;
+    return Math.abs(cx - stand.x) < half + CH_W / 2 && stand.y - CH_H < pos.y && top < stand.y;
+  }
+  private nearStand(stand: Pt, x: number, y: number): boolean {
+    return Math.hypot(x - stand.x, y - stand.y) < GM_CLEAR_R;
+  }
+  /** first someone the Lookout Bell is ringing for (or with a hand up), else any seated working adventurer; null = stay home */
+  private pickVisit(): { emp: Employee; alert: boolean } | null {
+    const needy: Employee[] = [];
+    const calm: Employee[] = [];
+    const bellSids = new Set<string>();
+    for (const row of this.attentionRows()) if (bellCount([row]) > 0) bellSids.add(row.sid);
+    for (const emp of this.employees.values()) {
+      if (!this.canVisit(emp)) continue;
+      if (bellSids.has(emp.id) || this.isWaiting(emp)) needy.push(emp);
+      else calm.push(emp);
+    }
+    const pool = needy.length ? needy : calm;
+    if (!pool.length) return null;
+    return { emp: pool[Math.floor(Math.random() * pool.length)], alert: needy.length > 0 };
+  }
+  private updateGuildMaster(dt: number) {
+    const master = this.guildMaster;
+    if (this.reducedMotion) {
+      // no walking: he stays at his post
+      if (master.phase !== "home") this.resetGuildMaster();
+      return;
+    }
+    if (master.phase === "home") {
+      if (this.clock < master.until) return;
+      const visit = this.pickVisit();
+      if (!visit) {
+        master.until = this.clock + GM_RETRY_S;
+        return;
+      }
+      master.targetId = visit.emp.id;
+      master.targetDesk = visit.emp.deskIdx;
+      master.alert = visit.alert;
+      master.phase = "out";
+      master.path = routeGuildMaster(visit.emp.deskIdx);
+      return;
+    }
+    if (master.phase === "out" || master.phase === "talk") {
+      const target = this.employees.get(master.targetId);
+      if (!target || target.deskIdx !== master.targetDesk || !this.canVisit(target)) {
+        this.guildMasterGoesHome();
+        return;
+      }
+      if (master.phase === "talk") {
+        if (this.clock >= master.until) this.guildMasterGoesHome();
+        return;
+      }
+    }
+    this.walkGuildMaster(dt);
+    if (master.path.length) return;
+    if (master.phase === "out") {
+      master.phase = "talk";
+      master.face = 1;
+      master.until = this.clock + GM_TALK_S;
+    } else {
+      master.phase = "home";
+      master.face = GM_FACE_HOME;
+      master.targetId = "";
+      master.targetDesk = -1;
+      master.until = this.clock + rand(GM_IDLE_MIN_S, GM_IDLE_MAX_S);
+    }
+  }
+  private guildMasterGoesHome() {
+    const master = this.guildMaster;
+    master.phase = "back";
+    master.targetId = "";
+    master.targetDesk = -1;
+    master.path = routeGuildMasterHome(master.x, master.y);
+  }
+  private walkGuildMaster(dt: number) {
+    const master = this.guildMaster;
+    let rem = SPEED * dt;
+    while (rem > 0 && master.path.length) {
+      const target = master.path[0];
+      const dx = target.x - master.x,
+        dy = target.y - master.y;
+      const dist = Math.hypot(dx, dy);
+      if (dx !== 0) master.face = dx > 0 ? 1 : -1;
+      if (dist <= rem) {
+        master.x = target.x;
+        master.y = target.y;
+        rem -= dist;
+        master.path.shift();
+      } else {
+        master.x += (dx / dist) * rem;
+        master.y += (dy / dist) * rem;
+        rem = 0;
+      }
+    }
   }
   // ---------- interns (squires) ----------
   /** where squire number `slot` of this adventurer stands */

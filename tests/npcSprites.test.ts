@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NPC_H, NPC_W, bardSprite, chefSprite, innkeeperSprite } from "@/lib/office/npcSprites";
+import { NPC_H, NPC_W, bardSprite, chefSprite, guildMasterSprite, innkeeperSprite } from "@/lib/office/npcSprites";
 
 /** a fake canvas that records every pixel it is asked to paint */
 const fakeCanvas = () => {
@@ -44,6 +44,36 @@ describe("npc sprites", () => {
     expect(distinct([0, 1, 2, 3].map((frame) => innkeeperSprite(frame)))).toBe(4);
   });
 
+  it("guild master: every pose and frame is 16x24, opaque, hex-only and distinct from the other NPCs", () => {
+    const poses = { idle: 2, walk: 4, talk: 4 } as const;
+    const all: HTMLCanvasElement[] = [];
+    for (const [pose, count] of Object.entries(poses) as [keyof typeof poses, number][]) {
+      const frames = Array.from({ length: count }, (_, frame) => guildMasterSprite(pose, frame));
+      for (const sprite of frames) {
+        expect(sprite.width).toBe(NPC_W);
+        expect(sprite.height).toBe(NPC_H);
+        const ops = (sprite as unknown as { ops: string[] }).ops;
+        expect(ops.length).toBeGreaterThan(100);
+        for (const op of ops) expect(op.split(",")[2]).toMatch(/^#[0-9a-f]{6}$/);
+        // feet planted on the bottom row
+        expect(ops.some((op) => op.split(",")[1] === "23")).toBe(true);
+      }
+      expect(new Set(frames.map(pixelsOf)).size).toBe(count);
+      expect(guildMasterSprite(pose, 0)).toBe(guildMasterSprite(pose, count));
+      all.push(...frames);
+    }
+    expect(pixelsOf(guildMasterSprite("talk", 0))).not.toBe(pixelsOf(guildMasterSprite("idle", 0)));
+    const others = [innkeeperSprite(0), bardSprite(false, 0), chefSprite("idle", 0)].map(pixelsOf);
+    for (const sprite of all) expect(others).not.toContain(pixelsOf(sprite));
+    // a grizzled adventurer, not clergy: iron pauldron, scar and leather jacket, no red robe or gold centre trim
+    const master = pixelsOf(guildMasterSprite("idle", 0));
+    for (const color of ["#9aa4b2", "#b05a5a", "#8a5430", "#566340"]) expect(master).toContain(color);
+    expect(master).not.toContain("#8a2c3c");
+    // a woman, not the old bearded keeper: no brown beard on the innkeeper, and a red ribbon in her hair
+    expect(pixelsOf(innkeeperSprite(0))).toContain("#d95763");
+    expect(pixelsOf(innkeeperSprite(0))).toContain("#7a3b2a");
+  });
+
   it("never paints row 0 or column 15 (room for the outline) and a held plate has both feet down", () => {
     const all = [
       ...[true, false].flatMap((playing) => [0, 1, 2, 3].map((frame) => bardSprite(playing, frame))),
@@ -51,6 +81,9 @@ describe("npc sprites", () => {
         [0, 1, 2, 3].map((frame) => chefSprite(pose, frame)),
       ),
       ...[0, 1, 2, 3].map((frame) => innkeeperSprite(frame)),
+      ...(["idle", "walk", "talk"] as const).flatMap((pose) =>
+        [0, 1, 2, 3].map((frame) => guildMasterSprite(pose, frame)),
+      ),
     ];
     for (const sprite of all) {
       for (const op of (sprite as unknown as { ops: string[] }).ops) {

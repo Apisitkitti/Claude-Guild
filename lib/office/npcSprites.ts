@@ -1,4 +1,4 @@
-// Hand-drawn sprites for the guild's NPCs (bard, chef, innkeeper). Each is its own character design,
+// Hand-drawn sprites for the guild's NPCs (bard, chef, innkeeper, guild master). Each is its own character design,
 // not a recoloured adventurer: ASCII pixel art stamped onto a 16x24 grid, outlined like the rest of the guild art.
 // Every sprite is built once and cached; nothing here is translucent.
 
@@ -46,6 +46,20 @@ const COLORS: Record<string, string> = {
   d: "#8b5e3c",
   x: "#cfd6e0", // pewter mug
   X: "#8793a6",
+  j: "#7a3b2a", // innkeeper chestnut hair
+  J: "#a85a3a",
+  s: "#8a5430", // guild master leather jacket
+  u: "#5e3a20",
+  z: "#2e1c10", // dark leather: belt, bracers
+  P: "#d6c7a8", // fur collar
+  i: "#9aa4b2", // iron pauldron and sword
+  V: "#d9e0ea",
+  I: "#6a7486",
+  b: "#d8c8a0", // linen shirt
+  C: "#a89870",
+  l: "#566340", // olive trousers
+  F: "#3c4730",
+  Z: "#b05a5a", // scar
 };
 
 const mixToInk = (color: string): string => {
@@ -297,38 +311,39 @@ export const bardSprite = (playing: boolean, frame: number): HTMLCanvasElement =
   return cached(`bard|${playing ? "play" : "rest"}|${index}`, (pixels) => drawBard(pixels, playing, index));
 };
 
-// ---------------------------------------------------------------- innkeeper
+// ---------------------------------------------------------------- innkeeper (a woman behind the counter)
 const KEEPER_HEAD = [
-  ".....kLLkkk.....",
-  "....kkLkkkkk....",
-  "...GkkkkkkkkG...",
-  "...GkhhkkhhkG...",
-  "...GkEkkkkEkG...",
-  "....kkkvvkkk....",
-  "....kkvvvvkk....",
-  "...hhhhhhhhhh...",
-  "...hhHhMMhHhh...",
-  "...hhhhhhhhhh...",
-  "....hhHhhHhh....",
-  ".....hhhhhh.....",
+  "......jjjj......",
+  ".....jJjjjj.....",
+  "......RRRR......",
+  "....jjjjjjjj....",
+  "...jjJjjjjjjj...",
+  "...jkLkkkkkkj...",
+  "...jkEkkkkEkj...",
+  "...jkrkkkkrkj...",
+  "...ykkkMMkkky...",
+  ".....kkkkkk.....",
+  "......kkkk......",
 ];
 const KEEPER_BODY = [
-  "..wwwwwwwwwwww..",
-  ".wwwwAwwwwAwwww.",
-  ".wwwAAAAAAAAwww.",
-  ".WWwAAAAAAAAwWW.",
+  "..wwwwkkkkwwww..",
+  ".wwwwWAwwAWwwww.",
+  ".wwwwAAAAAAwwww.",
+  ".WWwwAAAAAAwwWW.",
   "..kkkkAAAAkkkk..",
   "....AAAAAAAA....",
-  "....AAAAAAAA....",
-  "....aaaaaaaa....",
+  "...UAAAAAAAAU...",
+  "...UAAAAAAAAU...",
+  "...UUaaaaaaUU...",
+  "...UUUUUUUUUU...",
+  "....kk....kk....",
+  "...NNN....NNN...",
 ];
-const KEEPER_LEGS = ["....NNN..NNN....", "....NNN..NNN....", "...NNNN..NNNN..."];
 const MUG = ["xxxx", "xxxX", "xxXX", "XXXX"];
 const CLOTH_X = [6, 7, 8, 7];
 const CLOTH_Y = [14, 14, 14, 15];
 
 const drawKeeper = (pixels: Pixels, frame: number) => {
-  pixels.stamp(0, 17, KEEPER_LEGS);
   pixels.stamp(0, 12, KEEPER_BODY);
   pixels.stamp(6, 13, MUG);
   pixels.dot(10, 14, "X");
@@ -336,11 +351,101 @@ const drawKeeper = (pixels: Pixels, frame: number) => {
   // the cloth wipes across the mug
   pixels.stamp(CLOTH_X[frame], CLOTH_Y[frame], ["cc"]);
   const bob = frame === 3 ? 1 : 0;
+  // long hair falls past the shoulders, with a braid over the right one tied off in red
+  for (let y = 9; y < 14; y++) pixels.dot(4, y + bob, "j");
+  for (let y = 10; y < 16; y++) pixels.dot(11, y + bob, y % 2 ? "J" : "j");
+  pixels.dot(11, 16 + bob, "R");
   pixels.stamp(0, 1 + bob, KEEPER_HEAD);
 };
 
-/** the innkeeper behind the counter: bald, bushy beard, green apron, rolled sleeves, polishing a mug */
+/** the innkeeper behind the counter: a woman with a tied-up bun and red ribbon, long braid, earrings, green apron, polishing a mug */
 export const innkeeperSprite = (frame: number): HTMLCanvasElement => {
   const index = wrap(frame, CLOTH_X.length);
   return cached(`keeper|${index}`, (pixels) => drawKeeper(pixels, index));
+};
+
+// ---------------------------------------------------------------- guild master
+export type GuildMasterPose = "idle" | "walk" | "talk";
+
+// bald, bushy brown beard, thick brows, an eyepatch over one eye and a scar across the cheek
+const MASTER_HEAD = [
+  ".....kLLkkk.....",
+  "....kkLkkkkk....",
+  "...GkkkkkkkkG...",
+  "...GkmmkkmmkG...",
+  "...GkSSkkkEZG...",
+  "....kkkvvkkZ....",
+  "....kkvvvvkk....",
+  "...hhhhhhhhhh...",
+  "...hhHhMMhHhh...",
+  "...hhhhhhhhhh...",
+  "....hhHhhHhh....",
+  ".....hhhhhh.....",
+];
+const MASTER_MOUTH_SHUT = "...hhHhhhhHhh...";
+// short open leather jacket with fur collar over a linen shirt, wide belt, big gold buckle
+const MASTER_TORSO = ["PPPPPPPP", "PsbbbbsP", "sYbCCbYs", "ssbbbbss", "ussbbssu", "zzyyyyzz", "zzyYYyzz", "ssllllss"];
+const MASTER_PAULDRON = ["iVV", "iII"];
+const MASTER_ARM_UPPER = ["sus", "sss"];
+const MASTER_ARM_LOWER = ["zzz", "kkk", "kk."];
+const MASTER_RIGHT_UPPER = ["sss", "sss", "sus", "sss"];
+const MASTER_LEGS = {
+  stand: ["....lll..lll....", "....lFl..lFl....", "...NNNN..NNNN...", "...NNNNN.NNNNN.."],
+  stand2: ["....lll..lll....", "....lFl..lFl....", "...NNNN...NNNN..", "...NNNNN..NNNNN."],
+  strideA: ["...lll.....lll..", "..lll.......lll.", ".NNNN.......NNN.", ".NNNNN.....NNNN."],
+  strideC: ["....lll...lll...", "...lll.....lll..", "..NNNN.....NNN..", "..NNNNN....NNNN."],
+};
+const MASTER_WALK = [MASTER_LEGS.strideA, MASTER_LEGS.stand, MASTER_LEGS.strideC, MASTER_LEGS.stand2];
+const MASTER_SWING = [-1, 0, 1, 0];
+const MASTER_FRAMES: Record<GuildMasterPose, number> = { idle: 2, walk: 4, talk: 4 };
+
+const drawMaster = (pixels: Pixels, pose: GuildMasterPose, frame: number) => {
+  const walking = pose === "walk";
+  const talking = pose === "talk";
+  const bob = walking && frame % 2 === 1 ? 1 : 0;
+  const swing = walking ? MASTER_SWING[frame] : 0;
+  pixels.stamp(0, 19, ["....llllllll...."]);
+  pixels.stamp(0, 20, walking ? MASTER_WALK[frame] : MASTER_LEGS.stand);
+  // sword hilt poking out behind the left hip, scabbard hanging down
+  pixels.dot(0, 16 + bob, "y");
+  pixels.dot(0, 17 + bob, "N");
+  pixels.dot(0, 18 + bob, "N");
+  pixels.stamp(0, 19 + bob, ["yy"]);
+  pixels.dot(1, 20 + bob, "N");
+  pixels.dot(1, 21 + bob, "N");
+  pixels.stamp(4, 12 + bob, MASTER_TORSO);
+  // left arm: iron pauldron on the shoulder, bracer and fist swinging
+  pixels.stamp(1, 12 + bob, MASTER_PAULDRON);
+  pixels.stamp(1, 14 + bob, MASTER_ARM_UPPER);
+  pixels.stamp(1, 16 + bob + swing, MASTER_ARM_LOWER);
+  pixels.stamp(12, 12 + bob, MASTER_RIGHT_UPPER.slice(0, talking ? 2 : 4));
+  if (talking) {
+    // right arm thrown up mid-speech: sleeve, bracer, open hand with a pointing finger
+    const lift = frame % 2;
+    const top = 10 - lift;
+    for (let y = top; y <= 11; y++) pixels.stamp(13, y, ["ss"]);
+    pixels.stamp(13, top - 1, ["zz"]);
+    pixels.stamp(13, top - 2, ["kk"]);
+    pixels.dot(14, top - 3, "k");
+  } else if (pose === "idle" && frame === 1) {
+    // fist planted on the belt
+    pixels.stamp(12, 16, ["zzz"]);
+    pixels.stamp(11, 17, ["kk", "kk"]);
+  } else {
+    pixels.stamp(
+      12,
+      16 + bob - swing,
+      MASTER_ARM_LOWER.map((row) => row.replace("kk.", ".kk")),
+    );
+  }
+  const head = MASTER_HEAD.slice();
+  if (talking && frame >= 2) head[8] = MASTER_MOUTH_SHUT;
+  const breathe = pose === "idle" && frame === 1 ? 1 : 0;
+  pixels.stamp(0, 1 + bob + breathe, head);
+};
+
+/** the guild master: grizzled retired adventurer. Bald, bushy brown beard, eyepatch and scar, short fur-collared leather jacket, iron pauldron, wide belt with a big buckle, sword at the hip, heavy boots; faces right */
+export const guildMasterSprite = (pose: GuildMasterPose, frame: number): HTMLCanvasElement => {
+  const index = wrap(frame, MASTER_FRAMES[pose]);
+  return cached(`master|${pose}|${index}`, (pixels) => drawMaster(pixels, pose, index));
 };
