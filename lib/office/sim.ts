@@ -1,3 +1,5 @@
+import { m } from "@/paraglide/messages";
+
 import type { AttentionMsgRow, Employee, HookEvt, Office, ReceiptMsgRow } from "./engine";
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -272,12 +274,11 @@ export class Simulator {
         sid: e.id,
         kind: "permission",
         since,
-        text: "รออนุญาตจากคุณ (permission)",
       });
     }
     for (const id of [...this.permSince.keys()]) if (!seen.has(id)) this.permSince.delete(id);
     for (const r of this.demoRows) out.push(r);
-    const sig = out.map((r) => r.key + "|" + r.text).join("\n");
+    const sig = out.map((r) => `${r.key}|${r.count ?? ""}`).join("\n");
     if (sig === this.attnSig) return;
     this.attnSig = sig;
     this.o.setAttention(out);
@@ -307,9 +308,10 @@ export class Simulator {
               sid: a.id,
               kind: "loop",
               since: t0,
-              text: `วนลูป: Bash ${cmd} ล้มซ้ำ ${n} ครั้ง`,
-              detail: "Error: expected 3 but received 2",
-              copy: `คุณรัน \`${cmd}\` แล้วล้มด้วย error เดิม ${n} ครั้ง: Error: expected 3 but received 2. หยุดลองซ้ำ อธิบายสาเหตุก่อนแล้วเปลี่ยนวิธี`,
+              tool: "Bash",
+              target: cmd,
+              count: n,
+              error: "Error: expected 3 but received 2",
             },
           ]);
           yield span(LOOP_STEP);
@@ -326,8 +328,7 @@ export class Simulator {
             sid: b.id,
             kind: "asked",
             since: Date.now(),
-            text: "น่าจะรอคำตอบคุณ (เดา)",
-            detail: "…ต้องการให้ผมใช้ Prisma หรือ Drizzle ดีไหมครับ?",
+            tail: m.demo_asked_tail(),
           },
         ]);
         yield span(ASKED_HOLD);

@@ -11,3 +11,4 @@ hackathon/
 public/
 *.md
 !docs/*.md
+project.inlang/.meta.json

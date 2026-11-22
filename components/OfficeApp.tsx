@@ -10,6 +10,7 @@ import { useDataSource } from "./guild/hooks/useDataSource";
 import { useDerivedView } from "./guild/hooks/useDerivedView";
 import { useDocumentTitle } from "./guild/hooks/useDocumentTitle";
 import { useKeyboardNav } from "./guild/hooks/useKeyboardNav";
+import { useLocale } from "./guild/hooks/useLocale";
 import { useNotifications } from "./guild/hooks/useNotifications";
 import { useNow } from "./guild/hooks/useNow";
 import { useOfficeEngine } from "./guild/hooks/useOfficeEngine";
@@ -26,6 +27,7 @@ export default function OfficeApp() {
   // null until the first live snapshot has been applied (baseline); shared by the data source and clash notifications
   const prevClashRef = useRef<Set<string> | null>(null);
 
+  useLocale(); // first, so every message below is already in the viewer's language when the engine starts
   const { officeRef, view, mounted } = useOfficeEngine(canvasRef);
   const source = useDataSource(officeRef, mounted, prevClashRef);
   const { waiting, hiddenSet, conflicts, clashes, attention, receipts, bellN } = useDerivedView(view, source.mode);

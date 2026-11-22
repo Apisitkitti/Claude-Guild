@@ -1,6 +1,7 @@
 import type { OfficeView } from "@/lib/office/engine";
+import { m } from "@/paraglide/messages";
 
-import { hms, iconFor } from "./format";
+import { hms, iconFor, kindLabel } from "./format";
 import { SectionHeading } from "./Section";
 
 export function QuestLog({
@@ -17,7 +18,7 @@ export function QuestLog({
   return (
     <>
       <SectionHeading id="log" hidden={hidden} onToggle={onToggle}>
-        บันทึกเควส
+        {m.log_heading()}
       </SectionHeading>
       <ul className="log" id="sec-log" hidden={hidden}>
         {log
@@ -29,7 +30,7 @@ export function QuestLog({
               <span className="ic">{iconFor(l.kind)}</span>
               <span className="tx">
                 <b>{l.tag}</b>
-                {l.intern ? <span className="ilab"> 🛡️ {l.internLabel} ›</span> : null} {l.kind}
+                {l.intern ? <span className="ilab"> 🛡️ {l.internLabel} ›</span> : null} {kindLabel(l.kind)}
                 {l.detail ? <em> {l.detail}</em> : null}
               </span>
             </li>

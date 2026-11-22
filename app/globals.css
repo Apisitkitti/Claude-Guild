@@ -362,8 +362,9 @@ button:active {
 .card .csel {
   grid-area: sel;
   display: grid;
-  grid-template-columns: 38px 1fr auto;
-  grid-template-areas: "av who chip";
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-areas: "av who" "av chip";
+  row-gap: 3px;
   column-gap: 8px;
   align-items: center;
   width: 100%;
@@ -442,6 +443,15 @@ button:active {
   font-weight: 700;
   white-space: nowrap;
   border: 1px solid var(--color-shade-edge);
+  /* longer (English) labels shrink with an ellipsis instead of overlapping the name; the full text is in the title */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card .csel .chip {
+  justify-self: start;
+  align-self: start;
 }
 .badge {
   grid-area: badge;

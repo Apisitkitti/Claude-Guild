@@ -11,6 +11,7 @@ import {
 // reasons to look at a session: waiting for permission, looping on the same failure, a (guessed) question left for
 // the user, context nearly full, finished and awaiting review. Pure + injectable `now` (like TerritoryTracker).
 // Hooks are async: this can warn, not block. Privacy: only short tails / hashes are kept, in memory only.
+// Rows carry data only (kind + params); the client words them in the viewer's language.
 
 // ---- tuning knobs ----
 /** same fingerprint + same normalized error this many times ... */
@@ -60,10 +61,17 @@ export type AttentionRow = {
   sid: string;
   kind: AttentionKind;
   since: number;
-  text: string;
-  detail?: string;
-  /** loop only: message the user can paste into the session */
-  copy?: string;
+  /** permission only: the wait is old enough that it may already have been granted */
+  stale?: true;
+  /** loop only: the failing tool, its short target, how many times it failed and the first informative error line */
+  tool?: string;
+  target?: string;
+  count?: number;
+  error?: string;
+  /** asked only: tail of the final message (the client words the row and builds any text to copy) */
+  tail?: string;
+  /** context only: percent of the window used */
+  pct?: number;
 };
 
 const RANK: Record<AttentionKind, number> = { permission: 0, loop: 1, asked: 2, context: 3, done: 4 };
@@ -328,7 +336,7 @@ export class AttentionTracker {
         sid,
         kind: "permission",
         since,
-        text: stale ? "อาจอนุญาตแล้ว — ตรวจดู" : "รออนุญาตจากคุณ (permission)",
+        ...(stale ? { stale: true as const } : {}),
       };
       if (stale) rank.set(r, STALE_PERM_RANK);
       rows.push(r);
@@ -336,15 +344,15 @@ export class AttentionTracker {
     for (const st of this.keys.values()) {
       const l = st.loop;
       if (!l) continue;
-      const what = l.target ? `${l.tool} ${l.target}` : l.tool;
       rows.push({
         key: `${st.sid}|loop|${st.agent}|${l.fp}`,
         sid: st.sid,
         kind: "loop",
         since: l.since,
-        text: `วนลูป: ${what} ล้มซ้ำ ${l.count} ครั้ง`,
-        ...(l.error ? { detail: l.error } : {}),
-        copy: `คุณรัน \`${l.target || l.tool}\` แล้วล้มด้วย error เดิม ${l.count} ครั้ง${l.error ? `: ${l.error}` : ""}. หยุดลองซ้ำ อธิบายสาเหตุก่อนแล้วเปลี่ยนวิธี`,
+        tool: l.tool,
+        ...(l.target ? { target: l.target } : {}),
+        count: l.count,
+        ...(l.error ? { error: l.error } : {}),
       });
     }
     for (const [sid, d] of this.done) {
@@ -354,10 +362,9 @@ export class AttentionTracker {
           sid,
           kind: "asked",
           since: d.since,
-          text: "น่าจะรอคำตอบคุณ (เดา)",
-          ...(d.tail ? { detail: d.tail } : {}),
+          ...(d.tail ? { tail: d.tail } : {}),
         });
-      else rows.push({ key: `${sid}|done|${d.since}`, sid, kind: "done", since: d.since, text: "เสร็จแล้ว รอรีวิว" });
+      else rows.push({ key: `${sid}|done|${d.since}`, sid, kind: "done", since: d.since });
     }
     for (const [sid, c] of this.ctx)
       rows.push({
@@ -365,7 +372,7 @@ export class AttentionTracker {
         sid,
         kind: "context",
         since: c.since,
-        text: `context ใกล้เต็ม ${Math.round(c.frac * PERCENT)}%`,
+        pct: Math.round(c.frac * PERCENT),
       });
     const rk = (r: AttentionRow) => rank.get(r) ?? RANK[r.kind];
     rows.sort((a, b) => rk(a) - rk(b) || a.since - b.since || (a.key < b.key ? -1 : 1));

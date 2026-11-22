@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { MS_PER_SECOND } from "@/lib/constants";
 import type { ConflictRow, OfficeView, WaitingRow } from "@/lib/office/engine";
+import { m } from "@/paraglide/messages";
 
 import type { Mode, OfficeRef } from "../types";
 
@@ -88,7 +89,10 @@ export function useNotifications({
       if (last !== undefined && now - last < NOTIFY_COOLDOWN_SECONDS * MS_PER_SECOND) continue;
       lastNotified.current.set(CLASH_PREFIX + c.key, now);
       try {
-        const n = new Notification(`⚔️ ชนกัน! ${c.file}`, { body: c.names.join(" vs "), tag: `guild-clash-${c.key}` });
+        const n = new Notification(m.notify_clash_title({ file: c.file }), {
+          body: c.names.join(" vs "),
+          tag: `guild-clash-${c.key}`,
+        });
         n.onclick = () => {
           window.focus();
           officeRef.current?.select(c.sids[0]);
@@ -117,7 +121,7 @@ export function useNotifications({
       if (last !== undefined && now - last < NOTIFY_COOLDOWN_SECONDS * MS_PER_SECOND) continue;
       lastNotified.current.set(r.id, now);
       try {
-        const n = new Notification(`❗ ${r.project || r.tag} ต้องการคุณ`, {
+        const n = new Notification(m.notify_waiting_title({ project: r.project || r.tag }), {
           body: `${r.tag}${r.status ? `: ${r.status}` : ""}`,
           tag: `guild-${r.id}`,
         });

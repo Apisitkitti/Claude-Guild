@@ -1,4 +1,5 @@
 import { PERCENT } from "@/lib/constants";
+import { m } from "@/paraglide/messages";
 
 import { fmtTok, isNum } from "./format";
 import type { RpgRow } from "./types";
@@ -11,14 +12,15 @@ export function Mana({ p }: { p: RpgRow }) {
   const valid = isNum(used) && isNum(limit) && limit > 0;
   const pct = valid ? Math.max(0, Math.min(PERCENT, Math.round((used / limit) * PERCENT))) : 0;
   const lvl = pct > MANA_HOT_PCT ? " hot" : pct > MANA_WARN_PCT ? " warn" : "";
-  const tip = valid ? `${fmtTok(used)} / ${fmtTok(limit)} tokens${p.ctxGuessed ? " (ประมาณ)" : ""}` : "";
+  const tipParams = valid ? { used: fmtTok(used), limit: fmtTok(limit) } : { used: "", limit: "" };
+  const tip = valid ? (p.ctxGuessed ? m.mana_tip_guessed(tipParams) : m.mana_tip(tipParams)) : "";
   if (!valid) return null;
   return (
     <div className="mana" title={tip}>
       <div
         className={`bar${lvl}`}
         role="progressbar"
-        aria-label="Context"
+        aria-label={m.mana_label()}
         aria-valuemin={0}
         aria-valuemax={PERCENT}
         aria-valuenow={pct}

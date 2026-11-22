@@ -1,3 +1,5 @@
+import { m } from "@/paraglide/messages";
+
 import {
   DESK_COUNT,
   DUEL_HALF,
@@ -57,9 +59,10 @@ const QUEST_MIN_TOOLS = 3;
 // -- incoming message limits (receipts, territory)
 const MAX_RECEIPT_ROWS = 50;
 const RECEIPT_KEY_MAX = 200;
-const RECEIPT_TEXT_MAX = 200;
-const RECEIPT_DETAIL_MAX = 200;
-const RECEIPT_COPY_MAX = 600;
+const ATTN_TOOL_MAX = 80;
+const ATTN_TARGET_MAX = 120;
+const ATTN_ERROR_MAX = 200;
+const ATTN_TAIL_MAX = 200;
 const RECEIPT_COUNT_MAX = 99999;
 const RECEIPT_ID_MAX = 64;
 const RECEIPT_PROJECT_MAX = 60;
@@ -353,9 +356,17 @@ export interface AttentionMsgRow {
   sid: string;
   kind: AttentionKind;
   since: number;
-  text: string;
-  detail?: string;
-  copy?: string;
+  /** permission: waiting long enough that it may already have been granted */
+  stale?: boolean;
+  /** loop: failing tool, short target, failure count, first informative error line */
+  tool?: string;
+  target?: string;
+  count?: number;
+  error?: string;
+  /** asked: tail of the final message */
+  tail?: string;
+  /** context: percent of the window used */
+  pct?: number;
 }
 /** a queue row joined with the adventurer it is about (only sessions the guild knows) */
 export interface AttentionRow extends AttentionMsgRow {
@@ -377,6 +388,10 @@ export function nextAttentionId(rows: readonly { sid: string }[], selectedId: st
   const i = selectedId ? ids.indexOf(selectedId) : -1;
   return ids[(i + 1) % ids.length];
 }
+
+/** quest-log kinds made by the guild itself; the prefix keeps them from colliding with real tool / hook names */
+export const KIND_RECEIPT = "guild:receipt";
+export const KIND_CLASH = "guild:clash";
 
 export type ReceiptVerdict = "done" | "red" | "none";
 /** a closed turn of the server's Receipt Ledger (counts only) */
@@ -405,21 +420,18 @@ const RECEIPT_VERDICTS: readonly string[] = ["done", "red", "none"];
 const MAX_RECEIPTS = 30;
 /** a receipt that closed this recently (and was not seen before) gets the 📜 bubble + quest-log line */
 const RECEIPT_FRESH_MS = 20_000;
-/** outcome counts as Thai chips text, e.g. "ไฟล์ 3 · ฟื้น 1 · commit 1" (empty when nothing) */
+/** outcome counts as chips text in the viewer's language, e.g. "files 3 · recovered 1 · commit 1" (empty when nothing) */
 export function receiptSummary(r: Pick<ReceiptMsgRow, "files" | "recovered" | "commits" | "amends" | "tasks">): string {
   const p: string[] = [];
-  if (r.files) p.push(`ไฟล์ ${r.files}`);
-  if (r.recovered) p.push(`ฟื้น ${r.recovered}`);
-  if (r.commits) p.push(`commit ${r.commits}`);
-  if (r.amends) p.push(`amend ${r.amends}`);
-  if (r.tasks) p.push(`งาน ${r.tasks}`);
+  if (r.files) p.push(`${m.receipt_label_files()} ${r.files}`);
+  if (r.recovered) p.push(`${m.receipt_label_recovered()} ${r.recovered}`);
+  if (r.commits) p.push(`${m.receipt_label_commits()} ${r.commits}`);
+  if (r.amends) p.push(`${m.receipt_label_amends()} ${r.amends}`);
+  if (r.tasks) p.push(`${m.receipt_label_tasks()} ${r.tasks}`);
   return p.join(" · ");
 }
-export const RECEIPT_VERDICT_TEXT: Record<ReceiptVerdict, string> = {
-  done: "ได้งาน",
-  red: "ยังแดง",
-  none: "ไม่มีผลลัพธ์",
-};
+export const receiptVerdictText = (v: ReceiptVerdict): string =>
+  v === "done" ? m.receipt_verdict_done() : v === "red" ? m.receipt_verdict_red() : m.receipt_verdict_none();
 
 export interface SnapshotMsg {
   attention?: AttentionMsgRow[];
@@ -1429,15 +1441,25 @@ export class Office {
       for (const r of rows.slice(0, MAX_RECEIPT_ROWS)) {
         if (!r || typeof r !== "object" || typeof r.sid !== "string" || !r.sid || typeof r.key !== "string" || !r.key)
           continue;
-        if (!ATTN_KINDS.includes(r.kind) || typeof r.text !== "string") continue;
+        if (!ATTN_KINDS.includes(r.kind)) continue;
+        const text = (v: unknown, max: number) => (typeof v === "string" && v ? v.slice(0, max) : undefined);
+        const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
+        const tool = text(r.tool, ATTN_TOOL_MAX);
+        const target = text(r.target, ATTN_TARGET_MAX);
+        const error = text(r.error, ATTN_ERROR_MAX);
+        const tail = text(r.tail, ATTN_TAIL_MAX);
         out.push({
           key: r.key.slice(0, RECEIPT_KEY_MAX),
           sid: r.sid,
           kind: r.kind,
           since: Number.isFinite(Number(r.since)) ? Number(r.since) : 0,
-          text: r.text.slice(0, RECEIPT_TEXT_MAX),
-          ...(typeof r.detail === "string" ? { detail: r.detail.slice(0, RECEIPT_DETAIL_MAX) } : {}),
-          ...(typeof r.copy === "string" ? { copy: r.copy.slice(0, RECEIPT_COPY_MAX) } : {}),
+          ...(r.stale === true ? { stale: true } : {}),
+          ...(tool ? { tool } : {}),
+          ...(target ? { target } : {}),
+          ...(r.kind === "loop" ? { count: count(r.count) } : {}),
+          ...(error ? { error } : {}),
+          ...(tail ? { tail } : {}),
+          ...(r.kind === "context" ? { pct: Math.min(PERCENT, count(r.pct)) } : {}),
         });
       }
     }
@@ -1489,14 +1511,19 @@ export class Office {
         sid: r.sid,
         color: lookFor(r.sid).shirt,
         bad: r.verdict === "red",
-        text: `#${r.sid.slice(0, TAG_LEN)} · ${e.project} · ${RECEIPT_VERDICT_TEXT[r.verdict]}: ${sum}`,
+        text: m.log_receipt({
+          tag: `#${r.sid.slice(0, TAG_LEN)}`,
+          project: e.project,
+          verdict: receiptVerdictText(r.verdict),
+          summary: sum,
+        }),
         time: Date.now(),
         tag: e.tag,
         project: e.project,
         intern: false,
         internLabel: "",
-        kind: "ใบเสร็จ",
-        detail: `${RECEIPT_VERDICT_TEXT[r.verdict]}: ${sum}`,
+        kind: KIND_RECEIPT,
+        detail: `${receiptVerdictText(r.verdict)}: ${sum}`,
       });
       if (this.log.length > LOG_MAX) this.log.length = LOG_MAX;
     }
@@ -2253,25 +2280,23 @@ export class Office {
     this.addBanner("quest", `⚔️ ${trunc(c.file, BANNER_FILE_MAX)}`);
     if (!this.reducedMotion) this.addTrauma(TRAUMA_QUEST);
     const a = known[0];
+    const others = known
+      .slice(1)
+      .map((e) => e.tag)
+      .join(", ");
     this.log.unshift({
       id: this.logSeq++,
       sid: a.id,
       color: a.look.shirt,
       bad: true,
-      text: `${a.tag} · ${a.project} · ชนกัน ${c.file} vs ${known
-        .slice(1)
-        .map((e) => e.tag)
-        .join(", ")}`,
+      text: m.log_clash({ tag: a.tag, project: a.project, file: c.file, others }),
       time: Date.now(),
       tag: a.tag,
       project: a.project,
       intern: false,
       internLabel: "",
-      kind: "Clash",
-      detail: `${c.file} vs ${known
-        .slice(1)
-        .map((e) => e.tag)
-        .join(", ")}`,
+      kind: KIND_CLASH,
+      detail: `${c.file} vs ${others}`,
     });
     if (this.log.length > LOG_MAX) this.log.length = LOG_MAX;
   }
@@ -2473,44 +2498,44 @@ export class Office {
   statusOf(e: Employee): string {
     switch (e.state) {
       case "ENTERING":
-        return "เข้ากิลด์ รับเควส 📜";
+        return m.status_enter();
       case "LEAVING":
-        return "ส่งเควส กลับบ้าน 👋";
+        return m.status_leave();
       case "STRETCH":
-        return "พักเหนื่อย 😮‍💨";
+        return m.status_stretch();
       case "TO_COFFEE":
-        return "กลับไปโรงเตี๊ยม 🍺";
+        return m.status_to_coffee();
       case "FROM_COFFEE":
-        return "ออกไปลุยต่อ 🗡️";
+        return m.status_from_coffee();
       case "DRINK":
-        return "ดื่มเอลพักเหนื่อย 🍺";
+        return m.status_drink();
       case "DUEL":
-        return "ดวลแย่งดินแดน ⚔️";
+        return m.status_duel();
     }
-    if (e.hurtUntil > this.clock) return "โดนโจมตี 💥";
-    if (e.boss && e.act !== "handup") return "สู้บอส 👹";
-    if (e.resting && e.act !== "handup") return "นั่งพักข้างกองไฟ 🔥";
+    if (e.hurtUntil > this.clock) return m.status_hurt();
+    if (e.boss && e.act !== "handup") return m.status_boss();
+    if (e.resting && e.act !== "handup") return m.status_resting();
     if (e.act !== "handup")
-      for (const it of e.interns.values()) if (it.act === "handup") return "ต้องการคุณ ❗ (สไควร์)";
+      for (const it of e.interns.values()) if (it.act === "handup") return m.status_squire_handup();
     switch (e.act) {
       case "typing":
-        return "ร่ายเวท (แก้โค้ด) ✨";
+        return m.status_typing();
       case "reading":
-        return "อ่านคัมภีร์ 📜";
+        return m.status_reading();
       case "bash":
-        return "ฟันมอนสเตอร์ ⚔️";
+        return m.status_bash();
       case "phone":
-        return "ส่งนกฮูกหาข่าว 🦉";
+        return m.status_phone();
       case "mcp":
-        return "เปิดประตูมิติ 🌀";
+        return m.status_mcp();
       case "sticky":
-        return "จดบันทึกเควส 📝";
+        return m.status_sticky();
       case "handup":
-        return "ต้องการคุณ ❗";
+        return m.status_handup();
       default:
-        if (e.note === "agent") return "เรียกสไควร์ช่วยรบ 🛡️";
-        if (e.note === "idle") return "รอคำสั่ง 💤";
-        return "วางแผน 🤔";
+        if (e.note === "agent") return m.status_agent();
+        if (e.note === "idle") return m.status_idle();
+        return m.status_thinking();
     }
   }
 
@@ -3426,7 +3451,7 @@ export class Office {
         this.clearPending(e);
         if (e.boss) this.bossLeaves(e);
         if (e.toolCalls >= QUEST_MIN_TOOLS) {
-          this.addBanner("quest", `เควสสำเร็จ! ⚔️${e.toolCalls} 💰+${e.qGold}`);
+          this.addBanner("quest", m.banner_quest_done({ calls: e.toolCalls, gold: e.qGold }));
         }
         e.toolCalls = 0;
         e.qKills = 0;

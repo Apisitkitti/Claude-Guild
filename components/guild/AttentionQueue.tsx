@@ -1,6 +1,8 @@
 import { useState } from "react";
 
+import { attentionCopy, attentionDetail, attentionText } from "@/lib/office/attentionText";
 import type { AttentionRow } from "@/lib/office/engine";
+import { m } from "@/paraglide/messages";
 
 import { ageText } from "./format";
 import { SectionHeading } from "./Section";
@@ -30,10 +32,13 @@ function AttentionItem({
   onDismiss: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const text = attentionText(r);
+  const detail = attentionDetail(r);
+  const copyText = attentionCopy(r);
   const copy = () => {
-    if (!r.copy) return;
+    if (!copyText) return;
     try {
-      navigator.clipboard.writeText(r.copy).then(
+      navigator.clipboard.writeText(copyText).then(
         () => {
           setCopied(true);
           setTimeout(() => setCopied(false), COPIED_FLASH_MS);
@@ -44,7 +49,7 @@ function AttentionItem({
   };
   return (
     <li className={`attn ${r.kind}${selected ? " hl" : ""}`}>
-      <button type="button" className="asel" onClick={onSelect} title={r.detail ? `${r.text} — ${r.detail}` : r.text}>
+      <button type="button" className="asel" onClick={onSelect} title={detail ? `${text} — ${detail}` : text}>
         <span className="aico" aria-hidden="true">
           {ATTN_ICON[r.kind]}
         </span>
@@ -52,18 +57,24 @@ function AttentionItem({
           <b>
             {r.tag} <span className="aproj">{r.project}</span>
           </b>
-          <span className="areason">{r.text}</span>
-          {r.detail && <span className="adetail">{r.detail}</span>}
+          <span className="areason">{text}</span>
+          {detail && <span className="adetail">{detail}</span>}
         </span>
         <span className="aage">{ageText(r.since, now)}</span>
       </button>
       <div className="aact">
-        {r.copy && (
-          <button type="button" className="acopy" onClick={copy} title="คัดลอกข้อความไปแปะให้ Claude session นี้">
-            {copied ? "✓ คัดลอกแล้ว" : "📋 Copy"}
+        {copyText && (
+          <button type="button" className="acopy" onClick={copy} title={m.queue_copy_title()}>
+            {copied ? m.queue_copied() : m.queue_copy()}
           </button>
         )}
-        <button type="button" className="adismiss" onClick={onDismiss} aria-label={`ปิดแถว ${r.tag}`} title="ปิดแถวนี้">
+        <button
+          type="button"
+          className="adismiss"
+          onClick={onDismiss}
+          aria-label={m.queue_dismiss_label({ tag: r.tag })}
+          title={m.queue_dismiss_title()}
+        >
           ✕
         </button>
       </div>
@@ -91,11 +102,11 @@ export function AttentionQueue({
   return (
     <>
       <SectionHeading id="attn" hidden={hidden} onToggle={onToggle} count={rows.length}>
-        🔔 คิวของคุณ
+        {m.queue_heading()}
       </SectionHeading>
       <div className="attnsec" id="sec-attn" hidden={hidden}>
         <ul className="attns" aria-live="polite">
-          {rows.length === 0 && <li className="empty">ไม่มีใครต้องการคุณตอนนี้</li>}
+          {rows.length === 0 && <li className="empty">{m.queue_empty()}</li>}
           {rows.map((r) => (
             <AttentionItem
               key={r.key}
@@ -107,9 +118,7 @@ export function AttentionQueue({
             />
           ))}
         </ul>
-        <p className="terrnote">
-          กด N เพื่อไปคนถัดไปในคิว · “น่าจะรอคำตอบคุณ” เป็นการเดาจากท้ายข้อความ · เตือนได้ แต่ขวางไม่ได้
-        </p>
+        <p className="terrnote">{m.queue_note()}</p>
       </div>
     </>
   );

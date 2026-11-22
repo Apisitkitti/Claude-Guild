@@ -68,7 +68,7 @@ type Store = {
   receiptsJson: string;
 };
 
-const STORE_VERSION = 12; // bump when Store shape changes so dev HMR rebuilds it
+const STORE_VERSION = 13; // bump when Store shape changes so dev HMR rebuilds it
 
 const g = globalThis as typeof globalThis & { __claudeOffice?: Store & { version?: number } };
 

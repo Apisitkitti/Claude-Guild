@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { conflictKey, type TerritoryMsg } from "@/lib/office/engine";
+import { conflictKey, KIND_CLASH, type TerritoryMsg } from "@/lib/office/engine";
 
 import { newOffice, seat, sid, stubStorage, tick } from "./helpers";
 
@@ -148,7 +148,7 @@ describe("territory", () => {
     expect(o.trauma).toBeGreaterThan(0);
     const log = o.getView().log;
     expect(log.length).toBe(logN + 1);
-    expect(log[0].kind).toBe("Clash");
+    expect(log[0].kind).toBe(KIND_CLASH);
     o.setTerritory(msg(a, b, "clash"));
     expect(o.getView().log.length).toBe(logN + 1);
   });

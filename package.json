@@ -3,14 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 5050 -H 127.0.0.1",
+    "dev": "node scripts/dev.mjs",
     "build": "next build",
     "start": "next start -p 5050 -H 127.0.0.1",
+    "paraglide": "paraglide-js compile --project ./project.inlang --outdir ./paraglide --strategy cookie preferredLanguage baseLocale --emit-ts-declarations --silent",
+    "paraglide:watch": "paraglide-js compile --project ./project.inlang --outdir ./paraglide --strategy cookie preferredLanguage baseLocale --emit-ts-declarations --watch",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run",
     "lint:fix": "eslint . --fix",
+    "test": "vitest run",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "prebuild": "npm run paraglide",
+    "pretypecheck": "npm run paraglide",
+    "prelint": "npm run paraglide",
+    "prelint:fix": "npm run paraglide",
+    "pretest": "npm run paraglide",
+    "prestart": "npm run paraglide"
   },
   "dependencies": {
     "next": "16.4.6",
@@ -18,6 +27,8 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@inlang/paraglide-js": "2.29.3",
+    "@inlang/plugin-message-format": "4.5.0",
     "@tailwindcss/postcss": "4.3.4",
     "@types/node": "^20",
     "@types/react": "^19",

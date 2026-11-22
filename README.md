@@ -36,6 +36,20 @@ npm run dev
 
 > ⚠️ store เก็บใน memory ของ process เดียว — รันแบบ `next dev` / `next start` บนเครื่องเท่านั้น ไม่เหมาะกับ serverless
 
+## ภาษา (ไทย / English)
+
+แอปมี 2 ภาษา: **ไทย** (ค่าเริ่มต้น / base) และ **English** — สลับได้ที่ปุ่ม `ไทย | EN` ในแถบบนสุด (เลือกแล้วโหลดหน้าใหม่ และจำไว้ใน cookie `PARAGLIDE_LOCALE`) ถ้ายังไม่เคยเลือกจะดูจากภาษาแรกของเบราว์เซอร์ (ไทยถ้าเป็นไทย ภาษาอื่นทั้งหมดใช้ English) โดย **ไม่เขียน cookie** — cookie ถูกเขียนเฉพาะตอนกดปุ่มสลับภาษา
+
+> หน้า `/` ถูก prerender เป็นภาษาไทย ผู้ใช้ English จึงเห็นภาษาไทยแวบหนึ่งก่อน hydrate แล้วค่อยเปลี่ยน — ตั้งใจให้เป็นแบบนี้ (ไม่ต้องอ่าน cookie ใน root layout ซึ่งจะทำให้ทั้งแอปเลิก static)
+
+ใช้ [Paraglide JS](https://inlang.com/m/gerre34r/library-inlang-paraglideJs) 2.x คอมไพล์ข้อความเป็นฟังก์ชัน TypeScript ผ่าน CLI (Turbopack ใช้ปลั๊กอิน bundler ของ Paraglide ไม่ได้):
+
+- ข้อความทั้งหมดอยู่ใน `messages/th.json` และ `messages/en.json` (key เดียวกัน, พารามิเตอร์เป็น `{name}`; อังกฤษใช้ plural แบบ ICU ตรงที่มีตัวเลข)
+- ตั้งค่าโปรเจกต์ใน `project.inlang/settings.json` (`baseLocale: "th"`)
+- โค้ดเรียกใช้ `import { m } from "@/paraglide/messages"` แล้ว `m.queue_empty()` / `m.receipt_calls({ calls: 3 })`
+- แก้/เพิ่มข้อความแล้วรัน `npm run paraglide` เพื่อ generate `paraglide/` ใหม่ (ไม่ commit) — `npm run dev` รัน watch ให้เอง และ `build` / `test` / `lint` / `typecheck` รันก่อนเสมอ
+- เพิ่ม key ต้องเพิ่มทั้งสองไฟล์ (มี test เช็กว่า key และ `{param}` ตรงกัน) ข้อความฝั่ง server (คิว Lookout Bell) ส่งมาเป็นข้อมูลล้วน แล้วฝั่ง client เรียบเรียงตามภาษาของผู้ดู
+
 ## ต่อกับ Claude Code จริง (Live mode)
 
 ง่ายสุด: ใช้สคริปต์ merge hook ให้ (dry-run ก่อน ดูว่าจะเปลี่ยนอะไร แล้วค่อยใส่ `--apply`; สำรองไฟล์เดิมให้อัตโนมัติ)
@@ -88,6 +102,7 @@ curl -X POST localhost:5050/events -H 'Content-Type: application/json' -d '{"ses
 - `app/events/route.ts` — POST hook event · `app/events/stream/route.ts` — SSE · `app/health/route.ts`
 - `lib/office/` — canvas engine, sprites, simulator (TS ล้วน ไม่ผูก React)
 - `components/` — header, roster, event log (React)
+- `messages/` · `project.inlang/` — ข้อความไทย/อังกฤษ (Paraglide) · `lib/i18n.ts` — ล็อกภาษาฝั่ง client ให้ hydrate ได้ไม่เพี้ยน
 - `hooks/settings.example.json` — hook config สำหรับ Claude Code
 
 ## Known limitations

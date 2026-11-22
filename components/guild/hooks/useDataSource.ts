@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Re
 import { MS_PER_SECOND } from "@/lib/constants";
 import { connectLive } from "@/lib/office/live";
 import { Simulator } from "@/lib/office/sim";
+import { m } from "@/paraglide/messages";
 
 import type { Conn, Mode, OfficeRef } from "../types";
 
@@ -91,7 +92,7 @@ export function useDataSource(officeRef: OfficeRef, mounted: boolean, prevClashR
     const fallback = () => {
       if (opened) return;
       live.close();
-      setNote("เชื่อมต่อ /events/stream ไม่ได้ — สลับเป็น Demo");
+      setNote(m.source_fallback_note());
       setChosen("demo");
     };
     // fall back on error after FALLBACK_ERROR_SECONDS; if the first request is still pending, wait longer (dev compile)

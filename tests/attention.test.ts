@@ -41,11 +41,11 @@ describe("loop detector", () => {
     fail(t, 20_000);
     const [r] = loops(t);
     expect(r.sid).toBe("s1");
-    expect(r.text).toContain("3");
-    expect(r.copy).toContain("npm test");
-    expect(r.detail).toContain("expected");
+    expect(r).toMatchObject({ tool: "Bash", count: 3 });
+    expect(r.target).toContain("npm test");
+    expect(r.error).toContain("expected");
     fail(t, 30_000);
-    expect(loops(t)[0].text).toContain("4");
+    expect(loops(t)[0].count).toBe(4);
   });
   it("normalizes numbers/durations/tmp paths so varying output still counts", () => {
     const t = new AttentionTracker();
@@ -106,7 +106,7 @@ describe("loop detector", () => {
     fail(t, 0, e);
     fail(t, 1000, e);
     fail(t, 2000, e);
-    expect(loops(t)[0].text).toContain("a/b.ts");
+    expect(loops(t)[0]).toMatchObject({ tool: "Edit", target: "a/b.ts" });
   });
   it("UserPromptSubmit and Stop reset", () => {
     for (const name of ["UserPromptSubmit", "Stop"]) {
@@ -165,14 +165,22 @@ describe("loop detector", () => {
     expect(r).toHaveLength(2);
     expect(new Set(r.map((x) => x.key)).size).toBe(2);
   });
-  it("copy/detail use the first informative error line, not a bare Exit code", () => {
+  it("rows are data only: no server-worded text, detail or copy", () => {
+    const t = new AttentionTracker();
+    for (let i = 0; i < 3; i++) fail(t, i);
+    t.setWaiting("p", 0);
+    t.setContext("c", 0.9, 0);
+    const rows = t.queue(1);
+    expect(rows).toHaveLength(3);
+    for (const r of rows) for (const k of ["text", "detail", "copy"]) expect(r).not.toHaveProperty(k);
+  });
+  it("the loop error is the first informative line, not a bare Exit code", () => {
     expect(errorLine("Exit code 1\n\nnpm ERR! missing script: test")).toBe("npm ERR! missing script: test");
     expect(errorLine("Error: Exit code 2\n  \nboom")).toBe("boom");
     expect(errorLine("Exit code 127")).toBe("Exit code 127");
     const t = new AttentionTracker();
     for (let i = 0; i < 3; i++) fail(t, i, { error: "Exit code 1\nTypeError: x is not a function" });
-    expect(loops(t)[0].detail).toBe("TypeError: x is not a function");
-    expect(loops(t)[0].copy).toContain("TypeError");
+    expect(loops(t)[0].error).toBe("TypeError: x is not a function");
   });
   it("long errors sharing a prefix do not collide, and only a short display line is kept", () => {
     const t = new AttentionTracker();
@@ -183,7 +191,7 @@ describe("loop detector", () => {
     expect(loops(t)).toHaveLength(0);
     const t2 = new AttentionTracker();
     for (let i = 0; i < 3; i++) fail(t2, i, { error: pre + "same" });
-    expect(loops(t2)[0].detail!.length).toBeLessThanOrEqual(120);
+    expect(loops(t2)[0].error!.length).toBeLessThanOrEqual(120);
   });
   it("normalization keeps tmp-lookalike project paths and path digits distinct", () => {
     expect(normalizeCommand("cat /x/project/tmp/build.log")).toContain("/x/project/tmp/build.log");
@@ -252,15 +260,14 @@ describe("asked detector", () => {
     stop(t, "x".repeat(500) + " ใช้ Prisma ไหม?");
     const [a] = t.queue(0);
     expect(a.kind).toBe("asked");
-    expect(a.detail!.length).toBeLessThanOrEqual(80);
-    expect(a.detail!.endsWith("ไหม?")).toBe(true);
-    expect(a.text).toContain("เดา");
+    expect(a.tail!.length).toBeLessThanOrEqual(80);
+    expect(a.tail!.endsWith("ไหม?")).toBe(true);
     stop(t, "all good.", 10);
     expect(t.queue(10)[0].kind).toBe("done");
     stop(t, undefined, 20);
     const r = t.queue(20)[0];
     expect(r.kind).toBe("done");
-    expect(r.detail).toBeUndefined();
+    expect(r.tail).toBeUndefined();
   });
   it("ignores SubagentStop for the done queue and clears on the next UserPromptSubmit", () => {
     const t = new AttentionTracker();
@@ -311,7 +318,7 @@ describe("queue", () => {
     const [r] = t.queue(5);
     expect(r.kind).toBe("context");
     expect(r.since).toBe(1);
-    expect(r.text).toContain("92%");
+    expect(r.pct).toBe(92);
     t.setContext("c", null, 6);
     expect(t.queue(6)).toHaveLength(0);
   });
@@ -319,14 +326,11 @@ describe("queue", () => {
     const t = new AttentionTracker();
     for (let i = 0; i < 3; i++) fail(t, 100 + i, { session_id: "l" });
     t.setWaiting("p", 0);
-    expect(t.queue(PERM_STALE_MS - 1)[0]).toMatchObject({
-      kind: "permission",
-      sid: "p",
-      text: expect.stringContaining("รออนุญาต"),
-    });
+    expect(t.queue(PERM_STALE_MS - 1)[0]).toMatchObject({ kind: "permission", sid: "p" });
+    expect(t.queue(PERM_STALE_MS - 1)[0].stale).toBeUndefined();
     const q = t.queue(PERM_STALE_MS + 1);
     expect(q.map((r) => `${r.kind}:${r.sid}`)).toEqual(["loop:l", "permission:p"]);
-    expect(q[1].text).toContain("อาจอนุญาตแล้ว");
+    expect(q[1].stale).toBe(true);
     expect(q[1].key).toBe(t.queue(0).find((r) => r.kind === "permission")!.key);
   });
   it("caps rows", () => {

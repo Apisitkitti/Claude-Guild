@@ -1,4 +1,5 @@
 import type { ConflictRow } from "@/lib/office/engine";
+import { m } from "@/paraglide/messages";
 
 import { SectionHeading } from "./Section";
 import type { OfficeRef } from "./types";
@@ -23,8 +24,8 @@ function ConflictItem({
           type="button"
           className="cdismiss"
           onClick={onDismiss}
-          aria-label={`ปิดการแจ้งเตือน ${c.file}`}
-          title="ปิดการแจ้งเตือนนี้"
+          aria-label={m.terr_dismiss_label({ file: c.file })}
+          title={m.terr_dismiss_title()}
         >
           ✕
         </button>
@@ -39,7 +40,9 @@ function ConflictItem({
           </span>
         ))}
       </div>
-      <span className={`clevel ${clash ? "clash" : "overlap"}`}>{clash ? "🔴 ชนกัน!" : "🟡 แตะไฟล์เดียวกัน"}</span>
+      <span className={`clevel ${clash ? "clash" : "overlap"}`}>
+        {clash ? m.terr_level_clash() : m.terr_level_overlap()}
+      </span>
     </li>
   );
 }
@@ -58,11 +61,11 @@ export function TerritoryList({
   return (
     <>
       <SectionHeading id="terr" hidden={hidden} onToggle={onToggle} count={conflicts.length}>
-        ดินแดน
+        {m.terr_heading()}
       </SectionHeading>
       <div className="terrsec" id="sec-terr" hidden={hidden}>
         <ul className="conflicts">
-          {conflicts.length === 0 && <li className="empty">ยังไม่มีศึก</li>}
+          {conflicts.length === 0 && <li className="empty">{m.terr_empty()}</li>}
           {conflicts.map((c) => (
             <ConflictItem
               key={c.key}
@@ -72,7 +75,7 @@ export function TerritoryList({
             />
           ))}
         </ul>
-        <p className="terrnote">ตรวจเฉพาะ Edit/Write — คำสั่ง Bash ที่เขียนไฟล์ยังไม่นับ · เตือนได้ แต่ขวางไม่ได้</p>
+        <p className="terrnote">{m.terr_note()}</p>
       </div>
     </>
   );

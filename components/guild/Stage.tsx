@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 
 import { H, W } from "@/lib/office/layout";
+import { m } from "@/paraglide/messages";
 
 import type { OfficeRef } from "./types";
 
@@ -29,7 +30,7 @@ export function Stage({
         <canvas
           ref={canvasRef}
           role="img"
-          aria-label="Pixel-art guild: each Claude Code session is an adventurer on a quest"
+          aria-label={m.stage_label()}
           style={{ width: W * scale, height: H * scale }}
           onMouseMove={(ev) => {
             const p = toLogical(ev);

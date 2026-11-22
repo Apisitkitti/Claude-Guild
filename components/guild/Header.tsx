@@ -1,3 +1,6 @@
+import { m } from "@/paraglide/messages";
+import { getLocale, setLocale, type Locale } from "@/paraglide/runtime";
+
 import { isNum } from "./format";
 import type { Notify } from "./hooks/useNotifications";
 import { useTreasuryBump } from "./hooks/useRpgEffects";
@@ -5,6 +8,11 @@ import type { Conn, Mode, OfficeRef } from "./types";
 
 const SPEED_FAST = 4;
 const SPEED_STEPS = [1, 2, SPEED_FAST];
+/** language switch labels are written in their own language */
+const LOCALE_BUTTONS: { locale: Locale; label: string }[] = [
+  { locale: "th", label: "ไทย" },
+  { locale: "en", label: "EN" },
+];
 
 export function Header({
   mode,
@@ -41,12 +49,14 @@ export function Header({
 }) {
   const bump = useTreasuryBump(treasury);
   const { perm: notifyPerm, on: notifyOn, toggle: toggleNotify } = notify;
+  const locale = getLocale();
+  const bellOn = notifyOn && notifyPerm === "granted";
   const pill =
     mode === "demo"
-      ? { cls: "demo", text: "demo" }
+      ? { cls: "demo", text: m.header_pill_demo() }
       : conn === "connected"
-        ? { cls: "ok", text: "connected" }
-        : { cls: "warn", text: conn === "reconnecting" ? "reconnecting" : "connecting" };
+        ? { cls: "ok", text: m.header_pill_connected() }
+        : { cls: "warn", text: conn === "reconnecting" ? m.header_pill_reconnecting() : m.header_pill_connecting() };
   return (
     <header className="bar">
       <h1>
@@ -55,12 +65,12 @@ export function Header({
         </span>{" "}
         Claude Guild
       </h1>
-      <div className="seg" role="group" aria-label="mode">
+      <div className="seg" role="group" aria-label={m.header_mode_label()}>
         <button className={mode === "live" ? "on" : ""} onClick={() => onSwitchMode("live")}>
-          Live
+          {m.header_mode_live()}
         </button>
         <button className={mode === "demo" ? "on" : ""} onClick={() => onSwitchMode("demo")}>
-          Demo
+          {m.header_mode_demo()}
         </button>
       </div>
       <span className={`pill ${pill.cls}`}>
@@ -68,15 +78,15 @@ export function Header({
         {pill.text}
       </span>
       {isNum(treasury) && (
-        <span className={`pill treasury${bump ? " bump" : ""}`} title="ทองสะสมของกิลด์">
-          💰 คลังกิลด์ <b>{treasury}</b>
+        <span className={`pill treasury${bump ? " bump" : ""}`} title={m.header_treasury_title()}>
+          💰 {m.header_treasury()} <b>{treasury}</b>
         </span>
       )}
       {mode === "demo" && (
         <div className="ctrls">
-          <button onClick={() => officeRef.current?.addSession()}>+ session</button>
-          <button onClick={() => officeRef.current?.testHand()}>❗ test hand</button>
-          <button onClick={onTogglePause}>{paused ? "▶ resume" : "⏸ pause"}</button>
+          <button onClick={() => officeRef.current?.addSession()}>{m.header_add_session()}</button>
+          <button onClick={() => officeRef.current?.testHand()}>{m.header_test_hand()}</button>
+          <button onClick={onTogglePause}>{paused ? m.header_resume() : m.header_pause()}</button>
           <div className="seg">
             {SPEED_STEPS.map((n) => (
               <button key={n} className={speed === n ? "on" : ""} onClick={() => onSetSpeed(n)}>
@@ -90,20 +100,33 @@ export function Header({
       <span className="spacer" />
       {(notifyPerm === "default" || notifyPerm === "granted") && (
         <button
-          className={`bell${notifyOn && notifyPerm === "granted" ? " on" : ""}`}
+          className={`bell${bellOn ? " on" : ""}`}
           onClick={toggleNotify}
-          aria-pressed={notifyOn && notifyPerm === "granted"}
-          aria-label={notifyOn && notifyPerm === "granted" ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}
-          title={notifyOn && notifyPerm === "granted" ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}
+          aria-pressed={bellOn}
+          aria-label={bellOn ? m.header_notify_off() : m.header_notify_on()}
+          title={bellOn ? m.header_notify_off() : m.header_notify_on()}
         >
-          {notifyOn && notifyPerm === "granted" ? "🔔" : "🔕"}
+          {bellOn ? "🔔" : "🔕"}
         </button>
       )}
-      <button onClick={onToggleFull} title="Fullscreen" aria-label="Fullscreen">
+      <div className="seg" role="group" aria-label={m.header_language()}>
+        {LOCALE_BUTTONS.map((b) => (
+          <button
+            key={b.locale}
+            lang={b.locale}
+            className={locale === b.locale ? "on" : ""}
+            aria-pressed={locale === b.locale}
+            onClick={() => setLocale(b.locale)}
+          >
+            {b.label}
+          </button>
+        ))}
+      </div>
+      <button onClick={onToggleFull} title={m.header_fullscreen()} aria-label={m.header_fullscreen()}>
         {full ? "⤡" : "⤢"}
       </button>
-      <button onClick={onToggleCollapsed} aria-expanded={!collapsed} title="ซ่อน/แสดงแผงกิลด์">
-        {collapsed ? "◀ แสดงแผงกิลด์" : "ซ่อนแผงกิลด์ ▶"}
+      <button onClick={onToggleCollapsed} aria-expanded={!collapsed} title={m.header_panel_toggle()}>
+        {collapsed ? m.header_panel_show() : m.header_panel_hide()}
       </button>
     </header>
   );

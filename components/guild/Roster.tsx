@@ -1,4 +1,5 @@
 import type { OfficeView } from "@/lib/office/engine";
+import { m } from "@/paraglide/messages";
 
 import { usePersistedFlags } from "./hooks/usePersistedFlags";
 import { useRosterFlash } from "./hooks/useRpgEffects";
@@ -26,7 +27,7 @@ export function Roster({
   return (
     <>
       <SectionHeading id="roster" hidden={hidden} onToggle={onToggle} count={view.roster.length}>
-        นักผจญภัย
+        {m.roster_heading()}
       </SectionHeading>
       <div className="gfilter">
         <div className="gsearch">
@@ -37,29 +38,26 @@ export function Roster({
             type="search"
             value={fq}
             onChange={(e) => saveFilter(e.target.value, fStray)}
-            placeholder="ค้นหาโปรเจกต์…"
-            aria-label="กรองโปรเจกต์"
+            placeholder={m.roster_search_placeholder()}
+            aria-label={m.roster_search_label()}
             maxLength={80}
           />
         </div>
-        <label
-          className="gtoggle"
-          title="ซ่อน session ที่ไม่ได้เข้ากิลด์ทางประตู (ไม่เห็น SessionStart และมี event น้อย) — ถ้ารอ permission จะยังแสดงเสมอ"
-        >
+        <label className="gtoggle" title={m.roster_stray_title()}>
           <input type="checkbox" role="switch" checked={fStray} onChange={(e) => saveFilter(fq, e.target.checked)} />
           <span className="gtoggle-track" aria-hidden="true">
             <span className="gtoggle-knob" />
           </span>
-          <span>ซ่อนผู้มาเยือนหลงทาง</span>
+          <span>{m.roster_stray_label()}</span>
         </label>
         {(view.hiddenCount ?? 0) > 0 && (
           <small className="hid" role="status">
-            (ซ่อน {view.hiddenCount})
+            {m.roster_hidden({ count: view.hiddenCount ?? 0 })}
           </small>
         )}
       </div>
       <ul className="roster" id="sec-roster" hidden={hidden}>
-        {view.roster.length === 0 && <li className="empty">ยังไม่มีนักผจญภัย — เปิด Claude Code เพื่อรับเควส</li>}
+        {view.roster.length === 0 && <li className="empty">{m.roster_empty()}</li>}
         {view.roster.map((r) => (
           <RosterCard
             key={r.id}

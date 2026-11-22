@@ -1,4 +1,5 @@
-import { RECEIPT_VERDICT_TEXT, receiptSummary, type ReceiptRow } from "@/lib/office/engine";
+import { receiptSummary, receiptVerdictText, type ReceiptRow } from "@/lib/office/engine";
+import { m } from "@/paraglide/messages";
 
 import { agoText } from "./format";
 import { useReceiptDismissals } from "./hooks/useReceiptDismissals";
@@ -18,11 +19,11 @@ function ReceiptItem({
   onDismiss: () => void;
 }) {
   const chips: [string, string, number, string][] = [
-    ["📝", "ไฟล์", r.files, "แก้ไฟล์สำเร็จ (ไม่ซ้ำ)"],
-    ["✅", "ฟื้น", r.recovered, "test แดง → เขียว"],
-    ["📦", "commit", r.commits, "git commit สำเร็จ"],
-    ["↩", "amend", r.amends, "git commit --amend"],
-    ["☑", "งาน", r.tasks, "งานที่ติ๊กเสร็จ"],
+    ["📝", m.receipt_label_files(), r.files, m.receipt_hint_files()],
+    ["✅", m.receipt_label_recovered(), r.recovered, m.receipt_hint_recovered()],
+    ["📦", m.receipt_label_commits(), r.commits, m.receipt_hint_commits()],
+    ["↩", m.receipt_label_amends(), r.amends, m.receipt_hint_amends()],
+    ["☑", m.receipt_label_tasks(), r.tasks, m.receipt_hint_tasks()],
   ];
   const sum = receiptSummary(r);
   return (
@@ -32,13 +33,13 @@ function ReceiptItem({
         className="rsel"
         onClick={onSelect}
         disabled={!r.live}
-        title={`${sum || "ไม่มีผลลัพธ์"} · ${r.calls} tool calls · ตามที่ hook รายงาน${r.live ? "" : " · นักผจญภัยออกจากกิลด์แล้ว"}`}
+        title={`${sum || m.receipt_verdict_none()} · ${m.receipt_calls({ calls: r.calls })} · ${m.receipt_per_hook()}${r.live ? "" : ` · ${m.receipt_left_guild()}`}`}
       >
         <span className="rhead">
           <b>
             {r.tag} <span className="rproj">{r.project}</span>
           </b>
-          <span className={`rverdict ${r.verdict}`}>{RECEIPT_VERDICT_TEXT[r.verdict]}</span>
+          <span className={`rverdict ${r.verdict}`}>{receiptVerdictText(r.verdict)}</span>
         </span>
         <span className="rchips">
           {chips
@@ -48,20 +49,20 @@ function ReceiptItem({
                 <span aria-hidden="true">{c[0]}</span> {c[1]} {c[2]}
               </span>
             ))}
-          {sum === "" && <span className="rnone">{r.calls} tool calls ไม่มีผลลัพธ์</span>}
+          {sum === "" && <span className="rnone">{m.receipt_calls_none({ calls: r.calls })}</span>}
         </span>
         <span className="rage">
           {agoText(r.closedAt, now)}
-          {r.squire > 0 ? ` · squire ${r.squire}` : ""}
-          {r.staleRed && r.verdict !== "red" ? " · ยังแดงจากรอบก่อน" : ""}
+          {r.squire > 0 ? ` · ${m.receipt_squires({ count: r.squire })}` : ""}
+          {r.staleRed && r.verdict !== "red" ? ` · ${m.receipt_stale_red()}` : ""}
         </span>
       </button>
       <button
         type="button"
         className="rdismiss"
         onClick={onDismiss}
-        aria-label={`ซ่อนใบเสร็จ ${r.tag}`}
-        title="ซ่อนใบนี้"
+        aria-label={m.receipt_dismiss_label({ tag: r.tag })}
+        title={m.receipt_dismiss_title()}
       >
         ✕
       </button>
@@ -88,23 +89,18 @@ export function ReceiptList({
   return (
     <>
       <SectionHeading id="rcpt" hidden={hidden} onToggle={onToggle} count={visible.length}>
-        📜 ใบเสร็จ
+        {m.receipt_heading()}
       </SectionHeading>
       <div className="rcptsec" id="sec-rcpt" hidden={hidden}>
         {visible.length > 0 && (
           <div className="rcptbar">
-            <button
-              type="button"
-              className="rclear"
-              onClick={clearAll}
-              title="ซ่อนใบเสร็จทั้งหมดตอนนี้ ใบใหม่จะยังขึ้นตามปกติ"
-            >
-              ล้างทั้งหมด
+            <button type="button" className="rclear" onClick={clearAll} title={m.receipt_clear_title()}>
+              {m.receipt_clear()}
             </button>
           </div>
         )}
         <ul className="rcpts">
-          {visible.length === 0 && <li className="empty">ยังไม่มีใบเสร็จ — ออกเมื่อ session จบรอบ (Stop)</li>}
+          {visible.length === 0 && <li className="empty">{m.receipt_empty()}</li>}
           {visible.map((r) => (
             <ReceiptItem
               key={r.id}
@@ -116,7 +112,7 @@ export function ReceiptList({
             />
           ))}
         </ul>
-        <p className="terrnote">นับ “ผลลัพธ์” ไม่ใช่ความยุ่ง · ตามที่ hook รายงาน · เก็บ 2 ชม. ในหน่วยความจำเท่านั้น</p>
+        <p className="terrnote">{m.receipt_note()}</p>
       </div>
     </>
   );

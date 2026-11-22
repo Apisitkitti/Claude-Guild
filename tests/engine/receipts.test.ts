@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { receiptSummary, type ReceiptMsgRow } from "@/lib/office/engine";
+import { KIND_RECEIPT, receiptSummary, type ReceiptMsgRow } from "@/lib/office/engine";
 
 import { emp, newOffice, seat, sid, stubStorage, tick } from "./helpers";
 
@@ -81,14 +81,14 @@ describe("receipts (engine)", () => {
     const old = row(a, { id: "first" });
     o.setReceipts([old]); // first call: seen, no fanfare
     expect(emp(o, a).tempBubble).toBeNull();
-    expect(o.getView().log.some((l) => l.kind === "ใบเสร็จ")).toBe(false);
+    expect(o.getView().log.some((l) => l.kind === KIND_RECEIPT)).toBe(false);
     const fresh = row(a, { id: "fresh" });
     o.setReceipts([fresh, old]);
     expect(emp(o, a).tempBubble?.e).toBe("📜");
-    const l = o.getView().log.find((x) => x.kind === "ใบเสร็จ")!;
+    const l = o.getView().log.find((x) => x.kind === KIND_RECEIPT)!;
     expect(l.detail).toBe("ได้งาน: ไฟล์ 3 · ฟื้น 1 · commit 1");
     o.setReceipts([fresh, old]); // same ids again: nothing new
-    expect(o.getView().log.filter((x) => x.kind === "ใบเสร็จ")).toHaveLength(1);
+    expect(o.getView().log.filter((x) => x.kind === KIND_RECEIPT)).toHaveLength(1);
   });
 
   it("no bubble when nothing came out, or the receipt is not fresh, or the adventurer is gone", () => {
@@ -101,7 +101,7 @@ describe("receipts (engine)", () => {
     o.setReceipts([row(a, { id: "stale", closedAt: Date.now() - 5 * 60_000 })]);
     expect(emp(o, a).tempBubble?.e).not.toBe("📜");
     o.setReceipts([row("ghost", { id: "g" })]);
-    expect(o.getView().log.filter((x) => x.kind === "ใบเสร็จ")).toHaveLength(0);
+    expect(o.getView().log.filter((x) => x.kind === KIND_RECEIPT)).toHaveLength(0);
   });
 
   it("loads from a snapshot", () => {

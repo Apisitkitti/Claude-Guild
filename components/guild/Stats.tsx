@@ -1,4 +1,5 @@
 import { PERCENT } from "@/lib/constants";
+import { m } from "@/paraglide/messages";
 
 import { isNum } from "./format";
 import type { RpgRow } from "./types";
@@ -29,17 +30,17 @@ export function Stats({ p }: { p: RpgRow }) {
       )}
       <div className="srow">
         {showHp && (
-          <span className="hearts" role="img" aria-label={`หัวใจ ${hp}/${hpMax}`}>
+          <span className="hearts" role="img" aria-label={m.stats_hearts({ hp: hp ?? 0, max: hpMax ?? 0 })}>
             {Array.from({ length: maxHearts }, (_, k) => (k < hearts ? "♥" : "♡")).join("")}
           </span>
         )}
         {isNum(gold) && (
-          <span className="sgold" title="ทอง">
+          <span className="sgold" title={m.stats_gold()}>
             💰 {gold}
           </span>
         )}
         {isNum(kills) && (
-          <span className="skills" title="มอนสเตอร์ที่ฆ่า">
+          <span className="skills" title={m.stats_kills()}>
             ⚔️ {kills}
           </span>
         )}

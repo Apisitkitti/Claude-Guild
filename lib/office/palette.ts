@@ -1,4 +1,6 @@
 import { FNV_OFFSET_BASIS, FNV_PRIME } from "@/lib/constants";
+import { m } from "@/paraglide/messages";
+
 export const PAL = [
   "transparent",
   "#1a1c2c",
@@ -23,13 +25,15 @@ export const PAL = [
 export type AdvClass = "warrior" | "mage" | "rogue" | "cleric" | "ranger";
 export const ADV_CLASSES: AdvClass[] = ["warrior", "mage", "rogue", "cleric", "ranger"];
 
-export const CLASS_LABEL: Record<AdvClass, string> = {
-  warrior: "นักดาบ",
-  mage: "จอมเวท",
-  rogue: "โจร",
-  cleric: "นักบวช",
-  ranger: "นักธนู",
+const CLASS_LABEL: Record<AdvClass, () => string> = {
+  warrior: () => m.class_warrior(),
+  mage: () => m.class_mage(),
+  rogue: () => m.class_rogue(),
+  cleric: () => m.class_cleric(),
+  ranger: () => m.class_ranger(),
 };
+/** class name in the viewer's language (a function, so it follows the locale at call time) */
+export const classLabel = (cls: AdvClass): string => CLASS_LABEL[cls]();
 
 export type MonsterKind = "slime" | "goblin" | "bat" | "skeleton" | "mushroom";
 export const MONSTER_KINDS: MonsterKind[] = ["slime", "goblin", "bat", "skeleton", "mushroom"];
