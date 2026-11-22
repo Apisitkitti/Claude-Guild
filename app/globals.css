@@ -479,9 +479,9 @@ button:active {
   border-color: var(--color-danger-deep);
 }
 .pulse {
-  animation: pulse 0.9s ease-in-out infinite;
+  animation: guild-pulse 0.9s ease-in-out infinite;
 }
-@keyframes pulse {
+@keyframes guild-pulse {
   50% {
     opacity: 0.45;
     transform: scale(0.94);
