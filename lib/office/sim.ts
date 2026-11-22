@@ -28,7 +28,7 @@ const W_EDIT = 22;
 const W_WRITE = 6;
 const W_BASH = 15;
 const W_SMALL = 4; // WebSearch, linear MCP
-const W_AGENT = 9; // Agent: calls squires out of the ally portal
+const W_AGENT = 9; // Agent: calls squires out of the ally gate
 const W_TODO = 5;
 
 // ---- demo pacing: session spawning ----
@@ -102,7 +102,7 @@ const LONG_BREAK_CHANCE = 0.25;
 const LONG_BREAK: Range = { min: 85, max: 110 };
 const SHORT_BREAK: Range = { min: 6, max: 15 };
 
-// ---- demo pacing: ally portal showcase (extra squires + compact trips, so the portal is seen regularly) ----
+// ---- demo pacing: ally gate showcase (extra squires + rest trips, so the ally gate is seen regularly) ----
 const ALLY_START_DELAY: Range = { min: 9, max: 14 };
 const ALLY_GAP: Range = { min: 16, max: 26 };
 const ALLY_SQUIRES: Range = { min: 2, max: 4 };
@@ -199,7 +199,7 @@ export class Simulator {
     this.spawn(this.ally());
   }
 
-  /** demo-only: now and then a calm adventurer calls a few squires out of the ally portal, or goes there to compact */
+  /** demo-only: now and then a calm adventurer calls a few squires out of the ally gate, or walks to the ally gate to rest (compact) */
   private *ally(): Gen {
     yield span(ALLY_START_DELAY);
     let compactNext = false;

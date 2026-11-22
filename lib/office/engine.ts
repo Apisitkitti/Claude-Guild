@@ -2,7 +2,7 @@ import { m } from "@/paraglide/messages";
 
 import { ToolTally, type DungeonStats } from "./dungeon";
 import {
-  ALLY_PORTAL,
+  ALLY_GATE_MOUTH,
   DESK_COUNT,
   DUEL_HALF,
   WORLD_H,
@@ -17,11 +17,11 @@ import {
   duelMidOfDesks,
   monsterSpot,
   routeBoss,
-  routeFromPortal,
+  routeFromAllyGate,
   routeIn,
   routeLeave,
   routePromote,
-  routeToPortal,
+  routeToAllyGate,
   routeToTavern,
   seatPoint,
   squirePoint,
@@ -303,25 +303,26 @@ const FX_MON_DEATH = { dx: 4, lift: 12, n: 14, speed: 50, up: 60, life: 0.7 };
 const FX_BOSS_BURST = { dx: 4, lift: 12, n: 16, speed: 56 };
 const FX_MON_FLEE = { dx: 4, lift: 12, n: 10, speed: 36 };
 
-// -- the two gates: boss walk, ally portal, squires, compact trip
+// -- the two gates: boss walk, ally gate, squires, compact trip
 const BOSS_SPEED = 48;
 const SQUIRE_SPEED = 46;
-/** squires step out of the portal at most this often (sim seconds) so a swarm never piles up */
+/** squires step out of the tent at most this often (sim seconds) so a swarm never piles up */
 const SQUIRE_STAGGER_S = 0.7;
-/** squires walking at once (in + out); the rest wait inside the portal */
+/** squires walking at once (in + out); the rest wait inside the gate */
 const SQUIRE_WALK_MAX = 6;
 const SQUIRE_SLOTS = 2;
 const SQUIRE_SNAP_DIST = 0.5;
-const PORTAL_PULSE_S = 0.6;
-const PORTAL_SWIRL_S = 4;
+const ALLY_DOORS_S = 0.6;
+const ALLY_GLOW_S = 4;
 const COMPACT_REST_S = 3;
 const COMPACT_BUBBLE_S = 2;
 const MANA_FLASH_S = 1.2;
 const GATE_BURST = { n: 12, speed: 40, up: 30, life: 0.7 };
-const PORTAL_BURST = { n: 8, speed: 26, up: 20, life: 0.6, lift: 6 };
-const PORTAL_COLS = ["#7fe7ee", "#4aa3ff", "#ffffff"];
+const GATE_PUFF = { n: 6, speed: 18, up: 14, life: 0.5, lift: 3 };
+const ARRIVE_SPARKS = { n: 8, speed: 24, up: 30, life: 0.6, lift: 6 };
+const DUST_PUFF_COLS = ["#d8c8a0", "#b59a6a", "#f2e8cf"];
 const GATE_COLS = ["#ff5a5a", "#ffb870", "#6a2a7a"];
-const MANA_COLS = ["#4aa3ff", "#a98be0", "#ffd75a", "#7fe7ee"];
+const WARM_COLS = ["#f2c14e", "#ffe9a0", "#ffb050", "#ffffff"];
 const MANA_REFILL_BURST = { n: 10, speed: 30, lift: 10 };
 const LEAVER_MAX = 12;
 
@@ -488,9 +489,9 @@ export type EState =
   | "FROM_COFFEE"
   | "LEAVING"
   | "DUEL"
-  | "TO_PORTAL"
-  | "IN_PORTAL"
-  | "FROM_PORTAL";
+  | "TO_ALLY_GATE"
+  | "IN_ALLY_GATE"
+  | "FROM_ALLY_GATE";
 
 // ---- territory duels ----
 export type DuelStyle = "sword" | "magic" | "arrow";
@@ -811,7 +812,7 @@ const DUST_COLS = ["#d8c9a0", "#b59a6a", "#ffffff"];
 const styleOf = (cls: string): DuelStyle =>
   cls === "mage" || cls === "cleric" ? "magic" : cls === "ranger" ? "arrow" : "sword";
 
-/** wait = still inside the ally portal; snap = placed straight at its spot (no walk); in = walking out to its master; here = standing at its spot */
+/** wait = still inside the ally gate; snap = placed straight at its spot (no walk); in = walking out to its master; here = standing at its spot */
 export type InternPhase = "wait" | "snap" | "in" | "here";
 export interface Intern {
   id: string;
@@ -830,7 +831,7 @@ export interface Intern {
   phase: InternPhase;
   path: Pt[];
 }
-/** a squire that is done (SubagentStop) and walks back into the ally portal */
+/** a squire that is done (SubagentStop) and walks back into the ally gate */
 export interface Leaver {
   id: string;
   x: number;
@@ -855,8 +856,8 @@ const newIntern = (id: string, label: string, clock: number, born = clock, phase
   act: "idle",
   since: clock,
   count: 0,
-  x: ALLY_PORTAL.x,
-  y: ALLY_PORTAL.y,
+  x: ALLY_GATE_MOUTH.x,
+  y: ALLY_GATE_MOUTH.y,
   face: 1,
   phase,
   path: [],
@@ -1278,12 +1279,12 @@ export class Office {
   gateLit = false;
   /** bosses on the field right now (the dungeon gate glows red while > 0) */
   bossAlive = 0;
-  /** squires walking back into the ally portal */
+  /** squires walking back into the ally gate */
   readonly leavers: Leaver[] = [];
-  /** the portal flashes until this clock time (a squire passed) / swirls in mana colours (a compact trip) */
-  portalPulseUntil = 0;
-  portalSwirlUntil = 0;
-  private portalNextAt = 0;
+  /** the ally gate doors stand open until this clock time (someone passes) / the doorway glows (a compact event) */
+  allyDoorsUntil = 0;
+  allyGlowUntil = 0;
+  private allyNextAt = 0;
   private stats = {
     since: Date.now(),
     entered: 0,
@@ -1760,9 +1761,9 @@ export class Office {
     this.flash = 0;
     this.leavers.length = 0;
     this.bossAlive = 0;
-    this.portalPulseUntil = 0;
-    this.portalSwirlUntil = 0;
-    this.portalNextAt = 0;
+    this.allyDoorsUntil = 0;
+    this.allyGlowUntil = 0;
+    this.allyNextAt = 0;
     this.stats = { since: Date.now(), entered: 0, left: 0, monsters: 0, bosses: 0, longestBossS: 0, waitS: 0 };
     this.tools.clear();
     this.statsVer++;
@@ -1794,10 +1795,10 @@ export class Office {
         compacting.x,
         compacting.y + MANA_REFILL_BURST.lift,
         MANA_REFILL_BURST.n,
-        MANA_COLS,
+        WARM_COLS,
         MANA_REFILL_BURST.speed,
         0,
-        PORTAL_BURST.life,
+        ARRIVE_SPARKS.life,
         1,
         true,
       );
@@ -2717,9 +2718,9 @@ export class Office {
       case "FROM_COFFEE":
       case "DRINK":
         return "coffee";
-      case "TO_PORTAL":
-      case "IN_PORTAL":
-      case "FROM_PORTAL":
+      case "TO_ALLY_GATE":
+      case "IN_ALLY_GATE":
+      case "FROM_ALLY_GATE":
         return "compact";
     }
     if (emp.act !== "handup")
@@ -2727,15 +2728,15 @@ export class Office {
     return emp.act;
   }
 
-  /** walking to / from the tavern or the ally portal, or resting in it */
+  /** walking to / from the tavern or the ally gate, or in its doorway */
   private onTrip(emp: Employee): boolean {
     switch (emp.state) {
       case "TO_COFFEE":
       case "DRINK":
       case "FROM_COFFEE":
-      case "TO_PORTAL":
-      case "IN_PORTAL":
-      case "FROM_PORTAL":
+      case "TO_ALLY_GATE":
+      case "IN_ALLY_GATE":
+      case "FROM_ALLY_GATE":
         return true;
       default:
         return false;
@@ -2759,12 +2760,12 @@ export class Office {
         return m.status_drink();
       case "DUEL":
         return m.status_duel();
-      case "TO_PORTAL":
-        return m.status_to_portal();
-      case "IN_PORTAL":
-        return m.status_in_portal();
-      case "FROM_PORTAL":
-        return m.status_from_portal();
+      case "TO_ALLY_GATE":
+        return m.status_to_ally_gate();
+      case "IN_ALLY_GATE":
+        return m.status_in_ally_gate();
+      case "FROM_ALLY_GATE":
+        return m.status_from_ally_gate();
     }
     if (emp.hurtUntil > this.clock) return m.status_hurt();
     if (emp.boss && emp.act !== "handup") return m.status_boss();
@@ -3077,7 +3078,7 @@ export class Office {
         emp.y = target.y;
         rem -= dist;
         emp.path.shift();
-        if (emp.state === "TO_COFFEE" || emp.state === "TO_PORTAL") emp.trail.push(target);
+        if (emp.state === "TO_COFFEE" || emp.state === "TO_ALLY_GATE") emp.trail.push(target);
         if (target.wait && emp.path.length) {
           emp.holdUntil = this.clock + target.wait;
           if (emp.state === "LEAVING") emp.lootAt = this.clock;
@@ -3110,35 +3111,34 @@ export class Office {
         if (this.move(emp, dt)) this.sit(emp);
         break;
       case "FROM_COFFEE":
-      case "FROM_PORTAL":
+      case "FROM_ALLY_GATE":
         if (this.move(emp, dt)) this.sit(emp);
         break;
-      case "TO_PORTAL":
+      case "TO_ALLY_GATE":
         if (this.move(emp, dt)) {
-          emp.state = "IN_PORTAL";
+          emp.state = "IN_ALLY_GATE";
           emp.stateSince = this.clock;
           emp.facing = 1;
-          this.portalPulseUntil = this.clock + PORTAL_PULSE_S;
+          this.allyDoorsUntil = this.clock + COMPACT_REST_S + ALLY_DOORS_S; // the doors stand open while they rest
           this.burst(
-            ALLY_PORTAL.x,
-            ALLY_PORTAL.y - PORTAL_BURST.lift,
-            PORTAL_BURST.n,
-            MANA_COLS,
-            PORTAL_BURST.speed,
-            -PORTAL_BURST.up,
-            PORTAL_BURST.life,
+            ALLY_GATE_MOUTH.x,
+            ALLY_GATE_MOUTH.y - ARRIVE_SPARKS.lift,
+            ARRIVE_SPARKS.n,
+            WARM_COLS,
+            ARRIVE_SPARKS.speed,
+            ARRIVE_SPARKS.up,
+            ARRIVE_SPARKS.life,
             1,
             true,
           );
         }
         break;
-      case "IN_PORTAL":
+      case "IN_ALLY_GATE":
         if (this.clock - emp.stateSince >= COMPACT_REST_S) {
-          emp.state = "FROM_PORTAL";
+          emp.state = "FROM_ALLY_GATE";
           emp.stateSince = this.clock;
           emp.path = [...emp.trail].reverse();
           emp.trail = [];
-          this.portalPulseUntil = this.clock + PORTAL_PULSE_S;
         }
         break;
       case "DUEL":
@@ -3230,7 +3230,7 @@ export class Office {
         emp.bossFace = -1;
       }
       for (const intern of emp.interns.values()) if (intern.phase === "in") intern.phase = "snap";
-      if (emp.state === "TO_PORTAL" || emp.state === "IN_PORTAL" || emp.state === "FROM_PORTAL") {
+      if (emp.state === "TO_ALLY_GATE" || emp.state === "IN_ALLY_GATE" || emp.state === "FROM_ALLY_GATE") {
         emp.path = [];
         emp.trail = [];
         this.sit(emp);
@@ -3708,7 +3708,7 @@ export class Office {
       return;
     }
 
-    // a hand going up is shown at once, even mid-walk (tavern or portal): the walk turns back, the rest queues as before
+    // a hand going up is shown at once, even mid-walk (tavern or ally gate): the walk turns back, the rest queues as before
     if (this.isHandupEvt(evt) && this.cutTrip(emp)) {
       this.setAct(emp, "handup", "❗");
       return;
@@ -3733,9 +3733,9 @@ export class Office {
         emp.tempBubble = null;
         this.enqueue(emp, evt);
         break;
-      case "TO_PORTAL":
-      case "IN_PORTAL": // the session is moving again: cut the trip short and walk back
-        emp.state = "FROM_PORTAL";
+      case "TO_ALLY_GATE":
+      case "IN_ALLY_GATE": // the session is moving again: cut the trip short and walk back
+        emp.state = "FROM_ALLY_GATE";
         emp.path = [...emp.trail].reverse();
         emp.trail = [];
         emp.tempBubble = null;
@@ -3755,19 +3755,19 @@ export class Office {
       (HANDUP_NOTIFS.has(str(evt.notification_type)) || str(evt.message).toLowerCase().includes("permission"))
     );
   }
-  /** Turn a tavern / portal walk around (back to the seat). True when the adventurer is on such a trip. */
+  /** Turn a tavern / ally gate walk around (back to the seat). True when the adventurer is on such a trip. */
   private cutTrip(emp: Employee): boolean {
     switch (emp.state) {
       case "TO_COFFEE":
       case "DRINK":
         emp.state = "FROM_COFFEE";
         break;
-      case "TO_PORTAL":
-      case "IN_PORTAL":
-        emp.state = "FROM_PORTAL";
+      case "TO_ALLY_GATE":
+      case "IN_ALLY_GATE":
+        emp.state = "FROM_ALLY_GATE";
         break;
       case "FROM_COFFEE":
-      case "FROM_PORTAL":
+      case "FROM_ALLY_GATE":
         return true;
       default:
         return false;
@@ -4143,8 +4143,8 @@ export class Office {
       );
   }
 
-  // ---------- compact trip (ally portal) ----------
-  /** can this adventurer walk to the portal now: seated, no fight in flight, nobody waiting on the user */
+  // ---------- compact trip (ally gate) ----------
+  /** can this adventurer walk to the ally gate now: seated, no fight in flight, nobody waiting on the user */
   private compactReady(emp: Employee): boolean {
     return (
       emp.state === "SEATED" &&
@@ -4158,21 +4158,21 @@ export class Office {
   }
 
   /**
-   * PreCompact: the portal swirls in mana colours. A free adventurer walks there, rests inside for a moment and walks
+   * PreCompact: the ally gate's doorway glows. A free adventurer walks there, rests inside for a moment and walks
    * back (any event that arrives cuts the rest short). A busy one (tool in flight, boss, duel, hand up) stays put and
-   * just gets the 🌀 bubble. The mana bar is never touched: it follows the next real context reading.
+   * just gets the 💤 bubble. The mana bar is never touched: it follows the next real context reading.
    */
   private onCompact(emp: Employee, canWalk: boolean) {
     const walk = canWalk && !this.reducedMotion && this.compactReady(emp);
-    this.portalSwirlUntil = this.clock + PORTAL_SWIRL_S;
+    this.allyGlowUntil = this.clock + ALLY_GLOW_S;
     emp.compactPending = true;
     this.setAct(emp, "thinking");
     if (!walk) {
-      emp.tempBubble = { e: "🌀", until: this.clock + COMPACT_BUBBLE_S };
+      emp.tempBubble = { e: "💤", until: this.clock + COMPACT_BUBBLE_S };
       return;
     }
-    const route = routeToPortal(emp.x, emp.y);
-    emp.state = "TO_PORTAL";
+    const route = routeToAllyGate(emp.x, emp.y);
+    emp.state = "TO_ALLY_GATE";
     emp.stateSince = this.clock;
     emp.trail = [{ x: emp.x, y: emp.y }];
     emp.path = route;
@@ -4186,7 +4186,7 @@ export class Office {
     return emp.deskIdx >= 0 ? squirePoint(emp.deskIdx, slot) : campSquirePoint(emp.slot, slot);
   }
 
-  /** squires that were standing out walk back into the portal (they never pile up: capped, the rest just vanish) */
+  /** squires that were standing out walk back into the ally gate (they never pile up: capped, the rest just vanish) */
   private sendSquiresHome(emp: Employee) {
     if (this.reducedMotion || this.isHidden(emp) || (emp.deskIdx < 0 && emp.slot < 0)) return;
     let slot = 0;
@@ -4203,7 +4203,7 @@ export class Office {
       x: intern.x,
       y: intern.y,
       face: intern.face,
-      path: routeToPortal(intern.x, intern.y),
+      path: routeToAllyGate(intern.x, intern.y),
     });
   }
   private removeIntern(emp: Employee, id: string) {
@@ -4217,30 +4217,30 @@ export class Office {
     emp.interns.delete(id);
   }
 
-  private vanishAtPortal() {
-    this.portalPulseUntil = this.clock + PORTAL_PULSE_S;
+  private gatePuff() {
+    this.allyDoorsUntil = this.clock + ALLY_DOORS_S;
     this.burst(
-      ALLY_PORTAL.x,
-      ALLY_PORTAL.y - PORTAL_BURST.lift,
-      PORTAL_BURST.n,
-      PORTAL_COLS,
-      PORTAL_BURST.speed,
-      -PORTAL_BURST.up,
-      PORTAL_BURST.life,
+      ALLY_GATE_MOUTH.x,
+      ALLY_GATE_MOUTH.y - GATE_PUFF.lift,
+      GATE_PUFF.n,
+      DUST_PUFF_COLS,
+      GATE_PUFF.speed,
+      GATE_PUFF.up,
+      GATE_PUFF.life,
       1,
       true,
     );
   }
 
-  /** Squires step out of the ally portal (staggered, capped) and walk to their master; finished ones walk back in. */
+  /** Squires step out of the ally gate (staggered, capped) and walk to their master; finished ones walk back in. */
   private updateSquires(dt: number) {
     let walking = this.leavers.length;
     for (const emp of this.employees.values()) {
       if (emp.state === "LEAVING" || (emp.deskIdx < 0 && emp.slot < 0)) continue;
-      const calm = this.reducedMotion || this.isHidden(emp); // no walk, no portal effects
+      const calm = this.reducedMotion || this.isHidden(emp); // no walk, no gate effects
       let slot = 0;
       for (const intern of emp.interns.values()) {
-        if (slot >= SQUIRE_SLOTS) break; // the rest wait inside the portal (the +N badge counts them)
+        if (slot >= SQUIRE_SLOTS) break; // the rest wait inside the gate (the +N badge counts them)
         const target = this.squireSpot(emp, slot++);
         if (intern.phase === "in") walking++;
         else if (intern.phase === "snap" || (intern.phase === "here" && calm)) {
@@ -4249,14 +4249,14 @@ export class Office {
           intern.phase = "here";
         } else if (intern.phase === "wait") {
           if (calm) intern.phase = "snap";
-          else if (this.clock >= this.portalNextAt && walking < SQUIRE_WALK_MAX) {
-            intern.x = ALLY_PORTAL.x;
-            intern.y = ALLY_PORTAL.y;
-            intern.path = routeFromPortal(target.x, target.y);
+          else if (this.clock >= this.allyNextAt && walking < SQUIRE_WALK_MAX) {
+            intern.x = ALLY_GATE_MOUTH.x;
+            intern.y = ALLY_GATE_MOUTH.y;
+            intern.path = routeFromAllyGate(target.x, target.y);
             intern.phase = "in";
             walking++;
-            this.portalNextAt = this.clock + SQUIRE_STAGGER_S;
-            this.vanishAtPortal();
+            this.allyNextAt = this.clock + SQUIRE_STAGGER_S;
+            this.gatePuff();
           }
         } else if (Math.hypot(target.x - intern.x, target.y - intern.y) > SQUIRE_SNAP_DIST) {
           // standing, but its slot moved (a squire before it left, or the master changed spot): walk over
@@ -4272,7 +4272,7 @@ export class Office {
       this.stepWalker(leaver, dt);
       if (!leaver.path.length) {
         this.leavers.splice(i, 1);
-        this.vanishAtPortal();
+        this.gatePuff();
       }
     }
   }

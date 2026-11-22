@@ -20,7 +20,7 @@ const ACT_CHIP: Record<RosterAct, { cls: string; label: () => string }> = {
   mcp: { cls: "c-portal", label: () => m.act_mcp() },
   sticky: { cls: "c-notes", label: () => m.act_sticky() },
   coffee: { cls: "c-tavern", label: () => m.act_coffee() },
-  compact: { cls: "c-portal", label: () => m.act_compact() },
+  compact: { cls: "c-tavern", label: () => m.act_compact() },
   stretch: { cls: "c-tavern", label: () => m.act_stretch() },
   enter: { cls: "c-grey", label: () => m.act_enter() },
   leave: { cls: "c-grey", label: () => m.act_leave() },

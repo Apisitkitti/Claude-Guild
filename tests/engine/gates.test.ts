@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Employee, Office } from "@/lib/office/engine";
 import {
-  ALLY_PORTAL,
+  ALLY_BRIDGE_X,
   BRIDGE_X,
   DESK_COUNT,
   GATE_MOUTH,
@@ -11,9 +11,10 @@ import {
   WORLD_W,
   monsterSpot,
   routeBoss,
-  routeFromPortal,
-  routeToPortal,
+  routeFromAllyGate,
+  routeToAllyGate,
   seatPoint,
+  ALLY_GATE_MOUTH,
   squirePoint,
   type Pt,
 } from "@/lib/office/layout";
@@ -50,14 +51,14 @@ const sampleAlong = (start: Pt, path: Pt[]): Pt[] => {
   }
   return out;
 };
-const expectDryAndInside = (points: Pt[]) => {
+const expectDryAndInside = (points: Pt[], bridgeX = BRIDGE_X) => {
   for (const point of points) {
     expect(point.x).toBeGreaterThanOrEqual(HALL_W);
     expect(point.x).toBeLessThanOrEqual(WORLD_W);
     expect(point.y).toBeGreaterThanOrEqual(0);
     expect(point.y).toBeLessThanOrEqual(WORLD_H);
     if (point.y > WATER_Y0 && point.y < WATER_Y1)
-      expect(Math.abs(point.x - BRIDGE_X)).toBeLessThanOrEqual(BRIDGE_HALF_W);
+      expect(Math.abs(point.x - bridgeX)).toBeLessThanOrEqual(BRIDGE_HALF_W);
   }
 };
 
@@ -146,22 +147,28 @@ describe("dungeon gate: boss emergence", () => {
   });
 });
 
-describe("ally portal: squires", () => {
-  it("portal routes stay on dry ground and reverse each other", () => {
+describe("ally gate: squires", () => {
+  it("ally gate routes stay on dry ground and reverse each other", () => {
     for (let desk = 0; desk < DESK_COUNT; desk++) {
       for (const slot of [0, 1]) {
         const spot = squirePoint(desk, slot);
-        const there = routeToPortal(spot.x, spot.y);
-        expect(there[there.length - 1]).toEqual(ALLY_PORTAL);
-        expectDryAndInside(sampleAlong(spot, there));
-        const back = routeFromPortal(spot.x, spot.y);
+        const there = routeToAllyGate(spot.x, spot.y);
+        expect(there[there.length - 1]).toEqual(ALLY_GATE_MOUTH);
+        expectDryAndInside(sampleAlong(spot, there), ALLY_BRIDGE_X);
+        const back = routeFromAllyGate(spot.x, spot.y);
         expect(back[back.length - 1]).toEqual({ x: spot.x, y: spot.y });
-        expectDryAndInside(sampleAlong(ALLY_PORTAL, back));
+        expectDryAndInside(sampleAlong(ALLY_GATE_MOUTH, back), ALLY_BRIDGE_X);
+        // the river is crossed on the ally bridge, once going out
+        expect(
+          sampleAlong(ALLY_GATE_MOUTH, back).some(
+            (point) => Math.abs(point.x - ALLY_BRIDGE_X) < 1 && point.y > WATER_Y0 && point.y < WATER_Y1,
+          ),
+        ).toBe(true);
       }
     }
   });
 
-  it("a squire steps out of the portal, walks to its master's spot and stands there", () => {
+  it("a squire steps out of the ally gate, walks to its master's spot and stands there", () => {
     const office = newOffice();
     const id = sid();
     const employee = seat(office, id);
@@ -170,7 +177,7 @@ describe("ally portal: squires", () => {
     expect(squire.phase).toBe("wait");
     tick(office, 0.05);
     expect(squire.phase).toBe("in");
-    expect(dist({ x: squire.x, y: squire.y }, ALLY_PORTAL)).toBeLessThan(3);
+    expect(dist({ x: squire.x, y: squire.y }, ALLY_GATE_MOUTH)).toBeLessThan(3);
     const spot = squirePoint(employee.deskIdx, 0);
     for (let i = 0; i < 600 && squire.phase === "in"; i++) tick(office, 0.05);
     expect(squire.phase).toBe("here");
@@ -180,7 +187,7 @@ describe("ally portal: squires", () => {
     expect(squire.act).toBe("reading");
   });
 
-  it("SubagentStop sends it back into the portal, where it vanishes", () => {
+  it("SubagentStop sends it back into the ally gate, where it vanishes", () => {
     const office = newOffice();
     const id = sid();
     const employee = seat(office, id);
@@ -192,19 +199,19 @@ describe("ally portal: squires", () => {
     expect(office.getView().roster[0].interns).toBe(0);
     expect(office.leavers.length).toBe(1);
     const leaver = office.leavers[0];
-    expect(leaver.path[leaver.path.length - 1]).toEqual(ALLY_PORTAL);
+    expect(leaver.path[leaver.path.length - 1]).toEqual(ALLY_GATE_MOUTH);
     const seen: Pt[] = [];
     for (let i = 0; i < 600 && office.leavers.length; i++) {
       tick(office, 0.05);
       seen.push({ x: leaver.x, y: leaver.y });
     }
     expect(office.leavers.length).toBe(0);
-    expect(office.portalPulseUntil).toBeGreaterThan(0);
-    expectDryAndInside(seen);
-    expect(dist(seen[seen.length - 1], ALLY_PORTAL)).toBeLessThan(1);
+    expect(office.allyDoorsUntil).toBeGreaterThan(0);
+    expectDryAndInside(seen, ALLY_BRIDGE_X);
+    expect(dist(seen[seen.length - 1], ALLY_GATE_MOUTH)).toBeLessThan(1);
   });
 
-  it("a squire that has not left the portal yet just disappears on SubagentStop", () => {
+  it("a squire that has not left the ally gate yet just disappears on SubagentStop", () => {
     const office = newOffice();
     const id = sid();
     seat(office, id);
@@ -213,7 +220,7 @@ describe("ally portal: squires", () => {
     expect(office.leavers.length).toBe(0);
   });
 
-  it("a swarm never piles up: staggered exits, a cap on walkers, extras wait inside the portal", () => {
+  it("a swarm never piles up: staggered exits, a cap on walkers, extras wait inside the ally gate", () => {
     const office = newOffice();
     const id = sid();
     const employee = seat(office, id);
@@ -283,28 +290,28 @@ describe("ally portal: squires", () => {
   });
 });
 
-describe("ally portal: compact trip (PreCompact)", () => {
-  it("walks to the portal, rests, walks back to the seat; the swirl runs and the bubble shows", () => {
+describe("ally gate: compact trip (PreCompact)", () => {
+  it("walks to the ally gate, rests in the doorway, walks back to the seat; the glow runs and the 💤 bubble shows", () => {
     const office = newOffice();
     const id = sid();
     const employee = seat(office, id);
     const seatSpot = seatPoint(employee.deskIdx, employee.slot);
     office.event(ev(id, "PreCompact", { trigger: "auto" }));
-    expect(employee.state).toBe("TO_PORTAL");
-    expect(office.portalSwirlUntil).toBeGreaterThan(office.clock);
-    expect(office.statusOf(employee)).toContain("พอร์ทัล");
+    expect(employee.state).toBe("TO_ALLY_GATE");
+    expect(office.allyGlowUntil).toBeGreaterThan(office.clock);
+    expect(office.statusOf(employee)).toContain("ประตูพันธมิตร");
     expect(office.getView().roster[0].act).toBe("compact");
     const seen: Pt[] = [];
-    for (let i = 0; i < 1200 && employee.state === "TO_PORTAL"; i++) {
+    for (let i = 0; i < 1200 && employee.state === "TO_ALLY_GATE"; i++) {
       tick(office, 0.05);
       seen.push({ x: employee.x, y: employee.y });
     }
-    expect(employee.state).toBe("IN_PORTAL");
-    expect({ x: employee.x, y: employee.y }).toEqual(ALLY_PORTAL);
-    expectDryAndInside(seen);
+    expect(employee.state).toBe("IN_ALLY_GATE");
+    expect({ x: employee.x, y: employee.y }).toEqual(ALLY_GATE_MOUTH);
+    expectDryAndInside(seen, ALLY_BRIDGE_X);
     const arrivedAt = office.clock;
     tick(office, 2.5);
-    expect(employee.state).toBe("IN_PORTAL"); // still resting
+    expect(employee.state).toBe("IN_ALLY_GATE"); // still resting
     for (let i = 0; i < 1200 && employee.state !== "SEATED"; i++) tick(office, 0.05);
     expect(employee.state).toBe("SEATED");
     expect(office.clock - arrivedAt).toBeGreaterThanOrEqual(3);
@@ -332,9 +339,9 @@ describe("ally portal: compact trip (PreCompact)", () => {
     const employee = seat(office, id);
     office.event(ev(id, "PreCompact"));
     tick(office, 1);
-    expect(employee.state).toBe("TO_PORTAL");
+    expect(employee.state).toBe("TO_ALLY_GATE");
     office.event(pre(id, "Read", "t9"));
-    expect(employee.state).toBe("FROM_PORTAL");
+    expect(employee.state).toBe("FROM_ALLY_GATE");
     expect(employee.queue.length).toBe(1);
     for (let i = 0; i < 1200 && employee.state !== "SEATED"; i++) tick(office, 0.05);
     expect(employee.state).toBe("SEATED");
@@ -342,15 +349,15 @@ describe("ally portal: compact trip (PreCompact)", () => {
     expect(employee.queue.length).toBe(0);
   });
 
-  it("a session with a tool in flight (busy) stays at its spot: swirl + 🌀 bubble only", () => {
+  it("a session with a tool in flight (busy) stays at its spot: swirl + 💤 bubble only", () => {
     const office = newOffice();
     const id = sid();
     const employee = seat(office, id);
     office.event(pre(id, "Bash", "t1"));
     office.event(ev(id, "PreCompact"));
     expect(employee.state).toBe("SEATED");
-    expect(employee.tempBubble?.e).toBe("🌀");
-    expect(office.portalSwirlUntil).toBeGreaterThan(office.clock);
+    expect(employee.tempBubble?.e).toBe("💤");
+    expect(office.allyGlowUntil).toBeGreaterThan(office.clock);
     tick(office, 1);
     expect(employee.state).toBe("SEATED");
     expect(employee.pending.size).toBe(1);
@@ -365,7 +372,7 @@ describe("ally portal: compact trip (PreCompact)", () => {
     office.event(ev(id, "PreCompact"));
     expect(employee.state).toBe("SEATED");
     expect(employee.boss).not.toBeNull();
-    expect(employee.tempBubble?.e).toBe("🌀");
+    expect(employee.tempBubble?.e).toBe("💤");
   });
 
   it("someone with a hand up (waiting on you) does not walk away", () => {
@@ -385,7 +392,7 @@ describe("ally portal: compact trip (PreCompact)", () => {
     const employee = seat(office, id);
     office.event(ev(id, "PreCompact"));
     expect(employee.state).toBe("SEATED");
-    expect(employee.tempBubble?.e).toBe("🌀");
+    expect(employee.tempBubble?.e).toBe("💤");
   });
 
   it("leaving mid-trip still works", () => {
@@ -517,19 +524,19 @@ describe("dungeon ledger counters", () => {
 describe("review fixes", () => {
   const permission = (id: string) => ev(id, "PermissionRequest", { tool_name: "Bash" });
 
-  it("a hand going up during a portal walk shows at once and turns the walk around", () => {
+  it("a hand going up during a ally gate walk shows at once and turns the walk around", () => {
     const office = newOffice();
     const id = sid();
     const employee = seat(office, id);
     office.event(ev(id, "PreCompact"));
     tick(office, 1);
-    expect(employee.state).toBe("TO_PORTAL");
+    expect(employee.state).toBe("TO_ALLY_GATE");
     office.event(permission(id));
     expect(employee.act).toBe("handup");
-    expect(employee.state).toBe("FROM_PORTAL");
+    expect(employee.state).toBe("FROM_ALLY_GATE");
     expect(office.waitingIds()).toEqual([id]);
     expect(office.getView().roster[0].act).toBe("handup"); // beats "compact"
-    expect(office.statusOf(employee)).not.toContain("พอร์ทัล");
+    expect(office.statusOf(employee)).not.toContain("ประตูพันธมิตร");
     for (let i = 0; i < 1200 && employee.state !== "SEATED"; i++) tick(office, 0.05);
     expect(employee.state).toBe("SEATED");
     expect(employee.act).toBe("handup");
@@ -555,10 +562,10 @@ describe("review fixes", () => {
     tick(office, 1);
     office.loadSnapshot({ sessions: [{ session_id: id, waiting: true }] });
     expect(employee.act).toBe("handup");
-    expect(employee.state).toBe("FROM_PORTAL");
+    expect(employee.state).toBe("FROM_ALLY_GATE");
   });
 
-  it("reduced motion switched on mid-walk snaps boss, squires, leavers and the portal trip", () => {
+  it("reduced motion switched on mid-walk snaps boss, squires, leavers and the ally gate trip", () => {
     const office = newOffice();
     const id = sid();
     const employee = seat(office, id);
@@ -582,7 +589,7 @@ describe("review fixes", () => {
     tick(office, 0.1);
     office.event(ev(other, "PreCompact"));
     tick(office, 1);
-    expect(traveller.state).toBe("TO_PORTAL");
+    expect(traveller.state).toBe("TO_ALLY_GATE");
     office.reducedMotion = true;
     tick(office, 0.1);
     expect(traveller.state).toBe("SEATED");
@@ -601,7 +608,7 @@ describe("review fixes", () => {
     expect(employee.interns.size).toBe(1);
   });
 
-  it("a filtered-out (hidden) master's squires leave without portal effects", () => {
+  it("a filtered-out (hidden) master's squires leave without gate effects", () => {
     const office = newOffice();
     const id = sid();
     const employee = seat(office, id);

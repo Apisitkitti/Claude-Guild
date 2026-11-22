@@ -14,7 +14,9 @@ import {
   type Office,
 } from "./engine";
 import {
-  ALLY_PORTAL,
+  ALLY_BRIDGE_X,
+  ALLY_GATE,
+  ALLY_TORCHES,
   BACK_WALL_H,
   BAR,
   BRIDGE_X,
@@ -25,8 +27,6 @@ import {
   DUNGEON,
   DUNGEON_HIT,
   GATE_OPEN,
-  PORTAL_RX,
-  PORTAL_RY,
   WORLD_H,
   HALL_W,
   HEARTH,
@@ -196,8 +196,13 @@ const drawStream = (ctx: Ctx) => {
     rect(ctx, "#d8c58a", x, yc + 5, 1, 1);
     if (rand() < 0.08) rect(ctx, "#cfe9ff", x, yc - 2 + ((rand() * 5) | 0), 2, 1);
   }
-  // bridge (north-south)
-  const bx = BRIDGE_X;
+  drawBridge(ctx, BRIDGE_X);
+  drawBridge(ctx, ALLY_BRIDGE_X);
+  drawAllyTrail(ctx);
+};
+
+/** a wooden bridge over the river (north-south) and the start of the dirt trail beyond it */
+const drawBridge = (ctx: Ctx, bx: number) => {
   rect(ctx, "#5a3a26", bx - 7, 52, 14, 21);
   for (let y = 53; y < 72; y += 3) {
     rect(ctx, y % 6 === 2 ? WD.light : "#8f6040", bx - 6, y, 12, 3);
@@ -216,6 +221,25 @@ const drawStream = (ctx: Ctx) => {
     rect(ctx, DIRT.base, bx - half, y, half * 2, 1);
     ctx.globalAlpha = 1;
   }
+};
+
+/** the ally bridge's trail: straight down to the trail row, then a diagonal onto the branch road */
+const drawAllyTrail = (ctx: Ctx) => {
+  const bx = ALLY_BRIDGE_X;
+  for (let y = 73; y < 92; y++) {
+    rect(ctx, DIRT.edge, bx - 4, y, 1, 1);
+    rect(ctx, DIRT.base, bx - 3, y, 7, 1);
+    rect(ctx, DIRT.edge, bx + 4, y, 1, 1);
+  }
+  const steps = 24;
+  for (let i = 0; i <= steps; i++) {
+    const x = bx + ((136 - bx) * i) / steps,
+      y = 92 + ((118 - 92) * i) / steps;
+    rect(ctx, DIRT.edge, x - 4, y, 9, 2);
+    rect(ctx, DIRT.base, x - 3, y, 7, 2);
+  }
+  rect(ctx, DIRT.b, bx - 1, 80, 3, 1);
+  rect(ctx, DIRT.a, bx + 1, 88, 2, 1);
 };
 
 const drawDungeon = (ctx: Ctx) => {
@@ -659,12 +683,10 @@ const drawWildDecor = (ctx: Ctx) => {
   const items: { n: string; x: number; y: number }[] = [];
   const add = (propName: string, x: number, y: number) => items.push({ n: propName, x, y });
   for (const [x, y] of [
-    [152, 80],
     [206, 78],
     [262, 80],
     [312, 78],
     [374, 84],
-    [140, 62],
   ] as const)
     add("tree", x, y);
   for (const [x, y] of [
@@ -678,7 +700,6 @@ const drawWildDecor = (ctx: Ctx) => {
   add("sign", 142, 112);
   add("rock", 154, 150);
   add("rock", 380, 150);
-  add("bush", 190, 148);
   add("bush", 262, 146);
   add("bush", 330, 148);
   add("bush", 372, 128);
@@ -928,6 +949,7 @@ const drawLights = (ctx: Ctx, time: number, office: Office) => {
     blitB(ctx, "torch" + ((Math.floor(time * 6) + i) % 2), point.x + sx, point.y + sy);
     if (dungeonTorch && boss) drawTorchFlare(ctx, point.x + sx, point.y + sy, time, office.reducedMotion, i);
   });
+  ALLY_TORCHES.forEach((point, i) => blitB(ctx, "torch" + ((Math.floor(time * 6) + i + 1) % 2), point.x, point.y));
   // dungeon glow: purple normally, red while a boss is out (static under reduced motion)
   if (boss) {
     ctx.globalAlpha = office.reducedMotion ? 0.55 : 0.45 + 0.2 * Math.sin(time * 9);
@@ -967,94 +989,96 @@ const drawGateBrackets = (ctx: Ctx) => {
   }
 };
 
-// ---------- the ally portal ----------
-const MANA_RUNES = ["#4aa3ff", "#a98be0", "#ffd75a", "#7fe7ee", "#ff9ad5"];
-const PORTAL_RUNES = 8;
-/** pixel ellipse filled with one colour, centred on (cx, cy) */
-const fillEllipse = (ctx: Ctx, color: string, cx: number, cy: number, rx: number, ry: number) => {
-  for (let dy = -ry; dy <= ry; dy++) {
-    const half = Math.round(rx * Math.sqrt(Math.max(0, 1 - (dy / (ry + 0.6)) * (dy / (ry + 0.6)))));
-    rect(ctx, color, cx - half, cy + dy, half * 2 + 1, 1);
-  }
-};
-const drawPortalPylon = (ctx: Ctx, px: number, py: number, glow: string) => {
-  rect(ctx, ST.dark, px - 1, py - 7, 3, 8);
-  rect(ctx, ST.hi, px - 1, py - 7, 1, 8);
-  rect(ctx, INK, px + 1, py - 7, 1, 8);
-  rect(ctx, glow, px, py - 10, 1, 3);
-  rect(ctx, "#ffffff", px, py - 10, 1, 1);
-};
-/** Friendly teal rune circle where squires come and go and adventurers go to compact their memory. Drawn under every entity. */
-const drawAllyPortal = (ctx: Ctx, office: Office, time: number) => {
-  const { x: cx, y: cy } = ALLY_PORTAL;
-  const swirl = office.portalSwirlUntil > time;
-  const pulse = office.portalPulseUntil > time;
-  const still = office.reducedMotion;
-  const spin = still ? 0.6 : time * (swirl ? 5 : 1.1);
-  const manaColor = (i: number) => MANA_RUNES[(i + (still ? 0 : Math.floor(time * 6))) % MANA_RUNES.length];
-  // soft halo on the grass
-  ctx.globalAlpha = swirl || pulse ? 0.42 : 0.26;
-  fillEllipse(ctx, swirl ? "#a98be0" : "#4fc3c9", cx, cy, PORTAL_RX + 4, PORTAL_RY + 2);
+// ---------- the ally gate: the dungeon gate's friendly twin ----------
+const BANNER = { cloth: "#d95763", shade: "#a8403f", gold: "#f2c14e" };
+const DOOR_WOOD = ["#a8764a", "#8f6040"];
+/**
+ * Stone arch like the dungeon's, but with intact pillars, guild banners and warm wooden doors. `open` swings the
+ * doors aside on a lit hall; `glow` brightens the doorway (a compact event). Drawn before the lighting layer.
+ */
+const drawAllyGate = (ctx: Ctx, open: boolean, glow: boolean, time: number, still: boolean) => {
+  const { x, y } = ALLY_GATE;
+  ctx.globalAlpha = 0.25;
+  rect(ctx, "#000", x - 26, y, 52, 3);
   ctx.globalAlpha = 1;
-  drawPortalPylon(ctx, cx - PORTAL_RX, cy - 1, swirl ? manaColor(0) : "#7fe7ee");
-  // stone rim, dark water, bright core
-  fillEllipse(ctx, "#2a4a5a", cx, cy, PORTAL_RX, PORTAL_RY);
-  fillEllipse(ctx, "#0f3347", cx, cy, PORTAL_RX - 2, PORTAL_RY - 1);
-  fillEllipse(ctx, swirl ? "#3a2f7a" : "#1d6a86", cx, cy, PORTAL_RX - 4, PORTAL_RY - 2);
-  fillEllipse(
-    ctx,
-    pulse ? "#ffffff" : swirl ? manaColor(2) : "#7fe7ee",
-    cx,
-    cy,
-    PORTAL_RX - 7,
-    Math.max(1, PORTAL_RY - 3),
-  );
-  // three swirl arms
-  for (let arm = 0; arm < 3; arm++) {
-    for (let step = 1; step <= 6; step++) {
-      const radius = step * 1.1;
-      const angle = spin * 2 + (arm * Math.PI * 2) / 3 + step * 0.55;
-      rect(
-        ctx,
-        swirl ? manaColor(arm + step) : step % 2 ? "#bff7fb" : "#4fc3c9",
-        cx + Math.cos(angle) * radius * 1.3,
-        cy + Math.sin(angle) * radius * 0.45,
-        1,
-        1,
-      );
+  bricks(ctx, x - 24, y - 16, 48, 16, 41);
+  // arch (lighter stone than the dungeon's)
+  rect(ctx, ST.a, x - 10, y - 24, 20, 24);
+  rect(ctx, ST.a, x - 8, y - 27, 16, 3);
+  rect(ctx, ST.hi, x - 8, y - 27, 16, 1);
+  rect(ctx, ST.hi, x - 10, y - 24, 1, 24);
+  rect(ctx, ST.dark, x + 9, y - 24, 1, 24);
+  rect(ctx, GOLD, x - 1, y - 28, 3, 2);
+  // doorway
+  rect(ctx, "#3b2418", x - 8, y - 22, 16, 22);
+  rect(ctx, "#3b2418", x - 6, y - 25, 12, 3);
+  if (open) {
+    rect(ctx, "#7a4a1e", x - 7, y - 21, 14, 21);
+    rect(ctx, "#c9892f", x - 6, y - 24, 12, 3);
+    rect(ctx, "#e8a43a", x - 6, y - 21, 12, 19);
+    rect(ctx, "#f6cf6a", x - 4, y - 19, 8, 15);
+    rect(ctx, "#fff0b0", x - 2, y - 15, 4, 8);
+    rect(ctx, "#5a3a26", x - 7, y - 3, 14, 3); // floor
+    rect(ctx, DOOR_WOOD[0], x - 9, y - 22, 2, 22); // the leaves, swung back against the arch
+    rect(ctx, DOOR_WOOD[0], x + 8, y - 22, 2, 22);
+    rect(ctx, "#2a2d3a", x - 9, y - 16, 2, 1);
+    rect(ctx, "#2a2d3a", x + 8, y - 16, 2, 1);
+  } else {
+    for (let i = 0; i < 4; i++) rect(ctx, DOOR_WOOD[i % 2], x - 8 + i * 4, y - 22, 4, 22);
+    rect(ctx, DOOR_WOOD[0], x - 6, y - 25, 12, 3);
+    rect(ctx, "#3b2418", x, y - 25, 1, 25); // the seam
+    rect(ctx, "#2a2d3a", x - 8, y - 16, 16, 1); // iron bands
+    rect(ctx, "#2a2d3a", x - 8, y - 6, 16, 1);
+    rect(ctx, GOLD, x - 2, y - 11, 1, 2); // handles
+    rect(ctx, GOLD, x + 2, y - 11, 1, 2);
+    if (glow) {
+      rect(ctx, "#f6cf6a", x - 8, y - 22, 1, 22); // warm light leaking round the doors
+      rect(ctx, "#f6cf6a", x + 7, y - 22, 1, 22);
     }
   }
-  // rune ticks around the rim
-  for (let i = 0; i < PORTAL_RUNES; i++) {
-    const angle = spin + (i * Math.PI * 2) / PORTAL_RUNES;
-    rect(
-      ctx,
-      swirl ? manaColor(i) : i % 2 ? "#bff7fb" : "#4fc3c9",
-      cx + Math.cos(angle) * (PORTAL_RX - 1),
-      cy + Math.sin(angle) * (PORTAL_RY - 0.4) - 0.5,
-      2,
-      1,
-    );
+  // intact pillars with guild banners and pennants
+  for (const side of [-1, 1]) {
+    const px = side < 0 ? x - 24 : x + 20;
+    rect(ctx, ST.a, px, y - 24, 5, 24);
+    rect(ctx, ST.hi, px, y - 24, 5, 1);
+    rect(ctx, ST.dark, px + 4, y - 24, 1, 24);
+    rect(ctx, ST.c, px - 1, y - 3, 7, 3);
+    rect(ctx, ST.c, px - 1, y - 26, 7, 2);
+    // hanging banner
+    const bx = px + 1;
+    rect(ctx, WD.mid, bx - 1, y - 21, 5, 1);
+    rect(ctx, BANNER.cloth, bx, y - 20, 3, 10);
+    rect(ctx, BANNER.shade, bx + 2, y - 20, 1, 10);
+    rect(ctx, BANNER.gold, bx, y - 18, 3, 1);
+    rect(ctx, BANNER.cloth, bx + 1, y - 10, 1, 2);
+    // pennant on a pole above the pillar
+    const wave = still ? 0 : Math.round(Math.sin(time * 5 + side));
+    rect(ctx, WD.mid, px + 2, y - 33, 1, 7);
+    rect(ctx, BANNER.cloth, px + 3, y - 33, 4, 1);
+    rect(ctx, BANNER.cloth, px + 3, y - 32, 3, 1);
+    rect(ctx, BANNER.shade, px + 3, y - 31 + wave, 2, 1);
   }
-  // rising light column
-  for (let row = 0; row < 16; row++) {
-    const half = Math.round(3 * (1 - row / 20));
-    ctx.globalAlpha = (swirl || pulse ? 0.34 : 0.2) * (1 - row / 17);
-    rect(ctx, swirl ? manaColor(row >> 2) : "#aef6ff", cx - half, cy - 1 - row, half * 2 + 1, 1);
+  // torch brackets (the flames are drawn with the other lights)
+  for (const torch of ALLY_TORCHES) rect(ctx, "#2a2d3a", torch.x - 2, torch.y, 5, 2);
+  // flowers at the foot: this side is tended
+  for (const [fx, fc] of [
+    [-18, "#ff9ad5"],
+    [-14, "#ffd94a"],
+    [14, "#ffd94a"],
+    [18, "#ff9ad5"],
+  ] as const) {
+    rect(ctx, "#3f7f4a", x + fx, y + 1, 1, 2);
+    rect(ctx, fc, x + fx, y, 1, 1);
   }
+};
+
+/** the warm lamplight of the ally gate's doorway (after the night overlay: emissive) */
+const drawAllyGlow = (ctx: Ctx, office: Office, time: number) => {
+  const { x, y } = ALLY_GATE;
+  const lit = office.allyDoorsUntil > time || office.allyGlowUntil > time;
+  ctx.globalAlpha = lit ? (office.reducedMotion ? 0.35 : 0.3 + 0.1 * Math.sin(time * 6)) : 0.14;
+  rect(ctx, "#ffb050", x - 7, y - 21, 14, 21);
   ctx.globalAlpha = 1;
-  for (let k = 0; k < 5; k++) {
-    const rise = still ? 4 + k * 3 : (time * 14 + k * 7) % 18;
-    rect(
-      ctx,
-      k % 2 ? "#ffffff" : swirl ? manaColor(k) : "#7fe7ee",
-      cx + (still ? k - 2 : Math.sin(time * 3 + k * 2) * 3),
-      cy - 2 - rise,
-      1,
-      1,
-    );
-  }
-  drawPortalPylon(ctx, cx + PORTAL_RX, cy - 1, swirl ? manaColor(3) : "#7fe7ee");
 };
 
 // ---------- juice helpers ----------
@@ -1831,10 +1855,10 @@ const drawRain = (ctx: Ctx, office: Office) => {
   ctx.stroke();
 };
 
-const onPortalTrip = (emp: Employee): boolean =>
-  emp.state === "TO_PORTAL" || emp.state === "IN_PORTAL" || emp.state === "FROM_PORTAL";
-/** a hand is up: seated, or on the way to / from the portal (the ❗ must not wait for the walk to end) */
-const waitsOnYou = (emp: Employee): boolean => emp.act === "handup" && (emp.state === "SEATED" || onPortalTrip(emp));
+const onAllyTrip = (emp: Employee): boolean =>
+  emp.state === "TO_ALLY_GATE" || emp.state === "IN_ALLY_GATE" || emp.state === "FROM_ALLY_GATE";
+/** a hand is up: seated, or on the way to / from the well (the ❗ must not wait for the walk to end) */
+const waitsOnYou = (emp: Employee): boolean => emp.act === "handup" && (emp.state === "SEATED" || onAllyTrip(emp));
 
 // ---------- squires ----------
 const drawBadge = (ctx: Ctx, txt: string, x: number, y: number) => {
@@ -1917,11 +1941,11 @@ const poseFor = (emp: Employee, time: number): { pose: Pose; frame: number } => 
           ? { pose: "cheer", frame: Math.floor(time * 4) % 2 }
           : { pose: "idle", frame: 0 };
       return { pose: "walk", frame: Math.floor(time * 8) % 4 };
-    case "TO_PORTAL":
-    case "FROM_PORTAL":
+    case "TO_ALLY_GATE":
+    case "FROM_ALLY_GATE":
       return { pose: "walk", frame: Math.floor(time * 8) % 4 };
-    case "IN_PORTAL":
-      return { pose: "cast", frame: Math.floor(time * 6) % 2 };
+    case "IN_ALLY_GATE":
+      return { pose: "idle", frame: Math.floor(time * 1.5) % 2 };
     case "STRETCH":
       return { pose: "cheer", frame: Math.floor(time * 3) % 2 };
     case "DRINK":
@@ -2222,7 +2246,7 @@ const drawBerserk = (ctx: Ctx, emp: Employee, time: number, still: boolean) => {
 
 const bubbleOf = (emp: Employee, time: number): string | null => {
   if (emp.state === "DRINK") return "🍺";
-  if (onPortalTrip(emp)) return emp.act === "handup" ? "❗" : "🌀";
+  if (onAllyTrip(emp)) return emp.act === "handup" ? "❗" : "💤";
   if (emp.state !== "SEATED") return null;
   if (emp.tempBubble) return emp.tempBubble.e;
   if (emp.bubble === "❗") return Math.floor(time * 4) % 2 === 0 ? "❗" : null;
@@ -2416,6 +2440,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   ctx.drawImage(bg, 0, 0);
   drawEnvAnim(ctx, time);
   drawGate(ctx, office, time);
+  drawAllyGate(ctx, office.allyDoorsUntil > time, office.allyGlowUntil > time, time, office.reducedMotion);
   // Lighting tints only the environment; characters, monsters and emissive things stay solid and full-colour.
   ctx.drawImage(overlay!, 0, 0);
   if (office.rain > 0) {
@@ -2426,7 +2451,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
     ctx.fillRect(0, 0, HALL_W, WORLD_H);
   }
   drawLights(ctx, time, office);
-  drawAllyPortal(ctx, office, time); // under every entity: nobody is ever drawn beneath its translucent glow
+  drawAllyGlow(ctx, office, time);
   drawAmbientBelow(ctx, office, night);
   drawAmbientAbove(ctx, office, night);
   drawNpc(ctx, time, office);
@@ -2471,7 +2496,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
       for (const it of emp.interns.values()) {
         if (k >= 2) break;
         const squireSlot = k++;
-        if (it.phase === "wait") continue; // still inside the ally portal
+        if (it.phase === "wait") continue; // still inside the tent
         ents.push({
           y: it.phase === "snap" ? squireSpotOf(emp, squireSlot).y : it.y,
           fn: () => drawSquire(ctx, emp, it, squireSlot, time),

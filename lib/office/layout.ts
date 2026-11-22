@@ -194,34 +194,51 @@ export const routeBoss = (desk: number): Pt[] => {
 };
 
 /**
- * The ally portal: a teal rune circle on the free strip of grass between the main road (bottom edge ~y 134) and the
- * lower battle plots (top ~y 154). x 246 sits in the 20px gap between the column-1 adventurer corridor (x 228) and
- * the column-1 boss lane (x 268), so no road, plot, desk or wall is under it and nobody's route crosses the ring.
+ * The ally gate: the dungeon gate's friendly twin on the LEFT of the wilderness, across the same river, with its own
+ * wooden bridge (x 158, just right of the hall wall) and a trail down to the branch road. Squires and adventurers
+ * resting after a compact walk use it. The mouth is where they stand in the doorway.
  */
-export const ALLY_PORTAL: Pt = { x: 246, y: 145 };
-export const PORTAL_RX = 10;
-export const PORTAL_RY = 4;
-/** hall-side road row used to enter/leave the portal from the upper battle row */
-const PORTAL_ROAD_MARGIN = 8;
-/** From wherever the character stands -> the portal centre (excludes the start). Upper area: down to the road, along it, then in. */
-export const routeToPortal = (x: number, y: number): Pt[] => {
-  const pts: Pt[] =
-    y < ROAD_Y + PORTAL_ROAD_MARGIN
-      ? [
-          { x, y: ROAD_Y },
-          { x: ALLY_PORTAL.x, y: ROAD_Y },
-        ]
-      : [{ x, y: ALLY_PORTAL.y }];
-  pts.push({ ...ALLY_PORTAL });
-  return dedupe([{ x, y }, ...pts]).slice(1);
-};
-/** Portal centre -> a point in the wilderness (excludes the start). */
-export const routeFromPortal = (x: number, y: number): Pt[] => {
-  const back = routeToPortal(x, y); // ... -> portal centre
-  const pts: Pt[] = [];
-  for (let i = back.length - 2; i >= 0; i--) pts.push(back[i]);
+export const ALLY_GATE = { x: 160, y: 50 };
+export const ALLY_BRIDGE_X = 158;
+export const ALLY_GATE_MOUTH: Pt = { x: ALLY_GATE.x, y: ALLY_GATE.y + 1 };
+/** warm torches either side of the arch (same spacing as the dungeon's) */
+const ALLY_TORCH_DX = 16;
+export const ALLY_TORCHES: Pt[] = [
+  { x: ALLY_GATE.x - ALLY_TORCH_DX, y: 48 },
+  { x: ALLY_GATE.x + ALLY_TORCH_DX, y: 48 },
+];
+const ALLY_BRIDGE_TOP_Y = 53;
+const ALLY_TRAIL_Y = 92;
+/** the branch road south of the hall gate (x 127..141): the trail joins it here */
+const ALLY_LANE_X = 134;
+const ALLY_LANE_Y = 116;
+/** below this a target counts as "lower battle row / camp": reached via the branch road and the main road */
+const ALLY_UPPER_LIMIT = 112;
+/** The trail corners, gate mouth side first: over the bridge, down the trail, then (for lower targets) to the branch road. */
+export const ALLY_TRAIL: Pt[] = [
+  { x: ALLY_BRIDGE_X, y: ALLY_BRIDGE_TOP_Y },
+  { x: ALLY_BRIDGE_X, y: BRIDGE_END_Y },
+  { x: ALLY_BRIDGE_X, y: ALLY_TRAIL_Y },
+];
+export const ALLY_LANE: Pt[] = [
+  { x: ALLY_LANE_X + 2, y: ALLY_LANE_Y },
+  { x: ALLY_LANE_X, y: ROAD_Y },
+];
+/** Ally gate mouth -> a point in the wilderness (excludes the start): bridge, trail, then along the road or straight to an upper spot. */
+export const routeFromAllyGate = (x: number, y: number): Pt[] => {
+  const pts: Pt[] = ALLY_TRAIL.map((point) => ({ ...point }));
+  if (y < ALLY_UPPER_LIMIT) pts.push({ x, y: ALLY_TRAIL_Y });
+  else pts.push(...ALLY_LANE.map((point) => ({ ...point })), { x, y: ROAD_Y });
   pts.push({ x, y });
-  return dedupe([{ ...ALLY_PORTAL }, ...pts]).slice(1);
+  return dedupe([{ ...ALLY_GATE_MOUTH }, ...pts]).slice(1);
+};
+/** A point in the wilderness -> the ally gate mouth (excludes the start): the reverse of routeFromAllyGate. */
+export const routeToAllyGate = (x: number, y: number): Pt[] => {
+  const out = routeFromAllyGate(x, y); // mouth -> ... -> (x,y)
+  const pts: Pt[] = [];
+  for (let i = out.length - 2; i >= 0; i--) pts.push(out[i]);
+  pts.push({ ...ALLY_GATE_MOUTH });
+  return dedupe([{ x, y }, ...pts]).slice(1);
 };
 
 // ---- territory: land plots + duels ----
