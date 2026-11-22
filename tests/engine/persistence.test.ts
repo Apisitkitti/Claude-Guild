@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import { Office } from "@/lib/office/engine";
+
 import { PROGRESS_KEY, emp, ev, fixedRandom, makeCanvas, newOffice, seat, sid, stubStorage, tick } from "./helpers";
 
 const DAY = 24 * 3600 * 1000;
@@ -9,7 +11,11 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
   fixedRandom(0.5);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const sim = () => ({ update: vi.fn(), addSession: vi.fn() });
 
@@ -81,12 +87,16 @@ describe("persistence", () => {
   });
 
   it("prunes stale (>7d) sessions on load and on save", () => {
-    const old = sid("old"), fresh = sid("new");
+    const old = sid("old"),
+      fresh = sid("new");
     const { m } = stubStorage({
-      [PROGRESS_KEY]: JSON.stringify({ sessions: {
-        [old]: { xp: 1, lv: 9, gold: 1, kills: 1, seen: Date.now() - 8 * DAY },
-        [fresh]: { xp: 1, lv: 5, gold: 1, kills: 1, seen: Date.now() - DAY },
-      }, treasury: 5 }),
+      [PROGRESS_KEY]: JSON.stringify({
+        sessions: {
+          [old]: { xp: 1, lv: 9, gold: 1, kills: 1, seen: Date.now() - 8 * DAY },
+          [fresh]: { xp: 1, lv: 5, gold: 1, kills: 1, seen: Date.now() - DAY },
+        },
+        treasury: 5,
+      }),
     });
     const o = newOffice();
     o.event(ev(old, "SessionStart"));
@@ -101,7 +111,12 @@ describe("persistence", () => {
 
   it("sanitises hostile stored values", () => {
     const id = sid();
-    stubStorage({ [PROGRESS_KEY]: JSON.stringify({ sessions: { [id]: { xp: -5, lv: "x", gold: null, kills: 2, seen: Date.now() } }, treasury: -3 }) });
+    stubStorage({
+      [PROGRESS_KEY]: JSON.stringify({
+        sessions: { [id]: { xp: -5, lv: "x", gold: null, kills: 2, seen: Date.now() } },
+        treasury: -3,
+      }),
+    });
     const o = newOffice();
     o.event(ev(id, "SessionStart"));
     const e = emp(o, id);
@@ -111,7 +126,9 @@ describe("persistence", () => {
 
   it("a thrown setItem (quota) is swallowed", () => {
     const { ls } = stubStorage();
-    ls.setItem.mockImplementation(() => { throw new Error("quota"); });
+    ls.setItem.mockImplementation(() => {
+      throw new Error("quota");
+    });
     const o = newOffice();
     const id = sid();
     seat(o, id);
@@ -123,7 +140,12 @@ describe("persistence", () => {
 describe("demo mode (attachSim)", () => {
   it("never writes progress and never restores it", () => {
     const id = sid();
-    const { ls } = stubStorage({ [PROGRESS_KEY]: JSON.stringify({ sessions: { [id]: { xp: 1, lv: 7, gold: 5, kills: 5, seen: Date.now() } }, treasury: 42 }) });
+    const { ls } = stubStorage({
+      [PROGRESS_KEY]: JSON.stringify({
+        sessions: { [id]: { xp: 1, lv: 7, gold: 5, kills: 5, seen: Date.now() } },
+        treasury: 42,
+      }),
+    });
     const o = newOffice();
     expect(o.treasury).toBe(42);
     o.attachSim(sim());

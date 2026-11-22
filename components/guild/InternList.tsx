@@ -19,7 +19,11 @@ export function InternList({ list }: { list: InternRow[] }) {
             <b>{i.label}</b>
             <span className={`chip ${chip.cls}`}>{chip.label}</span>
             <span className="idetail">{detail.trim()}</span>
-            {i.count > 0 && <span className="icount" title="tool calls">×{i.count}</span>}
+            {i.count > 0 && (
+              <span className="icount" title="tool calls">
+                ×{i.count}
+              </span>
+            )}
           </li>
         );
       })}

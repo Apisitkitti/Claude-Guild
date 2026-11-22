@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import { emp, ev, fixedRandom, newOffice, seat, sid, stubStorage } from "./helpers";
 
 beforeEach(() => {
@@ -7,7 +8,11 @@ beforeEach(() => {
   stubStorage();
   fixedRandom(0.5);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("squires (subagents)", () => {
   it("SubagentStart adds a squire, SubagentStop removes it", () => {

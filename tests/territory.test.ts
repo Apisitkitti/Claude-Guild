@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
+
 import { TerritoryTracker, displayPath, resolveTarget, type TerritoryEvent } from "../lib/territory";
 
 const MIN = 60_000;
 const T0 = 1_000_000;
-const ev = (sid: string, name: string, file: string, extra: Partial<TerritoryEvent> = {}, tool = "Edit"): TerritoryEvent => ({
+const ev = (
+  sid: string,
+  name: string,
+  file: string,
+  extra: Partial<TerritoryEvent> = {},
+  tool = "Edit",
+): TerritoryEvent => ({
   session_id: sid,
   hook_event_name: name,
   tool_name: tool,
@@ -20,7 +27,15 @@ describe("resolveTarget / displayPath", () => {
     expect(resolveTarget("/proj", 5)).toBeNull();
   });
   it("ignores node_modules, .git, .next and temp dirs", () => {
-    for (const p of ["/proj/node_modules/x/a.js", "/proj/.git/config", "/proj/.next/a.js", "/tmp/a", "/private/tmp/x/a", "/var/folders/ab/c", "/private/var/folders/ab/c"]) {
+    for (const p of [
+      "/proj/node_modules/x/a.js",
+      "/proj/.git/config",
+      "/proj/.next/a.js",
+      "/tmp/a",
+      "/private/tmp/x/a",
+      "/var/folders/ab/c",
+      "/private/var/folders/ab/c",
+    ]) {
       expect(resolveTarget("/proj", p)).toBeNull();
     }
     expect(resolveTarget("/proj", "/proj/src/a.ts")).toBe("/proj/src/a.ts");
@@ -42,7 +57,18 @@ describe("TerritoryTracker claims", () => {
     expect(t.onEvent(ev("a", "PostToolUse", "/proj/two.ts", {}, "Write"), T0 + 1)).toBe(false);
     expect(t.onEvent(ev("a", "PreToolUse", "/proj/x.ts", {}, "Read"), T0 + 2)).toBe(false);
     expect(t.onEvent(ev("a", "PreToolUse", "/proj/node_modules/z.js"), T0 + 3)).toBe(false);
-    expect(t.onEvent({ session_id: "a", hook_event_name: "PreToolUse", tool_name: "NotebookEdit", cwd: "/proj", tool_input: { notebook_path: "n.ipynb" } }, T0 + 4)).toBe(true);
+    expect(
+      t.onEvent(
+        {
+          session_id: "a",
+          hook_event_name: "PreToolUse",
+          tool_name: "NotebookEdit",
+          cwd: "/proj",
+          tool_input: { notebook_path: "n.ipynb" },
+        },
+        T0 + 4,
+      ),
+    ).toBe(true);
     expect(t.snapshot()).toEqual({ claims: [{ sid: "a", files: ["n.ipynb", "two.ts", "src/one.ts"] }], conflicts: [] });
   });
 
@@ -125,7 +151,9 @@ describe("TerritoryTracker conflicts", () => {
     t.onEvent(ev("a", "PreToolUse", "/proj/a.ts"), T0);
     t.onEvent(ev("b", "PreToolUse", "/proj/a.ts"), T0 + 1000);
     expect(t.onEvent(ev("b", "PostToolUseFailure", "/proj/a.ts"), T0 + 5000)).toBe(true);
-    expect(t.snapshot().conflicts).toEqual([{ file: "a.ts", sids: ["a", "b"], level: "clash", since: T0 + 5000, failer: "b" }]);
+    expect(t.snapshot().conflicts).toEqual([
+      { file: "a.ts", sids: ["a", "b"], level: "clash", since: T0 + 5000, failer: "b" },
+    ]);
     // repeated failure: nothing changes, since preserved
     expect(t.onEvent(ev("b", "PostToolUseFailure", "/proj/a.ts"), T0 + 9000)).toBe(false);
   });
@@ -244,7 +272,8 @@ describe("TerritoryTracker caps", () => {
   it("keeps at most 2000 claims overall, evicting the oldest globally", () => {
     const t = new TerritoryTracker();
     let n = 0;
-    for (let s = 0; s < 41; s++) for (let i = 0; i < 50; i++) t.onEvent(ev(`s${s}`, "PreToolUse", `/proj/f${i}.ts`), T0 + n++);
+    for (let s = 0; s < 41; s++)
+      for (let i = 0; i < 50; i++) t.onEvent(ev(`s${s}`, "PreToolUse", `/proj/f${i}.ts`), T0 + n++);
     const total = t.snapshot().claims.reduce((a, c) => a + c.files.length, 0);
     expect(total).toBe(2000);
     expect(t.snapshot().claims.find((c) => c.sid === "s0")).toBeUndefined(); // the 50 oldest claims were evicted

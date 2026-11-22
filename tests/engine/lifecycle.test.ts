@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import { DESK_COUNT } from "@/lib/office/layout";
+
 import { emp, ev, fixedRandom, newOffice, seat, sid, stubStorage, tick } from "./helpers";
 
 beforeEach(() => {
@@ -8,7 +10,11 @@ beforeEach(() => {
   stubStorage();
   fixedRandom(0.5);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("lifecycle", () => {
   it("ignores junk events", () => {
@@ -156,8 +162,14 @@ describe("lifecycle", () => {
     const id = sid();
     const e = seat(o, id);
     const cases: [string, string][] = [
-      ["Read", "reading"], ["Grep", "reading"], ["Edit", "typing"], ["Bash", "bash"], ["WebSearch", "phone"],
-      ["mcp__x__y", "mcp"], ["TodoWrite", "sticky"], ["Whatever", "typing"],
+      ["Read", "reading"],
+      ["Grep", "reading"],
+      ["Edit", "typing"],
+      ["Bash", "bash"],
+      ["WebSearch", "phone"],
+      ["mcp__x__y", "mcp"],
+      ["TodoWrite", "sticky"],
+      ["Whatever", "typing"],
     ];
     for (const [tool, act] of cases) {
       o.event(ev(id, "PreToolUse", { tool_name: tool, tool_use_id: "k" + tool }));
@@ -206,7 +218,10 @@ describe("Stop -> tavern -> back", () => {
     tick(o, 1.3);
     expect(e.state).toBe("TO_COFFEE");
     const seen = new Set<string>();
-    for (let i = 0; i < 400 && e.state !== "SEATED"; i++) { tick(o, 0.1); seen.add(e.state); }
+    for (let i = 0; i < 400 && e.state !== "SEATED"; i++) {
+      tick(o, 0.1);
+      seen.add(e.state);
+    }
     expect(seen.has("DRINK")).toBe(true);
     expect(seen.has("FROM_COFFEE")).toBe(true);
     expect(e.state).toBe("SEATED");
@@ -222,7 +237,10 @@ describe("Stop -> tavern -> back", () => {
     expect(e.act).toBe("bash");
   });
 
-  it.each([["TO_COFFEE", 1.5], ["DRINK", null]] as const)("an event during %s turns around and is applied on return", (st, t) => {
+  it.each([
+    ["TO_COFFEE", 1.5],
+    ["DRINK", null],
+  ] as const)("an event during %s turns around and is applied on return", (st, t) => {
     const o = newOffice();
     const id = sid();
     const e = seat(o, id);
@@ -334,8 +352,14 @@ describe("overflow beyond 8 desks", () => {
 describe("snapshot reconcile", () => {
   it("restores the permission wait (handup) from snapshot.waiting after a reload", () => {
     const o = newOffice();
-    const a = sid(), b = sid();
-    o.loadSnapshot({ sessions: [{ session_id: a, cwd: "/p/one", waiting: true }, { session_id: b, cwd: "/p/two" }] });
+    const a = sid(),
+      b = sid();
+    o.loadSnapshot({
+      sessions: [
+        { session_id: a, cwd: "/p/one", waiting: true },
+        { session_id: b, cwd: "/p/two" },
+      ],
+    });
     expect(emp(o, a).act).toBe("handup");
     expect(emp(o, b).act).not.toBe("handup");
     expect(o.waitingIds()).toContain(a);
@@ -343,8 +367,14 @@ describe("snapshot reconcile", () => {
 
   it("spawns snapshot sessions already seated, with their squires", () => {
     const o = newOffice();
-    const a = sid(), b = sid();
-    o.loadSnapshot({ sessions: [{ session_id: a, cwd: "/p/one", interns: ["ag1", "ag2"] }, { session_id: b, cwd: "/p/two" }] });
+    const a = sid(),
+      b = sid();
+    o.loadSnapshot({
+      sessions: [
+        { session_id: a, cwd: "/p/one", interns: ["ag1", "ag2"] },
+        { session_id: b, cwd: "/p/two" },
+      ],
+    });
     expect(emp(o, a).state).toBe("SEATED");
     expect(emp(o, a).interns.size).toBe(2);
     expect(emp(o, b).project).toBe("two");
@@ -359,7 +389,9 @@ describe("snapshot reconcile", () => {
     const e = emp(o, a);
     e.monHp = 1;
     o.event(ev(a, "PostToolUse", { tool_name: "Read" }));
-    const gold = e.gold, kills = e.kills, tr = o.treasury;
+    const gold = e.gold,
+      kills = e.kills,
+      tr = o.treasury;
     expect(kills).toBe(1);
     expect(tr).toBe(50 + gold);
     for (let i = 0; i < 3; i++) o.loadSnapshot({ sessions: [{ session_id: a, cwd: "/p" }] });
@@ -370,7 +402,12 @@ describe("snapshot reconcile", () => {
 
   it("restoring saved progress on spawn does not add to the treasury", () => {
     const a = sid();
-    stubStorage({ "guild.progress.v1": JSON.stringify({ sessions: { [a]: { xp: 3, lv: 4, gold: 77, kills: 9, seen: Date.now() } }, treasury: 100 }) });
+    stubStorage({
+      "guild.progress.v1": JSON.stringify({
+        sessions: { [a]: { xp: 3, lv: 4, gold: 77, kills: 9, seen: Date.now() } },
+        treasury: 100,
+      }),
+    });
     const o = newOffice();
     o.loadSnapshot({ sessions: [{ session_id: a }] });
     expect(emp(o, a).gold).toBe(77);
@@ -379,7 +416,8 @@ describe("snapshot reconcile", () => {
 
   it("sessions missing from the snapshot leave; sessions present are kept", () => {
     const o = newOffice();
-    const a = sid(), b = sid();
+    const a = sid(),
+      b = sid();
     o.loadSnapshot({ sessions: [{ session_id: a }, { session_id: b }] });
     o.loadSnapshot({ sessions: [{ session_id: a }] });
     expect(emp(o, b).state).toBe("LEAVING");

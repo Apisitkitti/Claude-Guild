@@ -1,16 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { LATE_GRACE_MS, MAX_CLOSED, MAX_FILES, MAX_RUNNERS, RECEIPT_TTL_MS, ReceiptTracker, commandShape, commitKind, runnerOf, type ReceiptEvent } from "@/lib/receipts";
+
+import {
+  LATE_GRACE_MS,
+  MAX_CLOSED,
+  MAX_FILES,
+  MAX_RUNNERS,
+  RECEIPT_TTL_MS,
+  ReceiptTracker,
+  commandShape,
+  commitKind,
+  runnerOf,
+  type ReceiptEvent,
+} from "@/lib/receipts";
 
 const MIN = 60_000;
 let seq = 0;
-const post = (sid: string, tool: string, input: Record<string, unknown>, extra: ReceiptEvent = {}): ReceiptEvent =>
-  ({ session_id: sid, hook_event_name: "PostToolUse", tool_name: tool, tool_input: input, tool_use_id: "t" + ++seq, cwd: "/w/proj", ...extra });
+const post = (sid: string, tool: string, input: Record<string, unknown>, extra: ReceiptEvent = {}): ReceiptEvent => ({
+  session_id: sid,
+  hook_event_name: "PostToolUse",
+  tool_name: tool,
+  tool_input: input,
+  tool_use_id: "t" + ++seq,
+  cwd: "/w/proj",
+  ...extra,
+});
 const fail = (sid: string, tool: string, input: Record<string, unknown>, extra: ReceiptEvent = {}) =>
   post(sid, tool, input, { hook_event_name: "PostToolUseFailure", error: "boom", ...extra });
 const bash = (sid: string, command: string, extra: ReceiptEvent = {}) => post(sid, "Bash", { command }, extra);
 const bashFail = (sid: string, command: string, extra: ReceiptEvent = {}) => fail(sid, "Bash", { command }, extra);
-const edit = (sid: string, file: string, extra: ReceiptEvent = {}) => post(sid, "Edit", { file_path: file, old_string: "a", new_string: "b" }, extra);
-const lifecycle = (sid: string, name: string, extra: ReceiptEvent = {}): ReceiptEvent => ({ session_id: sid, hook_event_name: name, cwd: "/w/proj", ...extra });
+const edit = (sid: string, file: string, extra: ReceiptEvent = {}) =>
+  post(sid, "Edit", { file_path: file, old_string: "a", new_string: "b" }, extra);
+const lifecycle = (sid: string, name: string, extra: ReceiptEvent = {}): ReceiptEvent => ({
+  session_id: sid,
+  hook_event_name: name,
+  cwd: "/w/proj",
+  ...extra,
+});
 
 function turn(t: ReceiptTracker, sid: string, now: number, events: ReceiptEvent[], close = true) {
   t.ingest(lifecycle(sid, "UserPromptSubmit"), now);
@@ -21,25 +46,65 @@ function turn(t: ReceiptTracker, sid: string, now: number, events: ReceiptEvent[
 describe("runnerOf / commandShape / commitKind", () => {
   it("recognises test runners at the start of a segment", () => {
     const yes: [string, string][] = [
-      ["npm test", "node-test"], ["pnpm test", "node-test"], ["yarn test", "node-test"], ["npm run test:unit", "node-test"], ["npm t", "node-test"],
-      ["npx vitest run a.test.ts", "node-test"], ["vitest", "node-test"], ["npx jest --ci", "node-test"], ["CI=1 npm test -- --run", "node-test"], ["./node_modules/.bin/vitest run", "node-test"],
-      ["pytest -q", "pytest"], ["python -m pytest tests/", "pytest"], ["uv run pytest", "pytest"], ["go test ./...", "go"], ["cargo test --lib", "cargo"], ["cargo +nightly test", "cargo"],
-      ["bundle exec rspec", "rspec"], ["dotnet test", "dotnet"], ["time npm test", "node-test"], ["npx playwright test", "playwright"],
+      ["npm test", "node-test"],
+      ["pnpm test", "node-test"],
+      ["yarn test", "node-test"],
+      ["npm run test:unit", "node-test"],
+      ["npm t", "node-test"],
+      ["npx vitest run a.test.ts", "node-test"],
+      ["vitest", "node-test"],
+      ["npx jest --ci", "node-test"],
+      ["CI=1 npm test -- --run", "node-test"],
+      ["./node_modules/.bin/vitest run", "node-test"],
+      ["pytest -q", "pytest"],
+      ["python -m pytest tests/", "pytest"],
+      ["uv run pytest", "pytest"],
+      ["go test ./...", "go"],
+      ["cargo test --lib", "cargo"],
+      ["cargo +nightly test", "cargo"],
+      ["bundle exec rspec", "rspec"],
+      ["dotnet test", "dotnet"],
+      ["time npm test", "node-test"],
+      ["npx playwright test", "playwright"],
     ];
     for (const [c, r] of yes) expect(runnerOf(c), c).toBe(r);
-    for (const c of ["echo vitest", "npm run build", "npm install jest", "cat tests/pytest.ini", "git commit -m test", "npm testing", "tsc --noEmit", "go build ./...", "ls"]) expect(runnerOf(c), c).toBeNull();
+    for (const c of [
+      "echo vitest",
+      "npm run build",
+      "npm install jest",
+      "cat tests/pytest.ini",
+      "git commit -m test",
+      "npm testing",
+      "tsc --noEmit",
+      "go build ./...",
+      "ls",
+    ])
+      expect(runnerOf(c), c).toBeNull();
   });
   it("only trusts plain && chains", () => {
     expect(commandShape("npm test").ok).toBe(true);
     expect(commandShape("cd web && npm test -- --run").segments).toEqual(["cd web", "npm test -- --run"]);
     expect(commandShape("npm test 2>&1").ok).toBe(true);
     expect(commandShape('git commit -m "a; b | c || d"').ok).toBe(true); // operators inside quotes are text
-    for (const c of ["npm test | tail -20", "npm test; echo done", "npm test || true", "npm test &", "npm test\necho hi", "npx vitest run | grep fail", "x=$(npm test)", "`npm test`"]) expect(commandShape(c).ok, c).toBe(false);
+    for (const c of [
+      "npm test | tail -20",
+      "npm test; echo done",
+      "npm test || true",
+      "npm test &",
+      "npm test\necho hi",
+      "npx vitest run | grep fail",
+      "x=$(npm test)",
+      "`npm test`",
+    ])
+      expect(commandShape(c).ok, c).toBe(false);
   });
   it("commit parsing: heredoc, amend, commit-tree, chains", () => {
-    const k = (c: string) => { const s = commandShape(c); return s.ok ? commitKind(s.segments) : "unsafe"; };
+    const k = (c: string) => {
+      const s = commandShape(c);
+      return s.ok ? commitKind(s.segments) : "unsafe";
+    };
     expect(k("git commit -m 'fix x'")).toBe("commit");
-    expect(k("git add -A && git commit -m \"feat\"")).toBe("commit");
+    expect(k('git add -A && git commit -m "feat"')).toBe("commit");
     expect(k("git -C /w commit -m x")).toBe("commit");
     expect(k("git commit -m \"$(cat <<'EOF'\nfeat: thing; with | pipes\n\nbody\nEOF\n)\"")).toBe("commit");
     expect(k("git commit --amend --no-edit")).toBe("amend");
@@ -56,18 +121,37 @@ describe("ReceiptTracker outcomes", () => {
   it("counts unique files that changed successfully; failed edits and reads do not count", () => {
     const t = new ReceiptTracker();
     turn(t, "a", 1000, [
-      edit("a", "/w/proj/x.ts"), edit("a", "/w/proj/x.ts"), post("a", "Write", { file_path: "/w/proj/y.ts", content: "c" }),
-      post("a", "MultiEdit", { file_path: "/w/proj/z.ts", edits: [] }), post("a", "NotebookEdit", { notebook_path: "/w/n.ipynb" }),
-      fail("a", "Edit", { file_path: "/w/proj/never.ts" }), post("a", "Read", { file_path: "/w/proj/r.ts" }),
+      edit("a", "/w/proj/x.ts"),
+      edit("a", "/w/proj/x.ts"),
+      post("a", "Write", { file_path: "/w/proj/y.ts", content: "c" }),
+      post("a", "MultiEdit", { file_path: "/w/proj/z.ts", edits: [] }),
+      post("a", "NotebookEdit", { notebook_path: "/w/n.ipynb" }),
+      fail("a", "Edit", { file_path: "/w/proj/never.ts" }),
+      post("a", "Read", { file_path: "/w/proj/r.ts" }),
     ]);
     const [r] = t.rows(2000);
-    expect(r).toMatchObject({ files: 4, recovered: 0, commits: 0, tasks: 0, verdict: "done", project: "proj", sid: "a", calls: 7 });
+    expect(r).toMatchObject({
+      files: 4,
+      recovered: 0,
+      commits: 0,
+      tasks: 0,
+      verdict: "done",
+      project: "proj",
+      sid: "a",
+      calls: 7,
+    });
   });
 
   it("dedupes by tool_use_id and ignores interrupts", () => {
     const t = new ReceiptTracker();
     const e = edit("a", "/w/proj/x.ts", { tool_use_id: "same" });
-    turn(t, "a", 1, [e, e, bashFail("a", "npm test", { is_interrupt: true }), bash("a", "git commit -m x", { tool_use_id: "c1" }), bash("a", "git commit -m x", { tool_use_id: "c1" })]);
+    turn(t, "a", 1, [
+      e,
+      e,
+      bashFail("a", "npm test", { is_interrupt: true }),
+      bash("a", "git commit -m x", { tool_use_id: "c1" }),
+      bash("a", "git commit -m x", { tool_use_id: "c1" }),
+    ]);
     expect(t.rows(5)[0]).toMatchObject({ files: 1, commits: 1, calls: 2 });
   });
 
@@ -76,7 +160,12 @@ describe("ReceiptTracker outcomes", () => {
     turn(t, "a", 1, [bash("a", "npm test")]); // never red
     expect(t.rows(5)).toHaveLength(1);
     expect(t.rows(5)[0]).toMatchObject({ recovered: 0, verdict: "none" });
-    turn(t, "a", 10, [bashFail("a", "npm test"), bashFail("a", "npm test"), bash("a", "npm test"), bash("a", "npm test")]);
+    turn(t, "a", 10, [
+      bashFail("a", "npm test"),
+      bashFail("a", "npm test"),
+      bash("a", "npm test"),
+      bash("a", "npm test"),
+    ]);
     expect(t.rows(20)[0]).toMatchObject({ recovered: 1, verdict: "done" });
     turn(t, "a", 30, [bashFail("a", "npm test"), bash("a", "npm test")]);
     expect(t.rows(40)[0].recovered).toBe(1); // a second red -> green is a second recovery, in its own turn
@@ -105,9 +194,12 @@ describe("ReceiptTracker outcomes", () => {
   it("MUST-FIX: piped / chained / `|| true` / background test commands do not count", () => {
     const t = new ReceiptTracker();
     turn(t, "a", 1, [
-      bashFail("a", "npm test | tail -20"), bash("a", "npm test | tail -20"),
-      bashFail("a", "npm test; echo done"), bash("a", "npm test; echo done"),
-      bash("a", "npm test || true"), bash("a", "vitest run &"),
+      bashFail("a", "npm test | tail -20"),
+      bash("a", "npm test | tail -20"),
+      bashFail("a", "npm test; echo done"),
+      bash("a", "npm test; echo done"),
+      bash("a", "npm test || true"),
+      bash("a", "vitest run &"),
       bashFail("a", "npm test && echo ok"), // the test is not the last part: a failure may be the echo's
       bash("a", "npm test && echo ok"),
       bash("a", "npx vitest run 2>&1 | grep -c fail"),
@@ -128,7 +220,12 @@ describe("ReceiptTracker outcomes", () => {
 
   it("echo vitest / not-a-test commands never become a runner", () => {
     const t = new ReceiptTracker();
-    turn(t, "a", 1, [bashFail("a", "echo vitest"), bash("a", "echo vitest"), bashFail("a", "npm run build"), bash("a", "npm run build")]);
+    turn(t, "a", 1, [
+      bashFail("a", "echo vitest"),
+      bash("a", "echo vitest"),
+      bashFail("a", "npm run build"),
+      bash("a", "npm run build"),
+    ]);
     expect(t.rows(5)[0]).toMatchObject({ recovered: 0, verdict: "none" });
   });
 
@@ -136,8 +233,12 @@ describe("ReceiptTracker outcomes", () => {
     const t = new ReceiptTracker();
     turn(t, "a", 1, [
       bash("a", "git add -A && git commit -m \"$(cat <<'EOF'\nfeat: secret subject\n\nEOF\n)\""),
-      bash("a", "git commit --amend --no-edit"), bash("a", "git commit-tree abc"), bash("a", "git status"),
-      bashFail("a", "git commit -m nope"), bash("a", "git commit -m x | tail"), bash("a", "git commit -m x || true"),
+      bash("a", "git commit --amend --no-edit"),
+      bash("a", "git commit-tree abc"),
+      bash("a", "git status"),
+      bashFail("a", "git commit -m nope"),
+      bash("a", "git commit -m x | tail"),
+      bash("a", "git commit -m x || true"),
     ]);
     const r = t.rows(5)[0];
     expect(r).toMatchObject({ commits: 1, amends: 1, verdict: "done" });
@@ -147,22 +248,35 @@ describe("ReceiptTracker outcomes", () => {
   it("tasks done: TaskUpdate completed once per task, TodoWrite completed increments", () => {
     const t = new ReceiptTracker();
     turn(t, "a", 1, [
-      post("a", "TaskUpdate", { taskId: "1", status: "completed" }), post("a", "TaskUpdate", { taskId: "1", status: "completed" }),
-      post("a", "TaskUpdate", { taskId: "2", status: "in_progress" }), post("a", "TaskUpdate", { taskId: "3", status: "completed" }),
-      fail("a", "TaskUpdate", { taskId: "9", status: "completed" }), post("a", "TaskUpdate", "weird" as unknown as Record<string, unknown>),
+      post("a", "TaskUpdate", { taskId: "1", status: "completed" }),
+      post("a", "TaskUpdate", { taskId: "1", status: "completed" }),
+      post("a", "TaskUpdate", { taskId: "2", status: "in_progress" }),
+      post("a", "TaskUpdate", { taskId: "3", status: "completed" }),
+      fail("a", "TaskUpdate", { taskId: "9", status: "completed" }),
+      post("a", "TaskUpdate", "weird" as unknown as Record<string, unknown>),
     ]);
     expect(t.rows(5)[0].tasks).toBe(2);
     const todos = (...st: string[]) => ({ todos: st.map((status, i) => ({ content: "x" + i, status })) });
     turn(t, "b", 10, [
-      post("b", "TodoWrite", todos("completed", "pending", "pending")), post("b", "TodoWrite", todos("completed", "completed", "completed")),
-      post("b", "TodoWrite", todos("completed", "completed", "completed")), post("b", "TodoWrite", { todos: "nope" }), post("b", "TodoWrite", {}),
+      post("b", "TodoWrite", todos("completed", "pending", "pending")),
+      post("b", "TodoWrite", todos("completed", "completed", "completed")),
+      post("b", "TodoWrite", todos("completed", "completed", "completed")),
+      post("b", "TodoWrite", { todos: "nope" }),
+      post("b", "TodoWrite", {}),
     ]);
     expect(t.rows(20).find((r) => r.sid === "b")!.tasks).toBe(3);
   });
 
   it("garbage payloads never throw or count", () => {
     const t = new ReceiptTracker();
-    const junk = [{}, { session_id: 1 }, { session_id: "a" }, { session_id: "a", hook_event_name: "PostToolUse" }, { session_id: "a", hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: 5 }, { session_id: "a", hook_event_name: "PostToolUse", tool_name: "Edit", tool_input: null }];
+    const junk = [
+      {},
+      { session_id: 1 },
+      { session_id: "a" },
+      { session_id: "a", hook_event_name: "PostToolUse" },
+      { session_id: "a", hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: 5 },
+      { session_id: "a", hook_event_name: "PostToolUse", tool_name: "Edit", tool_input: null },
+    ];
     for (const j of junk) expect(() => t.ingest(j as ReceiptEvent, 1)).not.toThrow();
     t.ingest(lifecycle("a", "Stop"), 2);
     expect(t.rows(3).every((r) => r.files + r.commits + r.tasks + r.recovered === 0)).toBe(true);
@@ -306,10 +420,29 @@ describe("bounds", () => {
 
   it("keeps no text: rows hold only ids, project name and counters", () => {
     const t = new ReceiptTracker();
-    turn(t, "a", 1, [edit("a", "/w/proj/SECRET-FILE.ts"), bash("a", "export TOKEN=hunter2 && git commit -m 'private subject'")]);
+    turn(t, "a", 1, [
+      edit("a", "/w/proj/SECRET-FILE.ts"),
+      bash("a", "export TOKEN=hunter2 && git commit -m 'private subject'"),
+    ]);
     const json = JSON.stringify(t.rows(5));
     expect(json).not.toMatch(/SECRET-FILE|hunter2|private subject|git commit/);
-    expect(Object.keys(t.rows(5)[0]).sort()).toEqual(["amends", "calls", "closedAt", "commits", "files", "id", "project", "recovered", "squire", "sid", "staleRed", "tasks", "verdict"].sort());
+    expect(Object.keys(t.rows(5)[0]).sort()).toEqual(
+      [
+        "amends",
+        "calls",
+        "closedAt",
+        "commits",
+        "files",
+        "id",
+        "project",
+        "recovered",
+        "squire",
+        "sid",
+        "staleRed",
+        "tasks",
+        "verdict",
+      ].sort(),
+    );
   });
 });
 
@@ -319,7 +452,8 @@ describe("review fixes", () => {
     turn(t, "a", 1, [
       post("a", "Bash", { command: "npm test", run_in_background: true }),
       post("a", "Bash", { command: "git commit -m x", run_in_background: true }),
-      bashFail("a", "npm test"), post("a", "Bash", { command: "npm test", run_in_background: true }),
+      bashFail("a", "npm test"),
+      post("a", "Bash", { command: "npm test", run_in_background: true }),
     ]);
     const r = t.rows(5)[0];
     expect(r).toMatchObject({ commits: 0, recovered: 0, verdict: "red" });
@@ -327,8 +461,14 @@ describe("review fixes", () => {
 
   it("TodoWrite progress is tracked per agent", () => {
     const t = new ReceiptTracker();
-    const todos = (n: number) => ({ todos: Array.from({ length: 5 }, (_, i) => ({ content: "x", status: i < n ? "completed" : "pending" })) });
-    turn(t, "a", 1, [post("a", "TodoWrite", todos(3)), post("a", "TodoWrite", todos(1), { agent_id: "s1" }), post("a", "TodoWrite", todos(2), { agent_id: "s1" })]);
+    const todos = (n: number) => ({
+      todos: Array.from({ length: 5 }, (_, i) => ({ content: "x", status: i < n ? "completed" : "pending" })),
+    });
+    turn(t, "a", 1, [
+      post("a", "TodoWrite", todos(3)),
+      post("a", "TodoWrite", todos(1), { agent_id: "s1" }),
+      post("a", "TodoWrite", todos(2), { agent_id: "s1" }),
+    ]);
     expect(t.rows(5)[0].tasks).toBe(3 + 1 + 1);
   });
 
@@ -355,7 +495,14 @@ describe("review fixes", () => {
   });
 
   it("runner detection through -C / --prefix / --filter / --cwd", () => {
-    for (const c of ["pnpm -C web test", "npm --prefix web test", "pnpm --filter app test", "yarn --cwd web test", "npm --prefix=web run test"]) expect(runnerOf(c), c).toBe("node-test");
+    for (const c of [
+      "pnpm -C web test",
+      "npm --prefix web test",
+      "pnpm --filter app test",
+      "yarn --cwd web test",
+      "npm --prefix=web run test",
+    ])
+      expect(runnerOf(c), c).toBe("node-test");
     expect(runnerOf("pnpm -C web build")).toBeNull();
   });
 
@@ -370,7 +517,8 @@ describe("review fixes", () => {
   });
 
   it("ids carry a per-tracker nonce so a rebuilt tracker never reuses an id", () => {
-    const a = new ReceiptTracker(), b = new ReceiptTracker();
+    const a = new ReceiptTracker(),
+      b = new ReceiptTracker();
     turn(a, "s", 1, [edit("s", "/x")]);
     turn(b, "s", 1, [edit("s", "/x")]);
     expect(a.rows(5)[0].id).toMatch(/^[a-z0-9]+-1$/);

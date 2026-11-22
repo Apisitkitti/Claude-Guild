@@ -1,3 +1,12 @@
+import {
+  FNV_OFFSET_BASIS,
+  FNV_PRIME,
+  HEX_BYTE_DIGITS,
+  HEX_RADIX,
+  MS_PER_MINUTE,
+  MS_PER_SECOND,
+  PERCENT,
+} from "@/lib/constants";
 // Lookout Bell: "who needs me first?". Server-side tracker that turns hook events into a small ordered queue of
 // reasons to look at a session: waiting for permission, looping on the same failure, a (guessed) question left for
 // the user, context nearly full, finished and awaiting review. Pure + injectable `now` (like TerritoryTracker).
@@ -7,7 +16,8 @@
 /** same fingerprint + same normalized error this many times ... */
 export const LOOP_MIN_FAILS = 3;
 /** ... within this window counts as a loop */
-export const LOOP_WINDOW_MS = 5 * 60 * 1000;
+const LOOP_WINDOW_MINUTES = 5;
+export const LOOP_WINDOW_MS = LOOP_WINDOW_MINUTES * MS_PER_MINUTE;
 /** failures/successes remembered per (session, agent) */
 export const RING_SIZE = 12;
 /** tool_use_ids remembered per key for dedupe */
@@ -15,16 +25,29 @@ export const MAX_IDS_PER_KEY = 40;
 /** (session, agent) keys kept in total */
 export const MAX_KEYS = 200;
 /** a loop with no new failures for this long is dropped by sweep */
-export const LOOP_STALE_MS = 10 * 60 * 1000;
+const LOOP_STALE_MINUTES = 10;
+export const LOOP_STALE_MS = LOOP_STALE_MINUTES * MS_PER_MINUTE;
 /** a done / asked row is dropped by sweep after this */
-export const DONE_STALE_MS = 30 * 60 * 1000;
+const DONE_STALE_MINUTES = 30;
+export const DONE_STALE_MS = DONE_STALE_MINUTES * MS_PER_MINUTE;
 /** context fraction at which the context row appears */
 export const CTX_PRESSURE = 0.85;
 export const MAX_ROWS = 20;
 export const MAX_DONE = 100;
 /** a permission wait older than this with no new event may already have been granted (no hook fires on grant) */
-export const PERM_STALE_MS = 90 * 1000;
+const PERM_STALE_SECONDS = 90;
+export const PERM_STALE_MS = PERM_STALE_SECONDS * MS_PER_SECOND;
 export const TAIL_CHARS = 80;
+/** stableJson: nesting depth, array items and object keys kept when fingerprinting */
+const STABLE_JSON_MAX_DEPTH = 3;
+const STABLE_JSON_MAX_ITEMS = 10;
+const STABLE_JSON_MAX_KEYS = 20;
+/** trailing path segments shown as a target */
+const PATH_TAIL_SEGMENTS = 2;
+/** chars of stable JSON used as a fingerprint */
+const FINGERPRINT_JSON_CHARS = 400;
+/** trailing chars of a message scanned for question phrases */
+const QUESTION_TAIL_CHARS = 250;
 export const TARGET_CHARS = 80;
 export const ERROR_CHARS = 120;
 
@@ -62,12 +85,12 @@ export type AttentionEvent = {
 
 // ---- helpers (exported for tests) ----
 function fnv(s: string): string {
-  let h = 0x811c9dc5;
+  let h = FNV_OFFSET_BASIS;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
+    h = Math.imul(h, FNV_PRIME) >>> 0;
   }
-  return h.toString(16).padStart(8, "0");
+  return h.toString(HEX_RADIX).padStart(HEX_BYTE_DIGITS, "0");
 }
 
 const TMP_PATH = /(?<=^|[\s'"`(=])(?:\/private)?\/(?:var\/folders|tmp)\/[^\s'"`)]*/g;
@@ -85,7 +108,14 @@ const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" 
 
 /** command with timestamps, tmp paths and digits stripped, so reruns compare equal */
 export function normalizeCommand(cmd: string): string {
-  return squash(cmd.replace(ANSI, "").replace(TMP_PATH, "<tmp>").replace(ISO_TS, "<ts>").replace(LONE_DUR, "<dur>").replace(LONE_NUM, "#"));
+  return squash(
+    cmd
+      .replace(ANSI, "")
+      .replace(TMP_PATH, "<tmp>")
+      .replace(ISO_TS, "<ts>")
+      .replace(LONE_DUR, "<dur>")
+      .replace(LONE_NUM, "#"),
+  );
 }
 
 /** error text with numbers, durations, hex ids and tmp paths stripped */
@@ -101,8 +131,7 @@ export function normalizeError(err: string): string {
       .replace(/\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\b/gi, "<hex>")
       .replace(/\d+(?:\.\d+)?\s?(?:ms|sec(?:onds?)?|s|m|min)\b/gi, "<dur>")
       .replace(/\d+/g, "#"),
-  )
-    .toLowerCase();
+  ).toLowerCase();
 }
 
 /** first informative line of an error: skips blanks and bare "Exit code N" (falls back to it) */
@@ -114,25 +143,48 @@ export function errorLine(err: string): string {
 
 function stableJson(v: unknown, depth = 0): string {
   if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
-  if (depth >= 3) return "{…}";
-  if (Array.isArray(v)) return "[" + v.slice(0, 10).map((x) => stableJson(x, depth + 1)).join(",") + "]";
+  if (depth >= STABLE_JSON_MAX_DEPTH) return "{…}";
+  if (Array.isArray(v))
+    return (
+      "[" +
+      v
+        .slice(0, STABLE_JSON_MAX_ITEMS)
+        .map((x) => stableJson(x, depth + 1))
+        .join(",") +
+      "]"
+    );
   const o = v as Record<string, unknown>;
-  return "{" + Object.keys(o).sort().slice(0, 20).map((k) => JSON.stringify(k) + ":" + stableJson(o[k], depth + 1)).join(",") + "}";
+  return (
+    "{" +
+    Object.keys(o)
+      .sort()
+      .slice(0, STABLE_JSON_MAX_KEYS)
+      .map((k) => JSON.stringify(k) + ":" + stableJson(o[k], depth + 1))
+      .join(",") +
+    "}"
+  );
 }
 
 /** `fp` identifies "the same attempt"; `target` is the short human label (never the full input) */
 export function fingerprint(tool: string, input: unknown): { fp: string; target: string } {
   const ti = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   if (tool === "Bash" && typeof ti.command === "string") {
-    return { fp: "Bash:" + fnv(normalizeCommand(ti.command)), target: cut(squash(ti.command.split("\n")[0]), TARGET_CHARS) };
+    return {
+      fp: "Bash:" + fnv(normalizeCommand(ti.command)),
+      target: cut(squash(ti.command.split("\n")[0]), TARGET_CHARS),
+    };
   }
   if (EDIT_TOOLS.has(tool)) {
-    const file = typeof ti.file_path === "string" ? ti.file_path : typeof ti.notebook_path === "string" ? ti.notebook_path : "";
+    const file =
+      typeof ti.file_path === "string" ? ti.file_path : typeof ti.notebook_path === "string" ? ti.notebook_path : "";
     const old = typeof ti.old_string === "string" ? ti.old_string : "";
     const segs = file.split("/").filter(Boolean);
-    return { fp: `${tool}:${fnv(file + "\0" + fnv(old))}`, target: cut(segs.slice(-2).join("/") || file, TARGET_CHARS) };
+    return {
+      fp: `${tool}:${fnv(file + "\0" + fnv(old))}`,
+      target: cut(segs.slice(-PATH_TAIL_SEGMENTS).join("/") || file, TARGET_CHARS),
+    };
   }
-  const json = stableJson(ti).slice(0, 400);
+  const json = stableJson(ti).slice(0, FINGERPRINT_JSON_CHARS);
   return { fp: `${tool}:${fnv(json)}`, target: cut(json === "{}" ? "" : json, TARGET_CHARS) };
 }
 
@@ -145,7 +197,7 @@ const PHRASES = /would you like|should i\b|do you want|let me know/i;
 export function looksAsked(msg: string): boolean {
   const t = msg.trim();
   if (!t) return false;
-  return Q_END.test(t) || TH_END.test(t) || TH_POLITE_Q.test(t) || PHRASES.test(t.slice(-250));
+  return Q_END.test(t) || TH_END.test(t) || TH_POLITE_Q.test(t) || PHRASES.test(t.slice(-QUESTION_TAIL_CHARS));
 }
 
 type Rec = { fp: string; ok: boolean; err: string; ts: number }; // err = hash of the normalized error
@@ -162,7 +214,8 @@ export class AttentionTracker {
   private key(sid: string, agent: string): KeyState {
     const k = sid + "\0" + agent;
     let st = this.keys.get(k);
-    if (st) this.keys.delete(k); // re-insert = most recently used
+    if (st)
+      this.keys.delete(k); // re-insert = most recently used
     else st = { sid, agent, ring: [], ids: [], loop: null, touched: 0 };
     this.keys.set(k, st);
     if (this.keys.size > MAX_KEYS) this.keys.delete(this.keys.keys().next().value as string);
@@ -197,7 +250,14 @@ export class AttentionTracker {
       this.resetSession(sid, agent || "main");
       if (agent) return; // only the main agent "finishes" for the user
       const msg = raw.last_assistant_message;
-      const d: Done = typeof msg === "string" ? { since: now, asked: looksAsked(msg), tail: cut(squash(msg.slice(-TAIL_CHARS * 2)).slice(-TAIL_CHARS), TAIL_CHARS + 1) } : { since: now, asked: false };
+      const d: Done =
+        typeof msg === "string"
+          ? {
+              since: now,
+              asked: looksAsked(msg),
+              tail: cut(squash(msg.slice(-TAIL_CHARS * 2)).slice(-TAIL_CHARS), TAIL_CHARS + 1),
+            }
+          : { since: now, asked: false };
       if (d.tail === "") delete d.tail;
       this.done.delete(sid);
       this.done.set(sid, d);
@@ -263,7 +323,13 @@ export class AttentionTracker {
     const rank = new Map<AttentionRow, number>();
     for (const [sid, since] of this.waiting) {
       const stale = now - since >= PERM_STALE_MS;
-      const r: AttentionRow = { key: `${sid}|permission|${since}`, sid, kind: "permission", since, text: stale ? "อาจอนุญาตแล้ว — ตรวจดู" : "รออนุญาตจากคุณ (permission)" };
+      const r: AttentionRow = {
+        key: `${sid}|permission|${since}`,
+        sid,
+        kind: "permission",
+        since,
+        text: stale ? "อาจอนุญาตแล้ว — ตรวจดู" : "รออนุญาตจากคุณ (permission)",
+      };
       if (stale) rank.set(r, STALE_PERM_RANK);
       rows.push(r);
     }
@@ -282,10 +348,25 @@ export class AttentionTracker {
       });
     }
     for (const [sid, d] of this.done) {
-      if (d.asked) rows.push({ key: `${sid}|asked|${d.since}`, sid, kind: "asked", since: d.since, text: "น่าจะรอคำตอบคุณ (เดา)", ...(d.tail ? { detail: d.tail } : {}) });
+      if (d.asked)
+        rows.push({
+          key: `${sid}|asked|${d.since}`,
+          sid,
+          kind: "asked",
+          since: d.since,
+          text: "น่าจะรอคำตอบคุณ (เดา)",
+          ...(d.tail ? { detail: d.tail } : {}),
+        });
       else rows.push({ key: `${sid}|done|${d.since}`, sid, kind: "done", since: d.since, text: "เสร็จแล้ว รอรีวิว" });
     }
-    for (const [sid, c] of this.ctx) rows.push({ key: `${sid}|context`, sid, kind: "context", since: c.since, text: `context ใกล้เต็ม ${Math.round(c.frac * 100)}%` });
+    for (const [sid, c] of this.ctx)
+      rows.push({
+        key: `${sid}|context`,
+        sid,
+        kind: "context",
+        since: c.since,
+        text: `context ใกล้เต็ม ${Math.round(c.frac * PERCENT)}%`,
+      });
     const rk = (r: AttentionRow) => rank.get(r) ?? RANK[r.kind];
     rows.sort((a, b) => rk(a) - rk(b) || a.since - b.since || (a.key < b.key ? -1 : 1));
     return rows.slice(0, MAX_ROWS);
@@ -294,9 +375,16 @@ export class AttentionTracker {
   /** drop stale state; true iff something was removed */
   sweep(now: number): boolean {
     let changed = false;
-    for (const [sid, d] of this.done) if (now - d.since > DONE_STALE_MS) { this.done.delete(sid); changed = true; }
+    for (const [sid, d] of this.done)
+      if (now - d.since > DONE_STALE_MS) {
+        this.done.delete(sid);
+        changed = true;
+      }
     for (const [k, st] of this.keys) {
-      if (st.loop && now - st.loop.last > LOOP_STALE_MS) { st.loop = null; changed = true; }
+      if (st.loop && now - st.loop.last > LOOP_STALE_MS) {
+        st.loop = null;
+        changed = true;
+      }
       if (!st.loop && now - st.touched > LOOP_STALE_MS) this.keys.delete(k);
     }
     return changed;

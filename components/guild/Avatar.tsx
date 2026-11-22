@@ -1,6 +1,10 @@
 import { useEffect, useRef } from "react";
-import { charSprite } from "@/lib/office/sprites";
+
 import type { Look } from "@/lib/office/palette";
+import { charSprite } from "@/lib/office/sprites";
+
+const AVATAR_W = 16;
+const AVATAR_H = 14;
 
 export function Avatar({ look }: { look: Look }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -10,8 +14,8 @@ export function Avatar({ look }: { look: Look }) {
     const ctx = c.getContext("2d");
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, 16, 14);
-    ctx.drawImage(charSprite(look, "idle", 0), 0, 0, 16, 14, 0, 0, 16, 14);
+    ctx.clearRect(0, 0, AVATAR_W, AVATAR_H);
+    ctx.drawImage(charSprite(look, "idle", 0), 0, 0, AVATAR_W, AVATAR_H, 0, 0, AVATAR_W, AVATAR_H);
   }, [look]);
-  return <canvas ref={ref} className="avatar" width={16} height={14} />;
+  return <canvas ref={ref} className="avatar" width={AVATAR_W} height={AVATAR_H} />;
 }

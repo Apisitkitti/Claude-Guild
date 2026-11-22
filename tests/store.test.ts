@@ -28,7 +28,8 @@ beforeEach(async () => {
 });
 afterEach(() => {
   unsub();
-  const st = (globalThis as { __claudeOffice?: { timers: { ping: NodeJS.Timeout; sweep: NodeJS.Timeout } } }).__claudeOffice;
+  const st = (globalThis as { __claudeOffice?: { timers: { ping: NodeJS.Timeout; sweep: NodeJS.Timeout } } })
+    .__claudeOffice;
   if (st) {
     clearInterval(st.timers.ping);
     clearInterval(st.timers.sweep);
@@ -169,9 +170,16 @@ describe("store waiting flag", () => {
 });
 
 describe("store territory", () => {
-  const territories = () => sent.filter((c) => c.startsWith("event: territory")).map((c) => JSON.parse(c.split("data: ")[1]));
+  const territories = () =>
+    sent.filter((c) => c.startsWith("event: territory")).map((c) => JSON.parse(c.split("data: ")[1]));
   const edit = (sid: string, file: string, name = "PreToolUse") =>
-    m.addEvent({ session_id: sid, hook_event_name: name, tool_name: "Edit", cwd: "/p", tool_input: { file_path: file } });
+    m.addEvent({
+      session_id: sid,
+      hook_event_name: name,
+      tool_name: "Edit",
+      cwd: "/p",
+      tool_input: { file_path: file },
+    });
 
   it("broadcasts territory only when it changes", () => {
     ev("t1", "SessionStart");
@@ -223,9 +231,17 @@ describe("store territory", () => {
 });
 
 describe("store attention (Lookout Bell)", () => {
-  const frames = () => sent.filter((c) => c.startsWith("event: attention")).map((c) => JSON.parse(c.split("data: ")[1]) as { kind: string; sid: string }[]);
+  const frames = () =>
+    sent
+      .filter((c) => c.startsWith("event: attention"))
+      .map((c) => JSON.parse(c.split("data: ")[1]) as { kind: string; sid: string }[]);
   const failBash = (sid: string, i: number) =>
-    ev(sid, "PostToolUseFailure", { tool_name: "Bash", tool_input: { command: "npm test" }, error: "boom 1", tool_use_id: "t" + i });
+    ev(sid, "PostToolUseFailure", {
+      tool_name: "Bash",
+      tool_input: { command: "npm test" },
+      error: "boom 1",
+      tool_use_id: "t" + i,
+    });
 
   it("detects a loop from RAW events, broadcasts an attention frame, never leaks the message", () => {
     readContext.mockResolvedValue(null);
@@ -292,10 +308,20 @@ describe("store redaction (no secret is stored, broadcast or kept as tracker tex
   it("scrubs events (stored, snapshot, SSE) but keeps the useful hint", () => {
     readContext.mockResolvedValue(null);
     ev("x1", "SessionStart");
-    ev("x1", "PreToolUse", { tool_name: "Bash", tool_input: { command: `curl -H "Authorization: ${BEARER}" -u bob:hunter22 https://u:p4ss@h.io?token=abc999 && export GH_TOKEN=${SECRET}`, env: { API_KEY: "zzz" } } });
-    ev("x1", "PreToolUse", { tool_name: "Write", tool_input: { file_path: "/w/.env", content: `PASSWORD=hunter2\nDB=postgres://app:s3cr3t@db/x\n${SECRET}` } });
+    ev("x1", "PreToolUse", {
+      tool_name: "Bash",
+      tool_input: {
+        command: `curl -H "Authorization: ${BEARER}" -u bob:hunter22 https://u:p4ss@h.io?token=abc999 && export GH_TOKEN=${SECRET}`,
+        env: { API_KEY: "zzz" },
+      },
+    });
+    ev("x1", "PreToolUse", {
+      tool_name: "Write",
+      tool_input: { file_path: "/w/.env", content: `PASSWORD=hunter2\nDB=postgres://app:s3cr3t@db/x\n${SECRET}` },
+    });
     const blob = JSON.stringify(m.snapshot()) + sent.join("");
-    for (const leak of [SECRET, "eyJhbGci", "hunter22", "hunter2", "p4ss", "abc999", "s3cr3t", "zzz"]) expect(blob).not.toContain(leak);
+    for (const leak of [SECRET, "eyJhbGci", "hunter22", "hunter2", "p4ss", "abc999", "s3cr3t", "zzz"])
+      expect(blob).not.toContain(leak);
     expect(blob).toContain("‹redacted›");
     expect(m.snapshot().events.at(-2)!.tool_input).toMatchObject({ command: expect.stringContaining("curl -H") });
   });
@@ -304,7 +330,12 @@ describe("store redaction (no secret is stored, broadcast or kept as tracker tex
     readContext.mockResolvedValue(null);
     ev("x2", "SessionStart");
     for (let i = 0; i < 3; i++)
-      ev("x2", "PostToolUseFailure", { tool_name: "Bash", tool_input: { command: `curl -H "Authorization: ${BEARER}" https://api.io --token=${SECRET}` }, error: `401 for Authorization: ${BEARER} key ${SECRET}`, tool_use_id: "f" + i });
+      ev("x2", "PostToolUseFailure", {
+        tool_name: "Bash",
+        tool_input: { command: `curl -H "Authorization: ${BEARER}" https://api.io --token=${SECRET}` },
+        error: `401 for Authorization: ${BEARER} key ${SECRET}`,
+        tool_use_id: "f" + i,
+      });
     expect(m.snapshot().attention.map((r) => r.kind)).toEqual(["loop"]);
     const blob = JSON.stringify(m.snapshot().attention) + sent.filter((c) => c.startsWith("event: attention")).join("");
     expect(blob).not.toMatch(/eyJhbGci|sk-proj/);
@@ -323,18 +354,39 @@ describe("store redaction (no secret is stored, broadcast or kept as tracker tex
   it("a payload that makes redaction itself blow up is reduced to identifiers, not leaked", () => {
     readContext.mockResolvedValue(null);
     const evil: Record<string, unknown> = { session_id: "x4", hook_event_name: "PreToolUse", tool_name: "Bash" };
-    Object.defineProperty(evil, "tool_input", { enumerable: true, get() { throw new Error("boom"); } });
+    Object.defineProperty(evil, "tool_input", {
+      enumerable: true,
+      get() {
+        throw new Error("boom");
+      },
+    });
     expect(() => m.addEvent(evil)).not.toThrow();
     expect(m.snapshot().events.at(-1)).toMatchObject({ session_id: "x4", tool_name: "Bash" });
   });
 });
 
 describe("store receipts (Receipt Ledger)", () => {
-  const frames = () => sent.filter((c) => c.startsWith("event: receipts")).map((c) => JSON.parse(c.split("data: ")[1]) as { sid: string; verdict: string; files: number; commits: number }[]);
+  const frames = () =>
+    sent
+      .filter((c) => c.startsWith("event: receipts"))
+      .map(
+        (c) => JSON.parse(c.split("data: ")[1]) as { sid: string; verdict: string; files: number; commits: number }[],
+      );
   const turnOf = (sid: string, n: number) => {
     ev(sid, "UserPromptSubmit", { cwd: "/w/guild" });
-    for (let i = 0; i < n; i++) ev(sid, "PostToolUse", { tool_name: "Edit", tool_input: { file_path: `/w/guild/f${i}.ts` }, tool_use_id: `${sid}e${i}`, cwd: "/w/guild" });
-    ev(sid, "PostToolUse", { tool_name: "Bash", tool_input: { command: "git commit -m x" }, tool_use_id: `${sid}c`, cwd: "/w/guild" });
+    for (let i = 0; i < n; i++)
+      ev(sid, "PostToolUse", {
+        tool_name: "Edit",
+        tool_input: { file_path: `/w/guild/f${i}.ts` },
+        tool_use_id: `${sid}e${i}`,
+        cwd: "/w/guild",
+      });
+    ev(sid, "PostToolUse", {
+      tool_name: "Bash",
+      tool_input: { command: "git commit -m x" },
+      tool_use_id: `${sid}c`,
+      cwd: "/w/guild",
+    });
   };
 
   it("snapshot starts with an empty ledger; Stop closes the turn, broadcasts a receipts frame", () => {
@@ -344,7 +396,9 @@ describe("store receipts (Receipt Ledger)", () => {
     turnOf("r1", 2);
     expect(frames()).toEqual([]); // open turns are not published
     ev("r1", "Stop");
-    expect(frames().at(-1)).toEqual([expect.objectContaining({ sid: "r1", files: 2, commits: 1, verdict: "done", project: "guild" })]);
+    expect(frames().at(-1)).toEqual([
+      expect.objectContaining({ sid: "r1", files: 2, commits: 1, verdict: "done", project: "guild" }),
+    ]);
     expect(m.snapshot().receipts).toEqual(frames().at(-1));
   });
 
@@ -388,8 +442,18 @@ describe("store receipts (Receipt Ledger)", () => {
     readContext.mockResolvedValue(null);
     ev("r5", "SessionStart");
     ev("r5", "UserPromptSubmit", { cwd: "/w/guild" });
-    ev("r5", "PostToolUse", { tool_name: "Edit", tool_input: { file_path: "/w/guild/TOP-SECRET-NAME.ts" }, tool_use_id: "z1", cwd: "/w/guild" });
-    ev("r5", "PostToolUse", { tool_name: "Bash", tool_input: { command: "git commit -m 'private subject'" }, tool_use_id: "z2", cwd: "/w/guild" });
+    ev("r5", "PostToolUse", {
+      tool_name: "Edit",
+      tool_input: { file_path: "/w/guild/TOP-SECRET-NAME.ts" },
+      tool_use_id: "z1",
+      cwd: "/w/guild",
+    });
+    ev("r5", "PostToolUse", {
+      tool_name: "Bash",
+      tool_input: { command: "git commit -m 'private subject'" },
+      tool_use_id: "z2",
+      cwd: "/w/guild",
+    });
     ev("r5", "Stop");
     const blob = JSON.stringify(m.snapshot().receipts) + sent.filter((c) => c.startsWith("event: receipts")).join("");
     expect(blob).not.toMatch(/TOP-SECRET|private subject|git commit/);
@@ -399,8 +463,19 @@ describe("store receipts (Receipt Ledger)", () => {
     readContext.mockResolvedValue(null);
     ev("r6", "SessionStart");
     ev("r6", "UserPromptSubmit", { cwd: "/w/guild" });
-    ev("r6", "PostToolUseFailure", { tool_name: "Bash", tool_input: { command: "npx vitest run a.test.ts" }, error: "FAIL", tool_use_id: "q1", cwd: "/w/guild" });
-    ev("r6", "PostToolUse", { tool_name: "Bash", tool_input: { command: "npm test" }, tool_use_id: "q2", cwd: "/w/guild" });
+    ev("r6", "PostToolUseFailure", {
+      tool_name: "Bash",
+      tool_input: { command: "npx vitest run a.test.ts" },
+      error: "FAIL",
+      tool_use_id: "q1",
+      cwd: "/w/guild",
+    });
+    ev("r6", "PostToolUse", {
+      tool_name: "Bash",
+      tool_input: { command: "npm test" },
+      tool_use_id: "q2",
+      cwd: "/w/guild",
+    });
     ev("r6", "Stop");
     expect(m.snapshot().receipts[0]).toMatchObject({ recovered: 1, verdict: "done" });
   });

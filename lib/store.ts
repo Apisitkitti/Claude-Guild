@@ -1,8 +1,9 @@
-import { readContext, type ContextUsage } from "@/lib/transcript";
-import { TerritoryTracker } from "@/lib/territory";
 import { AttentionTracker, type AttentionRow } from "@/lib/attention";
+import { MS_PER_MINUTE, MS_PER_SECOND } from "@/lib/constants";
 import { ReceiptTracker, type ReceiptRow } from "@/lib/receipts";
 import { redactDeep } from "@/lib/redact";
+import { TerritoryTracker } from "@/lib/territory";
+import { readContext, type ContextUsage } from "@/lib/transcript";
 
 // In-memory event + session store shared by route handlers.
 // Kept on globalThis so it survives dev hot-reloads and is shared across route modules.
@@ -36,9 +37,20 @@ type Session = {
 type Client = (chunk: string) => void;
 
 const MAX_EVENTS = 200;
+/** SSE keep-alive comment interval */
+const PING_INTERVAL_SECONDS = 15;
+const PING_INTERVAL_MS = PING_INTERVAL_SECONDS * MS_PER_SECOND;
+/** stale session / tombstone sweep interval */
+const SWEEP_INTERVAL_SECONDS = 30;
+const SWEEP_INTERVAL_MS = SWEEP_INTERVAL_SECONDS * MS_PER_SECOND;
+/** console log: chars of HH:MM:SS, session id and agent id shown */
+const LOG_TIME_CHARS = 8;
+const LOG_ID_CHARS = 8;
+const LOG_AGENT_ID_CHARS = 6;
 const SNAPSHOT_EVENTS = 50;
-const STALE_MS = 10 * 60 * 1000;
-const TOMBSTONE_MS = 60 * 1000;
+const STALE_MINUTES = 10;
+const STALE_MS = STALE_MINUTES * MS_PER_MINUTE;
+const TOMBSTONE_MS = MS_PER_MINUTE;
 
 type Store = {
   events: HookEvent[];
@@ -63,11 +75,26 @@ const g = globalThis as typeof globalThis & { __claudeOffice?: Store & { version
 type Timers = { ping: ReturnType<typeof setInterval>; sweep: ReturnType<typeof setInterval> };
 
 function createStore(): Store & { version: number; timers: Timers } {
-  const store = { events: [], sessions: new Map(), ended: new Map(), clients: new Set(), ctxTimers: new Map(), ctxSeq: new Map(), ctxInflight: 0, territory: new TerritoryTracker(), attention: new AttentionTracker(), attentionJson: "[]", receipts: new ReceiptTracker(), receiptsJson: "[]", startedAt: Date.now(), version: STORE_VERSION } as unknown as Store & {
+  const store = {
+    events: [],
+    sessions: new Map(),
+    ended: new Map(),
+    clients: new Set(),
+    ctxTimers: new Map(),
+    ctxSeq: new Map(),
+    ctxInflight: 0,
+    territory: new TerritoryTracker(),
+    attention: new AttentionTracker(),
+    attentionJson: "[]",
+    receipts: new ReceiptTracker(),
+    receiptsJson: "[]",
+    startedAt: Date.now(),
+    version: STORE_VERSION,
+  } as unknown as Store & {
     version: number;
     timers: Timers;
   };
-  const ping = setInterval(() => broadcastRaw(store, ": ping\n\n"), 15_000);
+  const ping = setInterval(() => broadcastRaw(store, ": ping\n\n"), PING_INTERVAL_MS);
   const sweep = setInterval(() => {
     const cutoff = Date.now() - STALE_MS;
     for (const [id, s] of store.sessions) if (s.lastSeen < cutoff) dropSession(id);
@@ -78,7 +105,7 @@ function createStore(): Store & { version: number; timers: Timers } {
     refreshAttention(store);
     store.receipts.sweep(Date.now());
     refreshReceipts(store);
-  }, 30_000);
+  }, SWEEP_INTERVAL_MS);
   ping.unref?.();
   sweep.unref?.();
   store.timers = { ping, sweep };
@@ -159,7 +186,12 @@ function bumpSeq(id: string): number {
 }
 
 function broadcastContext(id: string, c: ContextUsage | null) {
-  const data = { session_id: id, used: c ? c.used : null, limit: c ? c.limit : null, limitGuessed: c ? c.limitGuessed : false };
+  const data = {
+    session_id: id,
+    used: c ? c.used : null,
+    limit: c ? c.limit : null,
+    limitGuessed: c ? c.limitGuessed : false,
+  };
   broadcastRaw(store, `event: context\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
@@ -229,7 +261,8 @@ function handleContext(evt: HookEvent, transcriptPath: unknown) {
     refreshAttention(store);
     if (name === "PreCompact") return;
   }
-  if (CTX_READ_EVENTS.has(name) && typeof transcriptPath === "string" && transcriptPath) scheduleContext(id, transcriptPath);
+  if (CTX_READ_EVENTS.has(name) && typeof transcriptPath === "string" && transcriptPath)
+    scheduleContext(id, transcriptPath);
 }
 
 function updateSessions(evt: HookEvent) {
@@ -244,7 +277,17 @@ function updateSessions(evt: HookEvent) {
   else if (store.ended.has(id)) return; // late event after SessionEnd: don't resurrect
   let s = store.sessions.get(id);
   if (!s) {
-    s = { session_id: id, cwd: evt.cwd ?? "", firstSeen: evt.receivedAt, lastSeen: evt.receivedAt, lastEvent: null, interns: new Set(), context: null, waiting: false, waitingSince: null };
+    s = {
+      session_id: id,
+      cwd: evt.cwd ?? "",
+      firstSeen: evt.receivedAt,
+      lastSeen: evt.receivedAt,
+      lastEvent: null,
+      interns: new Set(),
+      context: null,
+      waiting: false,
+      waitingSince: null,
+    };
     store.sessions.set(id, s);
     if (store.sessions.size > MAX_SESSIONS) {
       let oldest: string | null = null;
@@ -265,7 +308,14 @@ function updateSessions(evt: HookEvent) {
     if (n === "PermissionRequest" || (n === "Notification" && evt.notification_type === "permission_prompt")) {
       if (!s.waiting) s.waitingSince = evt.receivedAt;
       s.waiting = true;
-    } else if (n === "PreToolUse" || n === "PostToolUse" || n === "PostToolUseFailure" || n === "UserPromptSubmit" || n === "Stop" || n === "SessionStart") {
+    } else if (
+      n === "PreToolUse" ||
+      n === "PostToolUse" ||
+      n === "PostToolUseFailure" ||
+      n === "UserPromptSubmit" ||
+      n === "Stop" ||
+      n === "SessionStart"
+    ) {
       s.waiting = false;
       s.waitingSince = null;
     }
@@ -277,9 +327,9 @@ function updateSessions(evt: HookEvent) {
 }
 
 function logEvent(evt: HookEvent) {
-  const t = new Date(evt.receivedAt).toTimeString().slice(0, 8);
-  const sid = String(evt.session_id ?? "-").slice(0, 8);
-  const who = evt.agent_id ? ` (intern ${evt.agent_type ?? evt.agent_id.slice(0, 6)})` : "";
+  const t = new Date(evt.receivedAt).toTimeString().slice(0, LOG_TIME_CHARS);
+  const sid = String(evt.session_id ?? "-").slice(0, LOG_ID_CHARS);
+  const who = evt.agent_id ? ` (intern ${evt.agent_type ?? evt.agent_id.slice(0, LOG_AGENT_ID_CHARS)})` : "";
   const tool = evt.tool_name ? ` ${evt.tool_name}` : "";
   console.log(`${t} ${sid} ${evt.hook_event_name ?? "?"}${tool}${who}`);
 }

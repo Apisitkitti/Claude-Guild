@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+
 import type { RosterRow } from "@/lib/office/engine";
+
 import { isNum } from "../format";
 import type { RpgRow } from "../types";
+
+const LV_FLASH_MS = 1200;
+const BUMP_MS = 400;
 
 /** Level-up flash per roster card (brief CSS class toggle). */
 export function useRosterFlash(roster: RosterRow[]) {
@@ -21,8 +26,20 @@ export function useRosterFlash(roster: RosterRow[]) {
     for (const id of [...prevLv.current.keys()]) if (!seen.has(id)) prevLv.current.delete(id);
     if (!up.length) return;
     const t = setTimeout(() => {
-      setLvFlash((m) => { const n = { ...m }; for (const id of up) n[id] = true; return n; });
-      setTimeout(() => setLvFlash((m) => { const n = { ...m }; for (const id of up) delete n[id]; return n; }), 1200);
+      setLvFlash((m) => {
+        const n = { ...m };
+        for (const id of up) n[id] = true;
+        return n;
+      });
+      setTimeout(
+        () =>
+          setLvFlash((m) => {
+            const n = { ...m };
+            for (const id of up) delete n[id];
+            return n;
+          }),
+        LV_FLASH_MS,
+      );
     }, 0);
     return () => clearTimeout(t);
   }, [roster]);
@@ -38,8 +55,11 @@ export function useTreasuryBump(treasury: number | undefined) {
     prevTreasury.current = treasury;
     if (!isNum(treasury) || old === undefined || treasury <= old) return;
     const a = setTimeout(() => setBump(true), 0);
-    const b = setTimeout(() => setBump(false), 400);
-    return () => { clearTimeout(a); clearTimeout(b); };
+    const b = setTimeout(() => setBump(false), BUMP_MS);
+    return () => {
+      clearTimeout(a);
+      clearTimeout(b);
+    };
   }, [treasury]);
   return bump;
 }

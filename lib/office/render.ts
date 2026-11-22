@@ -1,7 +1,43 @@
-import { DUEL_FLOURISH, DUEL_IMPACT, DUEL_IMPACT_FINAL, DUEL_PIPS, DUEL_STOP, DUEL_STOP_FINAL, duelContact, duelScript, MAX_HEARTS, type Duel, type DuelScript, type Employee, type Office } from "./engine";
 import {
-  BACK_WALL_H, BAR, BRIDGE_X, CH_H, CH_W, COUNTER_BOX, DESK_COUNT, DUNGEON, GATE_OPEN, H, HALL_W, HEARTH,
-  NPC_POS, ROAD_Y, TORCHES, W, WALL_X0, duelMidOfDesks, plotRect, spotOf, squirePoint, campSquirePoint, standSlot, CAMP_MAX,
+  DUEL_FLOURISH,
+  DUEL_IMPACT,
+  DUEL_IMPACT_FINAL,
+  DUEL_PIPS,
+  DUEL_STOP,
+  DUEL_STOP_FINAL,
+  duelContact,
+  duelScript,
+  MAX_HEARTS,
+  type Duel,
+  type DuelScript,
+  type Employee,
+  type Office,
+} from "./engine";
+import {
+  BACK_WALL_H,
+  BAR,
+  BRIDGE_X,
+  CH_H,
+  CH_W,
+  COUNTER_BOX,
+  DESK_COUNT,
+  DUNGEON,
+  GATE_OPEN,
+  H,
+  HALL_W,
+  HEARTH,
+  NPC_POS,
+  ROAD_Y,
+  TORCHES,
+  W,
+  WALL_X0,
+  duelMidOfDesks,
+  plotRect,
+  spotOf,
+  squirePoint,
+  campSquirePoint,
+  standSlot,
+  CAMP_MAX,
 } from "./layout";
 import { lookFor } from "./palette";
 import { bossSprite, butterflySprite, charSprite, internSprite, monsterSprite, prop, type Pose } from "./sprites";
@@ -36,13 +72,18 @@ function rng(seed: number) {
 }
 const mk = () => {
   const cv = document.createElement("canvas");
-  cv.width = W; cv.height = H;
+  cv.width = W;
+  cv.height = H;
   return { cv, c: cv.getContext("2d")! };
 };
 function roundRect(c: Ctx, x: number, y: number, w: number, h: number, r: number) {
   c.beginPath();
-  c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
-  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
 }
 /** Draw a prop with bottom-centre anchored at (cx, by). */
 function blitB(c: Ctx, name: string, cx: number, by: number) {
@@ -65,7 +106,9 @@ let bg: HTMLCanvasElement | null = null;
 
 function bricks(c: Ctx, x0: number, y0: number, w: number, h: number, seed: number, vertical = false) {
   c.save();
-  c.beginPath(); c.rect(x0, y0, w, h); c.clip();
+  c.beginPath();
+  c.rect(x0, y0, w, h);
+  c.clip();
   rect(c, ST.mortar, x0, y0, w, h);
   const r = rng(seed);
   const tones = [ST.a, ST.b, ST.c];
@@ -74,7 +117,9 @@ function bricks(c: Ctx, x0: number, y0: number, w: number, h: number, seed: numb
       for (let x = x0 - (row % 2) * 6; x < x0 + w; x += 12) {
         rect(c, tones[(r() * 3) | 0], x + 1, y + 1, 11, 5);
         rect(c, ST.hi, x + 1, y + 1, 11, 1);
-        c.globalAlpha = 0.25; rect(c, "#000", x + 1, y + 5, 11, 1); c.globalAlpha = 1;
+        c.globalAlpha = 0.25;
+        rect(c, "#000", x + 1, y + 5, 11, 1);
+        c.globalAlpha = 1;
       }
     }
   } else {
@@ -108,15 +153,28 @@ function drawGrass(c: Ctx) {
   const r = rng(3);
   for (let i = 0; i < 46; i++) {
     c.globalAlpha = 0.28;
-    rect(c, r() < 0.5 ? GRASS.a : GRASS.c, HALL_W + r() * (W - HALL_W - 24), 52 + r() * 160, 10 + ((r() * 16) | 0), 4 + ((r() * 5) | 0));
+    rect(
+      c,
+      r() < 0.5 ? GRASS.a : GRASS.c,
+      HALL_W + r() * (W - HALL_W - 24),
+      52 + r() * 160,
+      10 + ((r() * 16) | 0),
+      4 + ((r() * 5) | 0),
+    );
   }
   c.globalAlpha = 1;
   for (let i = 0; i < 640; i++) {
-    const x = HALL_W + 1 + ((r() * (W - HALL_W - 4)) | 0), y = 50 + ((r() * 164) | 0);
+    const x = HALL_W + 1 + ((r() * (W - HALL_W - 4)) | 0),
+      y = 50 + ((r() * 164) | 0);
     const k = r();
-    if (k < 0.5) { rect(c, GRASS.c, x, y, 1, 2); rect(c, GRASS.b, x + 1, y + 1, 1, 1); }
-    else if (k < 0.8) rect(c, GRASS.hi, x, y, 1, 1);
-    else { rect(c, GRASS.b, x, y + 1, 3, 1); rect(c, GRASS.a, x + 1, y, 1, 1); }
+    if (k < 0.5) {
+      rect(c, GRASS.c, x, y, 1, 2);
+      rect(c, GRASS.b, x + 1, y + 1, 1, 1);
+    } else if (k < 0.8) rect(c, GRASS.hi, x, y, 1, 1);
+    else {
+      rect(c, GRASS.b, x, y + 1, 3, 1);
+      rect(c, GRASS.a, x + 1, y, 1, 1);
+    }
   }
 }
 
@@ -141,8 +199,12 @@ function drawStream(c: Ctx) {
     rect(c, y % 6 === 2 ? WD.light : "#8f6040", bx - 6, y, 12, 3);
     rect(c, WD.top, bx - 6, y, 12, 1);
   }
-  rect(c, "#3b2418", bx - 7, 52, 1, 21); rect(c, "#3b2418", bx + 6, 52, 1, 21);
-  for (const py of [52, 62, 71]) { rect(c, WD.mid, bx - 8, py, 2, 3); rect(c, WD.mid, bx + 6, py, 2, 3); }
+  rect(c, "#3b2418", bx - 7, 52, 1, 21);
+  rect(c, "#3b2418", bx + 6, 52, 1, 21);
+  for (const py of [52, 62, 71]) {
+    rect(c, WD.mid, bx - 8, py, 2, 3);
+    rect(c, WD.mid, bx + 6, py, 2, 3);
+  }
   // trail beyond the bridge
   for (let y = 73; y < 88; y++) {
     const half = 4 - ((y - 73) >> 2);
@@ -154,24 +216,35 @@ function drawStream(c: Ctx) {
 
 function drawDungeon(c: Ctx) {
   const { x, y } = DUNGEON; // base-centre
-  c.globalAlpha = 0.25; rect(c, "#000", x - 26, y, 52, 3); c.globalAlpha = 1;
+  c.globalAlpha = 0.25;
+  rect(c, "#000", x - 26, y, 52, 3);
+  c.globalAlpha = 1;
   bricks(c, x - 24, y - 16, 48, 16, 33);
   // arch
   rect(c, "#2a2d3a", x - 10, y - 24, 20, 24);
   rect(c, "#2a2d3a", x - 8, y - 27, 16, 3);
   rect(c, "#14121f", x - 8, y - 22, 16, 22);
   rect(c, "#14121f", x - 6, y - 25, 12, 3);
-  for (let i = 0; i < 3; i++) { rect(c, ST.c, x - 10 + i, y - 24 - (i === 0 ? 0 : 0), 1, 24); }
+  for (let i = 0; i < 3; i++) {
+    rect(c, ST.c, x - 10 + i, y - 24 - (i === 0 ? 0 : 0), 1, 24);
+  }
   rect(c, ST.hi, x - 8, y - 27, 16, 1);
   rect(c, GOLD, x - 1, y - 28, 3, 2);
   // stairs inside
   for (let i = 0; i < 4; i++) rect(c, i % 2 ? "#2b2540" : "#221d33", x - 6 + i, y - 4 - i * 1, 12 - i * 2, 1);
   // broken pillars
-  for (const [px, ph] of [[-24, 26], [20, 16]] as const) {
+  for (const [px, ph] of [
+    [-24, 26],
+    [20, 16],
+  ] as const) {
     rect(c, ST.a, x + px, y - ph, 5, ph);
-    rect(c, ST.hi, x + px, y - ph, 5, 1); rect(c, ST.dark, x + px + 4, y - ph, 1, ph);
+    rect(c, ST.hi, x + px, y - ph, 5, 1);
+    rect(c, ST.dark, x + px + 4, y - ph, 1, ph);
     rect(c, ST.c, x + px - 1, y - 3, 7, 3);
-    if (ph < 20) { rect(c, ST.b, x + px - 2, y - 3, 2, 3); rect(c, ST.b, x + px + 6, y - 2, 3, 2); }
+    if (ph < 20) {
+      rect(c, ST.b, x + px - 2, y - 3, 2, 3);
+      rect(c, ST.b, x + px + 6, y - 2, 3, 2);
+    }
   }
   // ivy
   c.globalAlpha = 0.8;
@@ -184,7 +257,8 @@ function drawRoad(c: Ctx) {
   // gate apron
   rect(c, DIRT.base, WALL_X0 - 2, GATE_OPEN.y0, 18, GATE_OPEN.y1 - GATE_OPEN.y0);
   for (let x = HALL_W; x < W; x++) {
-    const t = ROAD_Y - 8 + wob(x, 0), b = ROAD_Y + 8 + wob(x, 2);
+    const t = ROAD_Y - 8 + wob(x, 0),
+      b = ROAD_Y + 8 + wob(x, 2);
     rect(c, DIRT.edge, x, t - 1, 1, 1);
     rect(c, DIRT.base, x, t, 1, b - t);
     rect(c, DIRT.edge, x, b, 1, 1);
@@ -193,7 +267,8 @@ function drawRoad(c: Ctx) {
   }
   // branch to the camp area (overflow adventurers)
   for (let y = ROAD_Y; y < H; y++) {
-    const l = 127 + wob(y, 1), rr = 141 + wob(y, 3);
+    const l = 127 + wob(y, 1),
+      rr = 141 + wob(y, 3);
     rect(c, DIRT.edge, l - 1, y, 1, 1);
     rect(c, DIRT.base, l, y, rr - l, 1);
     rect(c, DIRT.edge, rr, y, 1, 1);
@@ -202,63 +277,88 @@ function drawRoad(c: Ctx) {
   // pebbles
   const r = rng(9);
   for (let i = 0; i < 40; i++) {
-    const x = 128 + ((r() * 250) | 0), y = ROAD_Y - 6 + ((r() * 12) | 0);
+    const x = 128 + ((r() * 250) | 0),
+      y = ROAD_Y - 6 + ((r() * 12) | 0);
     rect(c, r() < 0.5 ? "#8a6a42" : "#d6b583", x, y, 1, 1);
   }
   // battle patches
   for (let i = 0; i < DESK_COUNT; i++) {
-    const s = spotOf(i), cx = s.x + 11, cy = s.y - 1;
+    const s = spotOf(i),
+      cx = s.x + 11,
+      cy = s.y - 1;
     for (let dy = -7; dy <= 7; dy++) {
       const half = Math.round(28 * Math.sqrt(1 - (dy / 8) * (dy / 8)));
-      c.globalAlpha = 0.6; rect(c, "#9c7a4a", cx - half, cy + dy, half * 2, 1);
-      c.globalAlpha = 0.5; rect(c, DIRT.base, cx - half + 3, cy + dy, Math.max(0, half * 2 - 6), 1);
+      c.globalAlpha = 0.6;
+      rect(c, "#9c7a4a", cx - half, cy + dy, half * 2, 1);
+      c.globalAlpha = 0.5;
+      rect(c, DIRT.base, cx - half + 3, cy + dy, Math.max(0, half * 2 - 6), 1);
       c.globalAlpha = 1;
     }
-    for (let k = 0; k < 6; k++) { rect(c, "#7d5a34", cx - 22 + ((k * 9 + i * 5) % 44), cy - 5 + ((k * 5 + i) % 10), 2, 1); }
+    for (let k = 0; k < 6; k++) {
+      rect(c, "#7d5a34", cx - 22 + ((k * 9 + i * 5) % 44), cy - 5 + ((k * 5 + i) % 10), 2, 1);
+    }
   }
 }
 
 function drawHall(c: Ctx) {
   // wood floor
   c.save();
-  c.beginPath(); c.rect(0, BACK_WALL_H, HALL_W, H - BACK_WALL_H); c.clip();
+  c.beginPath();
+  c.rect(0, BACK_WALL_H, HALL_W, H - BACK_WALL_H);
+  c.clip();
   const r = rng(7);
   let row = 0;
   for (let y = BACK_WALL_H; y < H; y += 8, row++) {
     let x = -((row * 13) % 32);
     while (x < HALL_W) {
       const len = 28 + ((r() * 3) | 0) * 8;
-      const x0 = Math.max(0, x), x1 = Math.min(HALL_W, x + len);
+      const x0 = Math.max(0, x),
+        x1 = Math.min(HALL_W, x + len);
       rect(c, FLOOR[(r() * 5) | 0], x0, y, x1 - x0, 8);
-      c.globalAlpha = 0.16; rect(c, "#ffe6b4", x0, y, x1 - x0, 1);
-      c.globalAlpha = 0.5; rect(c, "#6b4529", x0, y + 7, x1 - x0, 1);
+      c.globalAlpha = 0.16;
+      rect(c, "#ffe6b4", x0, y, x1 - x0, 1);
+      c.globalAlpha = 0.5;
+      rect(c, "#6b4529", x0, y + 7, x1 - x0, 1);
       if (x >= 0) rect(c, "#6b4529", x, y, 1, 8);
       c.globalAlpha = 0.14;
-      for (let g = 0; g < 3; g++) rect(c, "#4a2f20", x0 + 3 + ((r() * (len - 10)) | 0), y + 2 + ((r() * 4) | 0), 3 + ((r() * 4) | 0), 1);
+      for (let g = 0; g < 3; g++)
+        rect(c, "#4a2f20", x0 + 3 + ((r() * (len - 10)) | 0), y + 2 + ((r() * 4) | 0), 3 + ((r() * 4) | 0), 1);
       c.globalAlpha = 1;
       x += len;
     }
   }
   c.restore();
-  for (let i = 0; i < 5; i++) { c.globalAlpha = 0.28 - i * 0.05; rect(c, "#000", 0, BACK_WALL_H + i, HALL_W, 1); }
+  for (let i = 0; i < 5; i++) {
+    c.globalAlpha = 0.28 - i * 0.05;
+    rect(c, "#000", 0, BACK_WALL_H + i, HALL_W, 1);
+  }
   c.globalAlpha = 1;
 
   // back wall (stone) + baseboard
   bricks(c, 0, 0, HALL_W, BACK_WALL_H - 2, 11);
-  rect(c, WD.dark, 0, BACK_WALL_H - 3, HALL_W, 3); rect(c, WD.mid, 0, BACK_WALL_H - 3, HALL_W, 1);
+  rect(c, WD.dark, 0, BACK_WALL_H - 3, HALL_W, 3);
+  rect(c, WD.mid, 0, BACK_WALL_H - 3, HALL_W, 1);
   // ceiling beam
-  rect(c, WD.dark, 0, 0, HALL_W, 3); rect(c, WD.mid, 0, 3, HALL_W, 1);
-  for (let x = 20; x < HALL_W; x += 40) { rect(c, WD.mid, x, 0, 5, 8); rect(c, WD.dark, x + 4, 0, 1, 8); }
+  rect(c, WD.dark, 0, 0, HALL_W, 3);
+  rect(c, WD.mid, 0, 3, HALL_W, 1);
+  for (let x = 20; x < HALL_W; x += 40) {
+    rect(c, WD.mid, x, 0, 5, 8);
+    rect(c, WD.dark, x + 4, 0, 1, 8);
+  }
 
   // side walls
   bricks(c, 0, BACK_WALL_H, 9, H - BACK_WALL_H, 12, true);
   rect(c, ST.hi, 8, BACK_WALL_H, 1, H - BACK_WALL_H);
-  c.globalAlpha = 0.3; rect(c, "#000", 9, BACK_WALL_H, 2, H - BACK_WALL_H); c.globalAlpha = 1;
+  c.globalAlpha = 0.3;
+  rect(c, "#000", 9, BACK_WALL_H, 2, H - BACK_WALL_H);
+  c.globalAlpha = 1;
   // right wall with the gate opening
-  const gy0 = GATE_OPEN.y0, gy1 = GATE_OPEN.y1;
+  const gy0 = GATE_OPEN.y0,
+    gy1 = GATE_OPEN.y1;
   bricks(c, WALL_X0, BACK_WALL_H, HALL_W + 1 - WALL_X0, gy0 - BACK_WALL_H, 13, true);
   bricks(c, WALL_X0, gy1, HALL_W + 1 - WALL_X0, H - gy1, 14, true);
-  rect(c, ST.hi, WALL_X0, BACK_WALL_H, 1, gy0 - BACK_WALL_H); rect(c, ST.hi, WALL_X0, gy1, 1, H - gy1);
+  rect(c, ST.hi, WALL_X0, BACK_WALL_H, 1, gy0 - BACK_WALL_H);
+  rect(c, ST.hi, WALL_X0, gy1, 1, H - gy1);
   rect(c, "#aeb4c8", WALL_X0, gy1, HALL_W + 1 - WALL_X0, 2);
   rect(c, "#aeb4c8", WALL_X0, gy0 - 2, HALL_W + 1 - WALL_X0, 2);
   // tower pillar above the gate (back wall corner)
@@ -268,43 +368,70 @@ function drawHall(c: Ctx) {
   rect(c, DIRT.base, WALL_X0 - 3, gy0, 14, gy1 - gy0);
   rect(c, DIRT.a, WALL_X0 - 3, gy0, 14, 2);
   // lintel + portcullis
-  rect(c, ST.dark, WALL_X0 - 2, gy0 - 8, 13, 8); rect(c, ST.hi, WALL_X0 - 2, gy0 - 8, 13, 1);
+  rect(c, ST.dark, WALL_X0 - 2, gy0 - 8, 13, 8);
+  rect(c, ST.hi, WALL_X0 - 2, gy0 - 8, 13, 1);
   rect(c, GOLD, WALL_X0 + 3, gy0 - 7, 3, 3);
-  for (let x = WALL_X0 - 1; x < WALL_X0 + 10; x += 3) { rect(c, "#3b3f4f", x, gy0, 1, 7); rect(c, "#8d93a0", x, gy0 + 7, 1, 1); }
+  for (let x = WALL_X0 - 1; x < WALL_X0 + 10; x += 3) {
+    rect(c, "#3b3f4f", x, gy0, 1, 7);
+    rect(c, "#8d93a0", x, gy0 + 7, 1, 1);
+  }
   rect(c, "#3b3f4f", WALL_X0 - 1, gy0 + 2, 10, 1);
   rect(c, ST.dark, WALL_X0 - 3, gy0 - 8, 1, gy1 - gy0 + 8);
-  c.globalAlpha = 0.25; rect(c, "#000", WALL_X0 + 10, gy1, 6, 2); c.globalAlpha = 1;
+  c.globalAlpha = 0.25;
+  rect(c, "#000", WALL_X0 + 10, gy1, 6, 2);
+  c.globalAlpha = 1;
 }
 
 function drawHallDecor(c: Ctx) {
   // rugs
   const rug = (x: number, y: number, w: number, h: number, base: string, trim: string) => {
-    c.globalAlpha = 0.2; rect(c, "#000", x + 2, y + 2, w, h); c.globalAlpha = 1;
+    c.globalAlpha = 0.2;
+    rect(c, "#000", x + 2, y + 2, w, h);
+    c.globalAlpha = 1;
     rect(c, base, x, y, w, h);
-    rect(c, trim, x + 1, y + 1, w - 2, 1); rect(c, trim, x + 1, y + h - 2, w - 2, 1);
-    rect(c, trim, x + 1, y + 1, 1, h - 2); rect(c, trim, x + w - 2, y + 1, 1, h - 2);
-    c.globalAlpha = 0.15; rect(c, "#fff", x + 4, y + 4, w - 8, h - 8); c.globalAlpha = 1;
+    rect(c, trim, x + 1, y + 1, w - 2, 1);
+    rect(c, trim, x + 1, y + h - 2, w - 2, 1);
+    rect(c, trim, x + 1, y + 1, 1, h - 2);
+    rect(c, trim, x + w - 2, y + 1, 1, h - 2);
+    c.globalAlpha = 0.15;
+    rect(c, "#fff", x + 4, y + 4, w - 8, h - 8);
+    c.globalAlpha = 1;
   };
   rug(8, 166, 32, 22, "#8a2f3a", GOLD);
   rug(22, 54, 16, 114, "#8a2f3a", GOLD);
-  for (let y = 62; y < 160; y += 14) { rect(c, GOLD, 28, y, 4, 1); rect(c, GOLD, 29, y - 1, 2, 3); }
+  for (let y = 62; y < 160; y += 14) {
+    rect(c, GOLD, 28, y, 4, 1);
+    rect(c, GOLD, 29, y - 1, 2, 3);
+  }
   rug(80, 66, 38, 28, "#2f4f7f", "#d9c27a");
-  rect(c, "#d9c27a", 96, 76, 6, 8); rect(c, "#2f4f7f", 97, 77, 4, 6); rect(c, "#d9c27a", 98, 79, 2, 2);
+  rect(c, "#d9c27a", 96, 76, 6, 8);
+  rect(c, "#2f4f7f", 97, 77, 4, 6);
+  rect(c, "#d9c27a", 98, 79, 2, 2);
 
   // quest board
   rect(c, "#2a1810", 5, 5, 34, 42);
-  rect(c, WD.mid, 6, 6, 32, 40); rect(c, WD.light, 6, 6, 32, 2);
+  rect(c, WD.mid, 6, 6, 32, 40);
+  rect(c, WD.light, 6, 6, 32, 2);
   rect(c, "#b98a58", 8, 14, 28, 30);
   const rn = rng(5);
   c.globalAlpha = 0.25;
   for (let i = 0; i < 26; i++) rect(c, "#7b5236", 8 + ((rn() * 27) | 0), 14 + ((rn() * 29) | 0), 1, 1);
   c.globalAlpha = 1;
-  rect(c, "#2a1810", 11, 8, 22, 5); rect(c, GOLD, 12, 9, 20, 3);
+  rect(c, "#2a1810", 11, 8, 22, 5);
+  rect(c, GOLD, 12, 9, 20, 3);
   for (let i = 0; i < 6; i++) rect(c, "#8a5a1a", 14 + i * 3, 10, 2, 1);
   rect(c, WD.dark, 6, 44, 32, 2);
   // legs / posts
-  rect(c, WD.dark, 8, 46, 3, 6); rect(c, WD.dark, 33, 46, 3, 6);
-  for (const [nx, ny] of [[14, 22], [24, 21], [32, 23], [15, 34], [25, 35], [32, 36]] as const) {
+  rect(c, WD.dark, 8, 46, 3, 6);
+  rect(c, WD.dark, 33, 46, 3, 6);
+  for (const [nx, ny] of [
+    [14, 22],
+    [24, 21],
+    [32, 23],
+    [15, 34],
+    [25, 35],
+    [32, 36],
+  ] as const) {
     blitC(c, "quest_note", nx, ny);
     rect(c, "#d95763", nx - 1, ny - 4, 1, 1);
   }
@@ -312,19 +439,31 @@ function drawHallDecor(c: Ctx) {
   // hearth
   const hx = HEARTH.x;
   bricks(c, hx - 2, 14, HEARTH.w + 4, 38, 17);
-  rect(c, WD.dark, hx - 4, 11, HEARTH.w + 8, 4); rect(c, WD.top, hx - 4, 11, HEARTH.w + 8, 1); rect(c, WD.mid, hx - 4, 14, HEARTH.w + 8, 1);
+  rect(c, WD.dark, hx - 4, 11, HEARTH.w + 8, 4);
+  rect(c, WD.top, hx - 4, 11, HEARTH.w + 8, 1);
+  rect(c, WD.mid, hx - 4, 14, HEARTH.w + 8, 1);
   rect(c, "#14100c", hx + 3, 24, 16, 28);
   rect(c, "#2a1810", hx + 3, 24, 16, 2);
-  rect(c, "#4a2f20", hx + 5, 47, 12, 3); rect(c, "#6e4a36", hx + 4, 49, 14, 3);
-  rect(c, "#8a8f9c", hx - 4, 50, HEARTH.w + 8, 3); rect(c, "#b0b6c4", hx - 4, 50, HEARTH.w + 8, 1);
+  rect(c, "#4a2f20", hx + 5, 47, 12, 3);
+  rect(c, "#6e4a36", hx + 4, 49, 14, 3);
+  rect(c, "#8a8f9c", hx - 4, 50, HEARTH.w + 8, 3);
+  rect(c, "#b0b6c4", hx - 4, 50, HEARTH.w + 8, 1);
   // crossed swords over the mantle
-  rect(c, "#c8ced8", hx + 4, 4, 1, 6); rect(c, "#c8ced8", hx + 17, 4, 1, 6);
-  rect(c, "#d9a441", hx + 2, 9, 5, 1); rect(c, "#d9a441", hx + 15, 9, 5, 1);
-  rect(c, "#c8ced8", hx + 6, 5, 10, 1); rect(c, "#8d93a0", hx + 6, 6, 10, 1);
+  rect(c, "#c8ced8", hx + 4, 4, 1, 6);
+  rect(c, "#c8ced8", hx + 17, 4, 1, 6);
+  rect(c, "#d9a441", hx + 2, 9, 5, 1);
+  rect(c, "#d9a441", hx + 15, 9, 5, 1);
+  rect(c, "#c8ced8", hx + 6, 5, 10, 1);
+  rect(c, "#8d93a0", hx + 6, 6, 10, 1);
 
   // torch brackets
-  for (const t of TORCHES.slice(0, 4)) { rect(c, "#2a2d3a", t.x - 2, t.y - 1, 5, 3); rect(c, "#6e7585", t.x - 1, t.y - 1, 3, 1); }
-  for (const t of TORCHES.slice(4)) { rect(c, "#2a2d3a", t.x - 2, t.y, 5, 2); }
+  for (const t of TORCHES.slice(0, 4)) {
+    rect(c, "#2a2d3a", t.x - 2, t.y - 1, 5, 3);
+    rect(c, "#6e7585", t.x - 1, t.y - 1, 3, 1);
+  }
+  for (const t of TORCHES.slice(4)) {
+    rect(c, "#2a2d3a", t.x - 2, t.y, 5, 2);
+  }
 
   // shelves behind the receptionist
   const bk = ["#d95763", "#4a6fa5", "#f2c14e", "#5fa55a", "#7b5ea7", "#e8c9a0", "#2b3a67"];
@@ -332,92 +471,178 @@ function drawHallDecor(c: Ctx) {
     const r2 = rng(sy);
     let bx = 81;
     while (bx < 115) {
-      const w = 2 + ((r2() * 2) | 0), h = 5 + ((r2() * 4) | 0);
+      const w = 2 + ((r2() * 2) | 0),
+        h = 5 + ((r2() * 4) | 0);
       if (bx + w > 115) break;
-      if (r2() < 0.45) { // potion bottle
+      if (r2() < 0.45) {
+        // potion bottle
         const col = bk[(r2() * bk.length) | 0];
-        rect(c, col, bx, sy - 5, 3, 4); rect(c, "#e9f3f7", bx + 1, sy - 7, 1, 2); rect(c, "#fff", bx, sy - 5, 1, 1);
+        rect(c, col, bx, sy - 5, 3, 4);
+        rect(c, "#e9f3f7", bx + 1, sy - 7, 1, 2);
+        rect(c, "#fff", bx, sy - 5, 1, 1);
         bx += 4;
       } else {
-        rect(c, bk[(r2() * bk.length) | 0], bx, sy - h, w, h); rect(c, "#fff", bx, sy - h, w, 1);
+        rect(c, bk[(r2() * bk.length) | 0], bx, sy - h, w, h);
+        rect(c, "#fff", bx, sy - h, w, 1);
         bx += w;
       }
     }
-    rect(c, WD.mid, 79, sy, 38, 2); rect(c, WD.top, 79, sy, 38, 1);
+    rect(c, WD.mid, 79, sy, 38, 2);
+    rect(c, WD.top, 79, sy, 38, 1);
   }
 
   // counter
   const cb = COUNTER_BOX;
-  c.globalAlpha = 0.22; rect(c, "#000", cb.x + 2, cb.y + cb.h, cb.w, 3); c.globalAlpha = 1;
+  c.globalAlpha = 0.22;
+  rect(c, "#000", cb.x + 2, cb.y + cb.h, cb.w, 3);
+  c.globalAlpha = 1;
   rect(c, WD.dark, cb.x, cb.y, cb.w, cb.h);
-  rect(c, "#c89a62", cb.x, cb.y, cb.w, 6); rect(c, "#e3bd86", cb.x, cb.y, cb.w, 1);
+  rect(c, "#c89a62", cb.x, cb.y, cb.w, 6);
+  rect(c, "#e3bd86", cb.x, cb.y, cb.w, 1);
   rect(c, WD.mid, cb.x + 1, cb.y + 7, cb.w - 2, cb.h - 8);
-  for (let x = cb.x + 3; x < cb.x + cb.w - 8; x += 12) { rect(c, "#8f6040", x, cb.y + 9, 10, 7); rect(c, "#a8764a", x + 1, cb.y + 10, 8, 5); }
+  for (let x = cb.x + 3; x < cb.x + cb.w - 8; x += 12) {
+    rect(c, "#8f6040", x, cb.y + 9, 10, 7);
+    rect(c, "#a8764a", x + 1, cb.y + 10, 8, 5);
+  }
   rect(c, GOLD, cb.x, cb.y + 6, cb.w, 1);
   // ledger, bell, candle
-  rect(c, "#f6ecd2", 82, 42, 9, 4); rect(c, "#8a6a42", 82, 45, 9, 1); rect(c, "#3b2f3f", 84, 43, 5, 1);
-  rect(c, "#d9a441", 107, 43, 4, 3); rect(c, "#f6d88a", 108, 42, 2, 1);
+  rect(c, "#f6ecd2", 82, 42, 9, 4);
+  rect(c, "#8a6a42", 82, 45, 9, 1);
+  rect(c, "#3b2f3f", 84, 43, 5, 1);
+  rect(c, "#d9a441", 107, 43, 4, 3);
+  rect(c, "#f6d88a", 108, 42, 2, 1);
   rect(c, "#f5efe0", 113, 42, 2, 4);
 
   // weapon rack
-  rect(c, WD.mid, 12, 94, 16, 3); rect(c, WD.mid, 12, 108, 16, 3); rect(c, WD.dark, 11, 94, 2, 20); rect(c, WD.dark, 27, 94, 2, 20);
-  for (let i = 0; i < 4; i++) { rect(c, "#c8ced8", 15 + i * 3, 86, 1, 22); rect(c, "#8d93a0", 16 + i * 3, 88, 1, 20); rect(c, "#d9a441", 14 + i * 3, 104, 3, 1); }
-  rect(c, "#4a6fa5", 11, 112, 5, 4); rect(c, "#d95763", 24, 112, 5, 4); // shields
-  c.globalAlpha = 0.2; rect(c, "#000", 11, 116, 18, 2); c.globalAlpha = 1;
+  rect(c, WD.mid, 12, 94, 16, 3);
+  rect(c, WD.mid, 12, 108, 16, 3);
+  rect(c, WD.dark, 11, 94, 2, 20);
+  rect(c, WD.dark, 27, 94, 2, 20);
+  for (let i = 0; i < 4; i++) {
+    rect(c, "#c8ced8", 15 + i * 3, 86, 1, 22);
+    rect(c, "#8d93a0", 16 + i * 3, 88, 1, 20);
+    rect(c, "#d9a441", 14 + i * 3, 104, 3, 1);
+  }
+  rect(c, "#4a6fa5", 11, 112, 5, 4);
+  rect(c, "#d95763", 24, 112, 5, 4); // shields
+  c.globalAlpha = 0.2;
+  rect(c, "#000", 11, 116, 18, 2);
+  c.globalAlpha = 1;
 
   // tables with stools
-  for (const [tx, ty] of [[58, 138], [58, 186]] as const) {
-    c.globalAlpha = 0.22; rect(c, "#000", tx - 11, ty + 5, 24, 3); c.globalAlpha = 1;
+  for (const [tx, ty] of [
+    [58, 138],
+    [58, 186],
+  ] as const) {
+    c.globalAlpha = 0.22;
+    rect(c, "#000", tx - 11, ty + 5, 24, 3);
+    c.globalAlpha = 1;
     rect(c, WD.dark, tx - 3, ty + 2, 6, 6);
-    rect(c, WD.mid, tx - 11, ty - 4, 22, 9); rect(c, WD.mid, tx - 9, ty - 6, 18, 13);
-    rect(c, WD.light, tx - 10, ty - 4, 20, 8); rect(c, WD.light, tx - 8, ty - 5, 16, 10);
+    rect(c, WD.mid, tx - 11, ty - 4, 22, 9);
+    rect(c, WD.mid, tx - 9, ty - 6, 18, 13);
+    rect(c, WD.light, tx - 10, ty - 4, 20, 8);
+    rect(c, WD.light, tx - 8, ty - 5, 16, 10);
     rect(c, WD.top, tx - 8, ty - 5, 16, 1);
-    for (const sx of [-16, 14]) { rect(c, WD.dark, tx + sx, ty - 1, 5, 6); rect(c, "#8a3f3a", tx + sx, ty - 2, 5, 3); rect(c, "#a5504a", tx + sx, ty - 2, 5, 1); }
-    rect(c, "#f5efe0", tx - 5, ty - 3, 3, 3); rect(c, "#d9a441", tx - 2, ty - 2, 1, 1);
-    rect(c, "#e8c9a0", tx + 3, ty - 3, 3, 3); rect(c, "#f6ecd2", tx + 3, ty - 3, 3, 1);
+    for (const sx of [-16, 14]) {
+      rect(c, WD.dark, tx + sx, ty - 1, 5, 6);
+      rect(c, "#8a3f3a", tx + sx, ty - 2, 5, 3);
+      rect(c, "#a5504a", tx + sx, ty - 2, 5, 1);
+    }
+    rect(c, "#f5efe0", tx - 5, ty - 3, 3, 3);
+    rect(c, "#d9a441", tx - 2, ty - 2, 1, 1);
+    rect(c, "#e8c9a0", tx + 3, ty - 3, 3, 3);
+    rect(c, "#f6ecd2", tx + 3, ty - 3, 3, 1);
     rect(c, "#f5efe0", tx + 1, ty - 6, 1, 3);
   }
-  blitB(c, "barrel", 14, 138); blitB(c, "barrel", 14, 150); blitB(c, "barrel", 21, 144);
+  blitB(c, "barrel", 14, 138);
+  blitB(c, "barrel", 14, 150);
+  blitB(c, "barrel", 21, 144);
 
   // tavern bar (along the right wall, patrons stand on its left)
   const b = BAR;
-  c.globalAlpha = 0.22; rect(c, "#000", b.x - 3, b.y + 3, 3, b.h); c.globalAlpha = 1;
+  c.globalAlpha = 0.22;
+  rect(c, "#000", b.x - 3, b.y + 3, 3, b.h);
+  c.globalAlpha = 1;
   rect(c, WD.dark, b.x - 3, b.y - 2, b.w + 3, b.h + 8);
   rect(c, WD.mid, b.x - 2, b.y - 1, 2, b.h + 6);
-  rect(c, WD.light, b.x, b.y - 1, b.w, b.h + 2); rect(c, WD.top, b.x + 1, b.y, b.w - 2, b.h);
-  rect(c, WD.hi, b.x, b.y - 1, b.w, 1); rect(c, WD.hi, b.x, b.y - 1, 1, b.h);
-  for (let y = b.y + 6; y < b.y + b.h; y += 11) { c.globalAlpha = 0.16; rect(c, "#5a3a26", b.x + 3, y, b.w - 6, 1); c.globalAlpha = 1; }
+  rect(c, WD.light, b.x, b.y - 1, b.w, b.h + 2);
+  rect(c, WD.top, b.x + 1, b.y, b.w - 2, b.h);
+  rect(c, WD.hi, b.x, b.y - 1, b.w, 1);
+  rect(c, WD.hi, b.x, b.y - 1, 1, b.h);
+  for (let y = b.y + 6; y < b.y + b.h; y += 11) {
+    c.globalAlpha = 0.16;
+    rect(c, "#5a3a26", b.x + 3, y, b.w - 6, 1);
+    c.globalAlpha = 1;
+  }
   rect(c, WD.dark, b.x - 3, b.y + b.h + 5, b.w + 3, 2);
-  blitC(c, "ale", b.x + 5, b.y + 12); blitC(c, "ale", b.x + 12, b.y + 24);
-  blitC(c, "ale", b.x + 6, b.y + 38); blitC(c, "ale", b.x + 12, b.y + 46);
+  blitC(c, "ale", b.x + 5, b.y + 12);
+  blitC(c, "ale", b.x + 12, b.y + 24);
+  blitC(c, "ale", b.x + 6, b.y + 38);
+  blitC(c, "ale", b.x + 12, b.y + 46);
   blitB(c, "barrel", b.x + 10, b.y - 2);
-  blitB(c, "barrel", 108, H - 2); blitB(c, "barrel", 100, H - 1);
+  blitB(c, "barrel", 108, H - 2);
+  blitB(c, "barrel", 100, H - 1);
   // hanging tavern sign on the back wall
-  rect(c, WD.dark, 119, 6, 1, 6); rect(c, WD.mid, 108, 12, 14, 8); rect(c, WD.light, 109, 13, 12, 6);
-  rect(c, "#f5efe0", 112, 14, 5, 4); rect(c, GOLD, 113, 14, 3, 1); rect(c, "#f5efe0", 117, 15, 1, 2);
+  rect(c, WD.dark, 119, 6, 1, 6);
+  rect(c, WD.mid, 108, 12, 14, 8);
+  rect(c, WD.light, 109, 13, 12, 6);
+  rect(c, "#f5efe0", 112, 14, 5, 4);
+  rect(c, GOLD, 113, 14, 3, 1);
+  rect(c, "#f5efe0", 117, 15, 1, 2);
 
   // door (left wall)
   rect(c, ST.dark, 0, 152, 10, 4);
   rect(c, "#2a1810", 0, 156, 9, 40);
   rect(c, WD.mid, 0, 157, 8, 38);
-  for (let y = 158; y < 194; y += 6) { rect(c, WD.light, 0, y, 8, 5); rect(c, WD.top, 0, y, 8, 1); }
-  rect(c, "#2a2d3a", 0, 163, 8, 2); rect(c, "#2a2d3a", 0, 183, 8, 2);
+  for (let y = 158; y < 194; y += 6) {
+    rect(c, WD.light, 0, y, 8, 5);
+    rect(c, WD.top, 0, y, 8, 1);
+  }
+  rect(c, "#2a2d3a", 0, 163, 8, 2);
+  rect(c, "#2a2d3a", 0, 183, 8, 2);
   rect(c, GOLD, 6, 176, 2, 2);
-  c.globalAlpha = 0.3; rect(c, "#000", 8, 156, 2, 40); c.globalAlpha = 1;
+  c.globalAlpha = 0.3;
+  rect(c, "#000", 8, 156, 2, 40);
+  c.globalAlpha = 1;
   // welcome light on floor by the door
-  c.globalAlpha = 0.12; rect(c, "#ffe6b4", 9, 160, 7, 32); c.globalAlpha = 1;
+  c.globalAlpha = 0.12;
+  rect(c, "#ffe6b4", 9, 160, 7, 32);
+  c.globalAlpha = 1;
 }
 
 function drawWildDecor(c: Ctx) {
   // shadow of the hall wall
-  c.globalAlpha = 0.25; rect(c, "#000", HALL_W + 1, 52, 4, H - 52); c.globalAlpha = 0.12; rect(c, "#000", HALL_W + 5, 52, 3, H - 52); c.globalAlpha = 1;
+  c.globalAlpha = 0.25;
+  rect(c, "#000", HALL_W + 1, 52, 4, H - 52);
+  c.globalAlpha = 0.12;
+  rect(c, "#000", HALL_W + 5, 52, 3, H - 52);
+  c.globalAlpha = 1;
   const items: { n: string; x: number; y: number }[] = [];
   const add = (n: string, x: number, y: number) => items.push({ n, x, y });
-  for (const [x, y] of [[152, 80], [206, 78], [262, 80], [312, 78], [374, 84], [140, 62]] as const) add("tree", x, y);
-  for (const [x, y] of [[378, 214], [330, 215], [268, 214], [214, 215], [150, 214]] as const) add("tree", x, y);
+  for (const [x, y] of [
+    [152, 80],
+    [206, 78],
+    [262, 80],
+    [312, 78],
+    [374, 84],
+    [140, 62],
+  ] as const)
+    add("tree", x, y);
+  for (const [x, y] of [
+    [378, 214],
+    [330, 215],
+    [268, 214],
+    [214, 215],
+    [150, 214],
+  ] as const)
+    add("tree", x, y);
   add("sign", 142, 112);
-  add("rock", 154, 150); add("rock", 380, 150);
-  add("bush", 190, 148); add("bush", 262, 146); add("bush", 330, 148); add("bush", 372, 128);
+  add("rock", 154, 150);
+  add("rock", 380, 150);
+  add("bush", 190, 148);
+  add("bush", 262, 146);
+  add("bush", 330, 148);
+  add("bush", 372, 128);
   // scatter
   const r = rng(77);
   const free = (x: number, y: number) => {
@@ -432,7 +657,8 @@ function drawWildDecor(c: Ctx) {
     return true;
   };
   for (let i = 0, n = 0; i < 200 && n < 46; i++) {
-    const x = 146 + ((r() * 234) | 0), y = 80 + ((r() * 132) | 0);
+    const x = 146 + ((r() * 234) | 0),
+      y = 80 + ((r() * 132) | 0);
     if (!free(x, y)) continue;
     const k = r();
     add(k < 0.6 ? "flower" : k < 0.82 ? "bush" : "rock", x, y);
@@ -441,11 +667,16 @@ function drawWildDecor(c: Ctx) {
   items.sort((a, b) => a.y - b.y);
   for (const it of items) {
     const s = prop(it.n);
-    c.globalAlpha = 0.22; rect(c, "#000", it.x - s.width / 2 + 1, it.y - 1, s.width - 1, 2); c.globalAlpha = 1;
+    c.globalAlpha = 0.22;
+    rect(c, "#000", it.x - s.width / 2 + 1, it.y - 1, s.width - 1, 2);
+    c.globalAlpha = 1;
     blitB(c, it.n, it.x, it.y);
   }
   // gate torch posts on the wilderness side (stone braziers)
-  for (const t of TORCHES.slice(2, 4)) { rect(c, ST.dark, t.x - 3, t.y, 7, 3); rect(c, ST.hi, t.x - 3, t.y, 7, 1); }
+  for (const t of TORCHES.slice(2, 4)) {
+    rect(c, ST.dark, t.x - 3, t.y, 7, 3);
+    rect(c, ST.hi, t.x - 3, t.y, 7, 1);
+  }
 }
 
 function buildBg(): HTMLCanvasElement {
@@ -473,35 +704,55 @@ function nightness(hr: number): number {
 }
 
 function buildLighting(hr: number) {
-  const o = mk(); const d = o.c;
+  const o = mk();
+  const d = o.c;
   const night = nightness(hr);
   if (hr >= 16 && hr < 19.5) {
     d.globalAlpha = Math.min(0.12, Math.max(0, 1 - Math.abs(hr - 17.8) / 1.7) * 0.12);
-    rect(d, "#ff9a4a", 0, 0, W, H); d.globalAlpha = 1;
+    rect(d, "#ff9a4a", 0, 0, W, H);
+    d.globalAlpha = 1;
   }
   if (night > 0) {
-    d.fillStyle = `rgba(18,22,66,${0.2 * night})`; d.fillRect(0, 0, HALL_W, H);
-    d.fillStyle = `rgba(10,16,58,${0.5 * night})`; d.fillRect(HALL_W, 0, W - HALL_W, H);
+    d.fillStyle = `rgba(18,22,66,${0.2 * night})`;
+    d.fillRect(0, 0, HALL_W, H);
+    d.fillStyle = `rgba(10,16,58,${0.5 * night})`;
+    d.fillRect(HALL_W, 0, W - HALL_W, H);
     const pools: [number, number, number][] = [
-      [42, 28, 44], [73, 28, 44], [58, 44, 66], [98, 40, 44], [105, 170, 64], [58, 138, 34], [58, 186, 34], [30, 60, 34],
-      [122, 94, 46], [122, 152, 46], [340, 46, 46], [140, 124, 40],
+      [42, 28, 44],
+      [73, 28, 44],
+      [58, 44, 66],
+      [98, 40, 44],
+      [105, 170, 64],
+      [58, 138, 34],
+      [58, 186, 34],
+      [30, 60, 34],
+      [122, 94, 46],
+      [122, 152, 46],
+      [340, 46, 46],
+      [140, 124, 40],
     ];
     d.globalCompositeOperation = "destination-out";
     for (const [lx, ly, r] of pools) {
       const g = d.createRadialGradient(lx, ly, 0, lx, ly, r);
-      g.addColorStop(0, `rgba(0,0,0,${0.6 * night})`); g.addColorStop(1, "rgba(0,0,0,0)");
-      d.fillStyle = g; d.fillRect(lx - r, ly - r, r * 2, r * 2);
+      g.addColorStop(0, `rgba(0,0,0,${0.6 * night})`);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      d.fillStyle = g;
+      d.fillRect(lx - r, ly - r, r * 2, r * 2);
     }
     d.globalCompositeOperation = "source-over";
     for (const [lx, ly, r] of pools) {
       const g = d.createRadialGradient(lx, ly, 0, lx, ly, r);
-      g.addColorStop(0, `rgba(255,190,90,${0.22 * night})`); g.addColorStop(1, "rgba(255,190,90,0)");
-      d.fillStyle = g; d.fillRect(lx - r, ly - r, r * 2, r * 2);
+      g.addColorStop(0, `rgba(255,190,90,${0.22 * night})`);
+      g.addColorStop(1, "rgba(255,190,90,0)");
+      d.fillStyle = g;
+      d.fillRect(lx - r, ly - r, r * 2, r * 2);
     }
   }
   const v = d.createRadialGradient(W / 2, H / 2 + 10, 100, W / 2, H / 2 + 10, 250);
-  v.addColorStop(0, "rgba(30,20,10,0)"); v.addColorStop(1, "rgba(30,20,10,0.25)");
-  d.fillStyle = v; d.fillRect(0, 0, W, H);
+  v.addColorStop(0, "rgba(30,20,10,0)");
+  v.addColorStop(1, "rgba(30,20,10,0.25)");
+  d.fillStyle = v;
+  d.fillRect(0, 0, W, H);
   overlay = o.cv;
 }
 
@@ -512,18 +763,28 @@ function lerpCol(a: string, b: string, t: number): string {
   return `rgb(${m(0)},${m(1)},${m(2)})`;
 }
 const SKY_KEYS: [number, string, string][] = [
-  [0, "#0b1030", "#1f2c63"], [5, "#0b1030", "#1f2c63"], [6.5, "#6a6fb5", "#ffb27a"], [8, "#59b0ee", "#bfe8ff"],
-  [16.5, "#59b0ee", "#bfe8ff"], [18, "#4f4a94", "#ff8f5c"], [19.5, "#0b1030", "#1f2c63"], [24, "#0b1030", "#1f2c63"],
+  [0, "#0b1030", "#1f2c63"],
+  [5, "#0b1030", "#1f2c63"],
+  [6.5, "#6a6fb5", "#ffb27a"],
+  [8, "#59b0ee", "#bfe8ff"],
+  [16.5, "#59b0ee", "#bfe8ff"],
+  [18, "#4f4a94", "#ff8f5c"],
+  [19.5, "#0b1030", "#1f2c63"],
+  [24, "#0b1030", "#1f2c63"],
 ];
 function skyAt(hr: number): [string, string] {
   for (let i = 1; i < SKY_KEYS.length; i++) {
-    const a = SKY_KEYS[i - 1], b = SKY_KEYS[i];
+    const a = SKY_KEYS[i - 1],
+      b = SKY_KEYS[i];
     if (hr <= b[0]) {
       const t = (hr - a[0]) / (b[0] - a[0] || 1);
       // lerpCol returns rgb(); keep hex interpolation for chaining
       const hex = (x: string, y: string) => {
         const p = (s: string, k: number) => parseInt(s.slice(1 + k * 2, 3 + k * 2), 16);
-        const m = (k: number) => Math.round(p(x, k) + (p(y, k) - p(x, k)) * t).toString(16).padStart(2, "0");
+        const m = (k: number) =>
+          Math.round(p(x, k) + (p(y, k) - p(x, k)) * t)
+            .toString(16)
+            .padStart(2, "0");
         return `#${m(0)}${m(1)}${m(2)}`;
       };
       return [hex(a[1], b[1]), hex(a[2], b[2])];
@@ -534,39 +795,53 @@ function skyAt(hr: number): [string, string] {
 
 function drawSky(c: Ctx, t: number, hr: number) {
   c.save();
-  c.beginPath(); c.rect(HALL_W, 0, W - HALL_W, 52); c.clip();
+  c.beginPath();
+  c.rect(HALL_W, 0, W - HALL_W, 52);
+  c.clip();
   const [top, bot] = skyAt(hr);
   for (let b = 0; b < 13; b++) rect(c, lerpCol(top, bot, b / 12), HALL_W, b * 4, W - HALL_W, 4);
   const night = nightness(hr);
   if (night > 0.2) {
     for (let s = 0; s < 22; s++) {
-      const sx = HALL_W + 6 + ((s * 37 + 11) % 246), sy = 3 + ((s * 17) % 26);
+      const sx = HALL_W + 6 + ((s * 37 + 11) % 246),
+        sy = 3 + ((s * 17) % 26);
       c.globalAlpha = night * (0.4 + 0.6 * Math.abs(Math.sin(t * 1.8 + s * 1.3)));
       rect(c, "#ffffff", sx, sy, 1, 1);
     }
     c.globalAlpha = 1;
   }
-  if (night < 0.9) { // sun
+  if (night < 0.9) {
+    // sun
     const u = Math.min(1, Math.max(0, (hr - 6) / 12));
-    const sx = HALL_W + 14 + u * 230, sy = 38 - Math.sin(u * Math.PI) * 30;
+    const sx = HALL_W + 14 + u * 230,
+      sy = 38 - Math.sin(u * Math.PI) * 30;
     c.globalAlpha = 1 - night;
-    rect(c, "#fff3b0", sx - 3, sy - 2, 7, 5); rect(c, "#fff3b0", sx - 2, sy - 3, 5, 7); rect(c, "#ffd96a", sx - 2, sy - 2, 5, 5);
+    rect(c, "#fff3b0", sx - 3, sy - 2, 7, 5);
+    rect(c, "#fff3b0", sx - 2, sy - 3, 5, 7);
+    rect(c, "#ffd96a", sx - 2, sy - 2, 5, 5);
     c.globalAlpha = 1;
   }
-  if (night > 0.3) { // moon
+  if (night > 0.3) {
+    // moon
     const u = hr >= 18 ? (hr - 18) / 12 : (hr + 6) / 12;
-    const mx = HALL_W + 14 + Math.min(1, u) * 230, my = 32 - Math.sin(Math.min(1, u) * Math.PI) * 22;
+    const mx = HALL_W + 14 + Math.min(1, u) * 230,
+      my = 32 - Math.sin(Math.min(1, u) * Math.PI) * 22;
     c.globalAlpha = night;
-    rect(c, "#f4f0d8", mx - 3, my - 3, 7, 7); rect(c, "#f4f0d8", mx - 4, my - 2, 9, 5);
+    rect(c, "#f4f0d8", mx - 3, my - 3, 7, 7);
+    rect(c, "#f4f0d8", mx - 4, my - 2, 9, 5);
     rect(c, "#d6d0b0", mx, my - 1, 2, 2);
     c.globalAlpha = 1;
   }
   const cloudA = 0.95 - night * 0.75;
   c.globalAlpha = cloudA;
   for (let k = 0; k < 3; k++) {
-    const cx = HALL_W + ((t * 2.2 + k * 94) % 300) - 24, cy = 8 + k * 7;
-    rect(c, "#ffffff", cx, cy, 16, 4); rect(c, "#ffffff", cx + 3, cy - 2, 9, 3);
-    c.globalAlpha = cloudA * 0.35; rect(c, "#9aa8d0", cx, cy + 3, 16, 1); c.globalAlpha = cloudA;
+    const cx = HALL_W + ((t * 2.2 + k * 94) % 300) - 24,
+      cy = 8 + k * 7;
+    rect(c, "#ffffff", cx, cy, 16, 4);
+    rect(c, "#ffffff", cx + 3, cy - 2, 9, 3);
+    c.globalAlpha = cloudA * 0.35;
+    rect(c, "#9aa8d0", cx, cy + 3, 16, 1);
+    c.globalAlpha = cloudA;
   }
   c.globalAlpha = 1;
   c.restore();
@@ -593,7 +868,8 @@ function drawLights(c: Ctx, t: number) {
     rect(c, GOLD, hx + 1 + i * 2, 47 - h + 3, 1, Math.max(1, h - 3));
   }
   rect(c, "#d95763", hx, 45, 12, 2);
-  if (Math.floor(t * 5) % 3 === 0) rect(c, GOLD, hx + 2 + ((Math.floor(t * 9) * 5) % 9), 36 - (Math.floor(t * 9) % 4), 1, 1);
+  if (Math.floor(t * 5) % 3 === 0)
+    rect(c, GOLD, hx + 2 + ((Math.floor(t * 9) * 5) % 9), 36 - (Math.floor(t * 9) % 4), 1, 1);
   // candle on the counter
   rect(c, GOLD, 113, 40 + (Math.floor(t * 8) % 2), 2, 2);
   // wall + gate torches
@@ -608,15 +884,20 @@ function drawLights(c: Ctx, t: number) {
 const tintCache = new Map<string, WeakMap<HTMLCanvasElement, HTMLCanvasElement>>();
 function tinted(src: HTMLCanvasElement, col: string): HTMLCanvasElement {
   let m = tintCache.get(col);
-  if (!m) { m = new WeakMap(); tintCache.set(col, m); }
+  if (!m) {
+    m = new WeakMap();
+    tintCache.set(col, m);
+  }
   let t = m.get(src);
   if (t) return t;
   t = document.createElement("canvas");
-  t.width = src.width; t.height = src.height;
+  t.width = src.width;
+  t.height = src.height;
   const g = t.getContext("2d")!;
   g.drawImage(src, 0, 0);
   g.globalCompositeOperation = "source-in";
-  g.fillStyle = col; g.fillRect(0, 0, t.width, t.height);
+  g.fillStyle = col;
+  g.fillRect(0, 0, t.width, t.height);
   m.set(src, t);
   return t;
 }
@@ -631,13 +912,22 @@ function hpBar(c: Ctx, cx: number, y: number, w: number, h: number, frac: number
   rect(c, f > 0.5 ? "#6fd36a" : f > 0.25 ? "#f2c14e" : "#ff5a5a", cx - w / 2, y, fw, h);
 }
 
-const WORLD_FONT = '600 6.5px ui-sans-serif, system-ui, "Sukhumvit Set", "Noto Sans Thai", "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
-const eob = (x: number) => { const a = 1.70158, b = a + 1, k = x - 1; return 1 + b * k * k * k + a * k * k; };
+const WORLD_FONT =
+  '600 6.5px ui-sans-serif, system-ui, "Sukhumvit Set", "Noto Sans Thai", "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+const eob = (x: number) => {
+  const a = 1.70158,
+    b = a + 1,
+    k = x - 1;
+  return 1 + b * k * k * k + a * k * k;
+};
 
 function outlined(c: Ctx, text: string, x: number, y: number, fill: string) {
-  c.lineJoin = "round"; c.lineWidth = 1.4; c.strokeStyle = INK;
+  c.lineJoin = "round";
+  c.lineWidth = 1.4;
+  c.strokeStyle = INK;
   c.strokeText(text, x, y);
-  c.fillStyle = fill; c.fillText(text, x, y);
+  c.fillStyle = fill;
+  c.fillText(text, x, y);
 }
 
 /** `under`: the duel/territory particles, drawn before the entity pass (they fade, so they must never sit over a character) */
@@ -653,12 +943,13 @@ function drawParticles(c: Ctx, o: Office, under: boolean) {
 }
 
 function drawPopups(c: Ctx, o: Office) {
-  c.textAlign = "center"; c.textBaseline = "middle";
+  c.textAlign = "center";
+  c.textBaseline = "middle";
   for (const p of o.popups) {
     const u = Math.max(0, Math.min(1, (o.clock - p.born) / p.dur));
     const y = p.y - 12 * eob(Math.min(1, u * 1.6));
     c.globalAlpha = u > 0.7 ? Math.max(0, (1 - u) / 0.3) : 1;
-    c.font = p.big ? '800 9px ui-sans-serif, system-ui, sans-serif' : '700 6.5px ui-sans-serif, system-ui, sans-serif';
+    c.font = p.big ? "800 9px ui-sans-serif, system-ui, sans-serif" : "700 6.5px ui-sans-serif, system-ui, sans-serif";
     const x = Math.round(p.x);
     outlined(c, p.text, x, Math.round(y), p.col);
     if (p.star) blitC(c, "crit", x - Math.ceil(c.measureText(p.text).width / 2) - 4, y);
@@ -667,11 +958,24 @@ function drawPopups(c: Ctx, o: Office) {
 }
 
 // ---- territory: claim flags, conflict lines and swords (all drawn as separate UI; never over/through characters' colours) ----
-interface TLink { ax: number; ay: number; bx: number; by: number; ix: number; iy: number; level: "overlap" | "clash"; ea: Employee | null; eb: Employee | null }
+interface TLink {
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  ix: number;
+  iy: number;
+  level: "overlap" | "clash";
+  ea: Employee | null;
+  eb: Employee | null;
+}
 const linkPool: TLink[] = [];
 let linkN = 0;
 // badge sits above the heads: head top (CH_H) + tallest overhead bubble (17) + gap (6) + badge radius (7)
-const ICON_R = 7, ICON_UP = CH_H + 17 + 6 + ICON_R, ICON_STEP = 6, ICON_TRIES = 4;
+const ICON_R = 7,
+  ICON_UP = CH_H + 17 + 6 + ICON_R,
+  ICON_STEP = 6,
+  ICON_TRIES = 4;
 function hitsBox(x0: number, y0: number, x1: number, y1: number, cx: number, cy: number): boolean {
   return cx + ICON_R > x0 && cx - ICON_R < x1 && cy + ICON_R > y0 && cy - ICON_R < y1;
 }
@@ -693,21 +997,34 @@ function placeLinkIcon(o: Office, l: TLink, topFeetY: number) {
   const x = Math.max(ICON_R + 1, Math.min(W - ICON_R - 1, Math.round((l.ax + l.bx) / 2)));
   let y = Math.round(topFeetY - ICON_UP);
   for (let k = 0; k < ICON_TRIES && y > ICON_R + 1 && iconBlocked(o, x, y); k++) y -= ICON_STEP;
-  l.ix = x; l.iy = Math.max(ICON_R + 1, Math.min(H - ICON_R - 1, y));
+  l.ix = x;
+  l.iy = Math.max(ICON_R + 1, Math.min(H - ICON_R - 1, y));
 }
 
 /** fills the shared pool; returns the live count */
 function territoryLinks(o: Office): number {
   linkN = 0;
-  for (const r of o.conflictRows()) { // cached in the engine; only rebuilt when territory/roster changes
+  for (const r of o.conflictRows()) {
+    // cached in the engine; only rebuilt when territory/roster changes
     if (r.level === "clash" && o.isSettled(r)) continue; // fought out: the arena between the plots is cleared
     let first: Employee | null = null;
     for (let k = 0; k < r.sids.length; k++) {
       const e = o.employees.get(r.sids[k]);
       if (!e || o.isHidden(e) || e.state === "LEAVING" || e.x < 0 || e.x > W || e.y < 0 || e.y > H) continue;
-      if (!first) { first = e; continue; }
-      const l = linkPool[linkN] ?? (linkPool[linkN] = { ax: 0, ay: 0, bx: 0, by: 0, ix: 0, iy: 0, level: "overlap", ea: null, eb: null });
-      l.ax = first.x; l.ay = first.y - 9; l.bx = e.x; l.by = e.y - 9; l.level = r.level; l.ea = first; l.eb = e;
+      if (!first) {
+        first = e;
+        continue;
+      }
+      const l =
+        linkPool[linkN] ??
+        (linkPool[linkN] = { ax: 0, ay: 0, bx: 0, by: 0, ix: 0, iy: 0, level: "overlap", ea: null, eb: null });
+      l.ax = first.x;
+      l.ay = first.y - 9;
+      l.bx = e.x;
+      l.by = e.y - 9;
+      l.level = r.level;
+      l.ea = first;
+      l.eb = e;
       placeLinkIcon(o, l, Math.min(first.y, e.y));
       linkN++;
     }
@@ -718,22 +1035,36 @@ function territoryLinks(o: Office): number {
 // ---- territory: land plots, contested strip + flag ----
 const ROPE = "#d9c38a";
 /** claimed land: tinted ground + rope fence with stakes in the owner's colour. Drawn on the ground layer, before entities. */
-const RA = { x: 0, y: 0, w: 0, h: 0 }, RB = { x: 0, y: 0, w: 0, h: 0 }, MID = { x: 0, y: 0 };
+const RA = { x: 0, y: 0, w: 0, h: 0 },
+  RB = { x: 0, y: 0, w: 0, h: 0 },
+  MID = { x: 0, y: 0 };
 function drawPlots(c: Ctx, o: Office) {
   for (const e of o.employees.values()) {
     if (o.isHidden(e) || e.deskIdx < 0 || e.state === "LEAVING") continue;
     const n = o.claimsOf(e.id);
     if (n <= 0) continue;
-    const r = plotRect(e.deskIdx, n, RA), col = e.look.shirt;
-    c.globalAlpha = 0.2; rect(c, col, r.x, r.y, r.w, r.h);
+    const r = plotRect(e.deskIdx, n, RA),
+      col = e.look.shirt;
+    c.globalAlpha = 0.2;
+    rect(c, col, r.x, r.y, r.w, r.h);
     c.globalAlpha = 0.14; // tilled-soil ticks
-    for (let yy = r.y + 4, row = 0; yy < r.y + r.h - 2; yy += 6, row++) for (let xx = r.x + 4 + (row & 1) * 4; xx < r.x + r.w - 2; xx += 8) rect(c, "#ffffff", xx, yy, 2, 1);
+    for (let yy = r.y + 4, row = 0; yy < r.y + r.h - 2; yy += 6, row++)
+      for (let xx = r.x + 4 + (row & 1) * 4; xx < r.x + r.w - 2; xx += 8) rect(c, "#ffffff", xx, yy, 2, 1);
     c.globalAlpha = 1;
-    rect(c, ROPE, r.x, r.y, r.w, 1); rect(c, ROPE, r.x, r.y + r.h, r.w + 1, 1);
-    rect(c, ROPE, r.x, r.y, 1, r.h); rect(c, ROPE, r.x + r.w, r.y, 1, r.h);
-    for (let x = r.x; x <= r.x + r.w; x += 8) { stake(c, x, r.y, col); stake(c, x, r.y + r.h, col); }
-    for (let y = r.y + 8; y < r.y + r.h - 3; y += 8) { stake(c, r.x, y, col); stake(c, r.x + r.w, y, col); }
-    stake(c, r.x + r.w, r.y, col); stake(c, r.x + r.w, r.y + r.h, col);
+    rect(c, ROPE, r.x, r.y, r.w, 1);
+    rect(c, ROPE, r.x, r.y + r.h, r.w + 1, 1);
+    rect(c, ROPE, r.x, r.y, 1, r.h);
+    rect(c, ROPE, r.x + r.w, r.y, 1, r.h);
+    for (let x = r.x; x <= r.x + r.w; x += 8) {
+      stake(c, x, r.y, col);
+      stake(c, x, r.y + r.h, col);
+    }
+    for (let y = r.y + 8; y < r.y + r.h - 3; y += 8) {
+      stake(c, r.x, y, col);
+      stake(c, r.x + r.w, y, col);
+    }
+    stake(c, r.x + r.w, r.y, col);
+    stake(c, r.x + r.w, r.y + r.h, col);
   }
 }
 function stake(c: Ctx, x: number, y: number, col: string) {
@@ -747,19 +1078,31 @@ function inRect(px: number, py: number, r: { x: number; y: number; w: number; h:
 function drawContested(c: Ctx, o: Office, n: number, t: number) {
   const still = o.reducedMotion;
   for (let i = 0; i < n; i++) {
-    const l = linkPool[i], a = l.ea, b = l.eb;
+    const l = linkPool[i],
+      a = l.ea,
+      b = l.eb;
     if (!a || !b || a.deskIdx < 0 || b.deskIdx < 0 || a.state === "LEAVING" || b.state === "LEAVING") continue;
-    const ra = plotRect(a.deskIdx, Math.max(1, o.claimsOf(a.id)), RA), rb = plotRect(b.deskIdx, Math.max(1, o.claimsOf(b.id)), RB);
-    const ax = ra.x + ra.w / 2, ay = ra.y + ra.h / 2, bx = rb.x + rb.w / 2, by = rb.y + rb.h / 2;
-    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
-    const steps = Math.ceil(len / 4), nx = -dy / len, ny = dx / len;
+    const ra = plotRect(a.deskIdx, Math.max(1, o.claimsOf(a.id)), RA),
+      rb = plotRect(b.deskIdx, Math.max(1, o.claimsOf(b.id)), RB);
+    const ax = ra.x + ra.w / 2,
+      ay = ra.y + ra.h / 2,
+      bx = rb.x + rb.w / 2,
+      by = rb.y + rb.h / 2;
+    const dx = bx - ax,
+      dy = by - ay,
+      len = Math.hypot(dx, dy) || 1;
+    const steps = Math.ceil(len / 4),
+      nx = -dy / len,
+      ny = dx / len;
     const flip = still ? 0 : Math.floor(t * (l.level === "clash" ? 3 : 1.4)) & 1;
     for (let k = 0; k <= steps; k++) {
       if (Math.abs(k - steps / 2) > 6) continue;
-      const px = ax + (dx * k) / steps, py = ay + (dy * k) / steps;
+      const px = ax + (dx * k) / steps,
+        py = ay + (dy * k) / steps;
       if (inRect(px, py, ra, 4) || inRect(px, py, rb, 4)) continue;
       for (let j = -3; j <= 3; j++) {
-        const tx = Math.floor((px + nx * j * 4) / 4), ty = Math.floor((py + ny * j * 4) / 4);
+        const tx = Math.floor((px + nx * j * 4) / 4),
+          ty = Math.floor((py + ny * j * 4) / 4);
         rect(c, ((tx + ty + flip) & 1) === 0 ? a.look.shirt : b.look.shirt, tx * 4, ty * 4, 4, 4);
       }
     }
@@ -768,38 +1111,72 @@ function drawContested(c: Ctx, o: Office, n: number, t: number) {
 }
 function drawMidFlag(c: Ctx, o: Office, l: TLink, a: Employee, b: Employee, t: number) {
   const m = duelMidOfDesks(a.deskIdx, b.deskIdx, MID);
-  const x = m.x, y = m.y;
+  const x = m.x,
+    y = m.y;
   shadow(c, x, y, 6);
   const tug = !o.reducedMotion && o.tugUntil(a.id, b.id) > o.clock;
-  if (l.level === "clash") { // knocked over: stub, snapped pole on the ground, two torn scraps
-    rect(c, INK, x - 1, y - 6, 3, 6); rect(c, "#8a6a3a", x, y - 5, 1, 5);
-    rect(c, INK, x + 2, y - 3, 11, 4); rect(c, "#8a6a3a", x + 3, y - 2, 9, 2);
-    rect(c, INK, x - 9, y - 1, 7, 4); rect(c, a.look.shirt, x - 8, y, 5, 2);
-    rect(c, INK, x + 9, y, 7, 4); rect(c, b.look.shirt, x + 10, y + 1, 5, 2);
+  if (l.level === "clash") {
+    // knocked over: stub, snapped pole on the ground, two torn scraps
+    rect(c, INK, x - 1, y - 6, 3, 6);
+    rect(c, "#8a6a3a", x, y - 5, 1, 5);
+    rect(c, INK, x + 2, y - 3, 11, 4);
+    rect(c, "#8a6a3a", x + 3, y - 2, 9, 2);
+    rect(c, INK, x - 9, y - 1, 7, 4);
+    rect(c, a.look.shirt, x - 8, y, 5, 2);
+    rect(c, INK, x + 9, y, 7, 4);
+    rect(c, b.look.shirt, x + 10, y + 1, 5, 2);
     return;
   }
   const sway = o.reducedMotion ? 0 : Math.round(Math.sin(t * (tug ? 14 : 2.4)) * (tug ? 5 : 2));
-  rect(c, INK, x - 1, y - 17, 3, 17); rect(c, "#8a6a3a", x, y - 16, 1, 16);
+  rect(c, INK, x - 1, y - 17, 3, 17);
+  rect(c, "#8a6a3a", x, y - 16, 1, 16);
   rect(c, INK, x + sway, y - 17, 12, 8);
-  rect(c, a.look.shirt, x + 1 + sway, y - 16, 5, 6); rect(c, b.look.shirt, x + 6 + sway, y - 16, 5, 6);
+  rect(c, a.look.shirt, x + 1 + sway, y - 16, 5, 6);
+  rect(c, b.look.shirt, x + 6 + sway, y - 16, 5, 6);
 }
 
 // ---- territory duels ----
 const DP = { pose: "idle" as Pose, frame: 0, dx: 0, dy: 0 };
 // (built here, not via the engine: render <-> engine import each other, so no engine call may run at module load)
-const mkScript = (): DuelScript => ({ dx: 0, dy: 0, pose: "idle", frame: 0, hp: 0, ex: -1, q: 0, atk: -1, act: 0, stage: 0, fly: -1, big: false, ko: false, hit: false, stop: false });
-const SA = mkScript(), SB = mkScript(), S0 = mkScript(), S1 = mkScript();
+const mkScript = (): DuelScript => ({
+  dx: 0,
+  dy: 0,
+  pose: "idle",
+  frame: 0,
+  hp: 0,
+  ex: -1,
+  q: 0,
+  atk: -1,
+  act: 0,
+  stage: 0,
+  fly: -1,
+  big: false,
+  ko: false,
+  hit: false,
+  stop: false,
+});
+const SA = mkScript(),
+  SB = mkScript(),
+  S0 = mkScript(),
+  S1 = mkScript();
 const CPT = { x: 0, y: 0 };
 /** Fills DP for an adventurer in the fight phase of a (non-still) duel from the shared script; false = use the normal pose. */
 /** the fight offset of this adventurer (0 outside a walking duel), written to DP.dx / DP.dy */
 function duelOffsetInto(e: Employee, t: number) {
-  if (!(e.duel && duelPoseInto(e, e.duel, ts(e, t)))) { DP.dx = 0; DP.dy = 0; }
+  if (!(e.duel && duelPoseInto(e, e.duel, ts(e, t)))) {
+    DP.dx = 0;
+    DP.dy = 0;
+  }
 }
 function duelPoseInto(e: Employee, d: Duel, t: number): boolean {
-  DP.dx = 0; DP.dy = 0;
+  DP.dx = 0;
+  DP.dy = 0;
   if (d.phase !== "fight" || d.still) return false;
   const s = duelScript(d, d.l === e.id ? 0 : 1, t - d.t0, SA);
-  DP.pose = s.pose; DP.frame = s.frame; DP.dx = s.dx; DP.dy = s.dy;
+  DP.pose = s.pose;
+  DP.frame = s.frame;
+  DP.dx = s.dx;
+  DP.dy = s.dy;
   return true;
 }
 
@@ -807,7 +1184,8 @@ function pxLine(c: Ctx, x0: number, y0: number, x1: number, y1: number, col: str
   const n = Math.max(1, Math.round(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
   c.fillStyle = col;
   for (let i = 0; i <= n; i++) {
-    const u = i / n, w = wig ? Math.round(Math.sin(i * 0.7 + t * 30) * wig * Math.sin(u * Math.PI)) : 0;
+    const u = i / n,
+      w = wig ? Math.round(Math.sin(i * 0.7 + t * 30) * wig * Math.sin(u * Math.PI)) : 0;
     c.fillRect(Math.round(x0 + (x1 - x0) * u - th / 2), Math.round(y0 + (y1 - y0) * u - th / 2 + w), th, th);
   }
 }
@@ -817,7 +1195,8 @@ function blade(c: Ctx, hx: number, hy: number, tx: number, ty: number) {
   rect(c, GOLD, Math.round(hx) - 1, Math.round(hy) - 1, 3, 3);
 }
 function arrowPx(c: Ctx, x: number, y: number, dir: number) {
-  const x0 = Math.round(x), y0 = Math.round(y);
+  const x0 = Math.round(x),
+    y0 = Math.round(y);
   rect(c, INK, x0 - 4, y0 - 1, 9, 3);
   rect(c, "#c69c6d", x0 - 3, y0, 6, 1);
   rect(c, "#d8dde8", dir > 0 ? x0 + 3 : x0 - 4, y0, 2, 1);
@@ -827,9 +1206,14 @@ function arrowPx(c: Ctx, x: number, y: number, dir: number) {
 function hitFx(c: Ctx, e: Employee, mx: number, my: number, t: number, rate: number, p: number) {
   const cls = e.look.cls;
   if (cls === "ranger") {
-    const sx = e.x + 11, sy = e.y - 14, k = Math.min(1, p / 0.6);
+    const sx = e.x + 11,
+      sy = e.y - 14,
+      k = Math.min(1, p / 0.6);
     if (k < 1) arrowPx(c, sx + (mx - 4 - sx) * k, sy + (my - 10 - sy) * k, 1);
-    else { arrowPx(c, mx - 4, my - 10, 1); blitC(c, "spark" + (Math.floor(t * rate) % 2), mx - 2, my - 10); }
+    else {
+      arrowPx(c, mx - 4, my - 10, 1);
+      blitC(c, "spark" + (Math.floor(t * rate) % 2), mx - 2, my - 10);
+    }
   } else if (cls === "mage" || cls === "cleric") {
     blitC(c, "magic" + (Math.floor(t * rate) % 2), mx - 5, my - 10);
     blitC(c, "spark" + (Math.floor(t * rate + 1) % 2), mx - 1, my - 12);
@@ -837,26 +1221,38 @@ function hitFx(c: Ctx, e: Employee, mx: number, my: number, t: number, rate: num
 }
 const magicCol = (e: Employee) => (e.look.cls === "cleric" ? "#ffe27a" : "#b07bff");
 function crown(c: Ctx, x: number, y: number, t: number) {
-  const cx = Math.round(x), cy = Math.round(y - Math.abs(Math.sin(t * 5)) * 1.5);
+  const cx = Math.round(x),
+    cy = Math.round(y - Math.abs(Math.sin(t * 5)) * 1.5);
   rect(c, INK, cx - 4, cy - 1, 9, 6);
   rect(c, "#f2c14e", cx - 3, cy + 1, 7, 3);
-  rect(c, "#f2c14e", cx - 3, cy, 1, 1); rect(c, "#f2c14e", cx, cy - 1, 1, 2); rect(c, "#f2c14e", cx + 3, cy, 1, 1);
-  rect(c, "#d95763", cx, cy + 2, 1, 1); rect(c, "#fff6c0", cx - 3, cy + 1, 7, 1);
+  rect(c, "#f2c14e", cx - 3, cy, 1, 1);
+  rect(c, "#f2c14e", cx, cy - 1, 1, 2);
+  rect(c, "#f2c14e", cx + 3, cy, 1, 1);
+  rect(c, "#d95763", cx, cy + 2, 1, 1);
+  rect(c, "#fff6c0", cx - 3, cy + 1, 7, 1);
 }
 function drawVs(c: Ctx, L: Employee, R: Employee, x: number, y: number) {
-  c.font = '800 6px ui-sans-serif, system-ui, sans-serif';
-  c.textBaseline = "middle"; c.textAlign = "right";
-  const wl = Math.ceil(c.measureText(L.tag).width), wr = Math.ceil(c.measureText(R.tag).width);
-  const w = wl + wr + 22, h = 10;
-  const bx = Math.max(2, Math.min(W - w - 2, Math.round(x - w / 2))), by = Math.round(y - h / 2);
+  c.font = "800 6px ui-sans-serif, system-ui, sans-serif";
+  c.textBaseline = "middle";
+  c.textAlign = "right";
+  const wl = Math.ceil(c.measureText(L.tag).width),
+    wr = Math.ceil(c.measureText(R.tag).width);
+  const w = wl + wr + 22,
+    h = 10;
+  const bx = Math.max(2, Math.min(W - w - 2, Math.round(x - w / 2))),
+    by = Math.round(y - h / 2);
   rect(c, INK, bx - 1, by - 1, w + 2, h + 2);
-  rect(c, "#ecd9a2", bx, by, w, h); rect(c, "#f6e8bf", bx, by, w, 2);
-  rect(c, L.look.shirt, bx, by, 2, h); rect(c, R.look.shirt, bx + w - 2, by, 2, h);
+  rect(c, "#ecd9a2", bx, by, w, h);
+  rect(c, "#f6e8bf", bx, by, w, 2);
+  rect(c, L.look.shirt, bx, by, 2, h);
+  rect(c, R.look.shirt, bx + w - 2, by, 2, h);
   c.fillStyle = "#3b2418";
   c.fillText(L.tag, bx + 3 + wl, by + h / 2 + 0.5);
-  c.textAlign = "center"; c.fillStyle = "#b8232f";
+  c.textAlign = "center";
+  c.fillStyle = "#b8232f";
   c.fillText("VS", bx + w / 2, by + h / 2 + 0.5);
-  c.textAlign = "left"; c.fillStyle = "#3b2418";
+  c.textAlign = "left";
+  c.fillStyle = "#3b2418";
   c.fillText(R.tag, bx + w - 3 - wr, by + h / 2 + 0.5);
 }
 
@@ -871,16 +1267,22 @@ function pxDisc(c: Ctx, cx: number, cy: number, r: number, cl: string, cr: strin
 /** big opaque impact star (alpha 1) */
 function impactStar(c: Ctx, x: number, y: number, r: number, col: string) {
   const dd = Math.round(r * 0.7);
-  pxLine(c, x - r, y, x + r, y, INK, 5); pxLine(c, x, y - r, x, y + r, INK, 5);
-  pxLine(c, x - dd, y - dd, x + dd, y + dd, INK, 3); pxLine(c, x - dd, y + dd, x + dd, y - dd, INK, 3);
-  pxLine(c, x - r + 1, y, x + r - 1, y, col, 3); pxLine(c, x, y - r + 1, x, y + r - 1, col, 3);
-  pxLine(c, x - dd, y - dd, x + dd, y + dd, col, 1); pxLine(c, x - dd, y + dd, x + dd, y - dd, col, 1);
-  pxLine(c, x - r + 2, y, x + r - 2, y, "#ffffff", 1); pxLine(c, x, y - r + 2, x, y + r - 2, "#ffffff", 1);
+  pxLine(c, x - r, y, x + r, y, INK, 5);
+  pxLine(c, x, y - r, x, y + r, INK, 5);
+  pxLine(c, x - dd, y - dd, x + dd, y + dd, INK, 3);
+  pxLine(c, x - dd, y + dd, x + dd, y - dd, INK, 3);
+  pxLine(c, x - r + 1, y, x + r - 1, y, col, 3);
+  pxLine(c, x, y - r + 1, x, y + r - 1, col, 3);
+  pxLine(c, x - dd, y - dd, x + dd, y + dd, col, 1);
+  pxLine(c, x - dd, y + dd, x + dd, y - dd, col, 1);
+  pxLine(c, x - r + 2, y, x + r - 2, y, "#ffffff", 1);
+  pxLine(c, x, y - r + 2, x, y + r - 2, "#ffffff", 1);
   rect(c, "#ffffff", x - 1, y - 1, 3, 3);
 }
 /** the duel HP bar above a head: INK frame, DUEL_PIPS pips (alpha 1), 2px clear of the sprite box */
 function drawHpBar(c: Ctx, x: number, y: number, hp: number) {
-  const bx = Math.round(x) - 8, by = Math.round(y) - CH_H - 7;
+  const bx = Math.round(x) - 8,
+    by = Math.round(y) - CH_H - 7;
   rect(c, INK, bx, by, 16, 5);
   for (let i = 0; i < DUEL_PIPS; i++) {
     const on = i < hp;
@@ -889,23 +1291,36 @@ function drawHpBar(c: Ctx, x: number, y: number, hp: number) {
   }
 }
 function starDot(c: Ctx, x: number, y: number) {
-  rect(c, INK, x - 2, y - 1, 5, 3); rect(c, INK, x - 1, y - 2, 3, 5);
-  rect(c, "#ffe14a", x - 1, y, 3, 1); rect(c, "#ffe14a", x, y - 1, 1, 3); rect(c, "#ffffff", x, y, 1, 1);
+  rect(c, INK, x - 2, y - 1, 5, 3);
+  rect(c, INK, x - 1, y - 2, 3, 5);
+  rect(c, "#ffe14a", x - 1, y, 3, 1);
+  rect(c, "#ffe14a", x, y - 1, 1, 3);
+  rect(c, "#ffffff", x, y, 1, 1);
 }
-const dirtEdge = "#4f3a22", dirtFill = "#8b6b44", dirtLite = "#9c7b52";
+const dirtEdge = "#4f3a22",
+  dirtFill = "#8b6b44",
+  dirtLite = "#9c7b52";
 /** ground pass (before entities): the dirt arena under a walking duel, opaque */
 function drawArenas(c: Ctx, o: Office) {
   for (const d of o.duels) {
     if (d.phase !== "fight" || d.still) continue;
-    const L = o.employees.get(d.l), R = o.employees.get(d.r);
+    const L = o.employees.get(d.l),
+      R = o.employees.get(d.r);
     if (!L || !R || o.isHidden(L) || o.isHidden(R)) continue;
-    const cx = Math.round((L.x + R.x) / 2), cy = Math.round((L.y + R.y) / 2) + 1, rx = Math.round(Math.abs(R.x - L.x) / 2) + 14, ry = 11;
+    const cx = Math.round((L.x + R.x) / 2),
+      cy = Math.round((L.y + R.y) / 2) + 1,
+      rx = Math.round(Math.abs(R.x - L.x) / 2) + 14,
+      ry = 11;
     for (let dy = -ry; dy <= ry; dy++) {
       const w = Math.floor(rx * Math.sqrt(1 - (dy * dy) / (ry * ry)) + 0.5);
       rect(c, dirtEdge, cx - w, cy + dy, w * 2 + 1, 1);
-      if (Math.abs(dy) < ry) { const wi = Math.max(0, w - 2); rect(c, dirtFill, cx - wi, cy + dy, wi * 2 + 1, 1); }
+      if (Math.abs(dy) < ry) {
+        const wi = Math.max(0, w - 2);
+        rect(c, dirtFill, cx - wi, cy + dy, wi * 2 + 1, 1);
+      }
     }
-    for (let k = 0; k < 14; k++) rect(c, dirtLite, cx - rx + 8 + ((k * 37) % (rx * 2 - 16)), cy - ry + 3 + ((k * 53) % (ry * 2 - 5)), 2, 1);
+    for (let k = 0; k < 14; k++)
+      rect(c, dirtLite, cx - rx + 8 + ((k * 37) % (rx * 2 - 16)), cy - ry + 3 + ((k * 53) % (ry * 2 - 5)), 2, 1);
   }
 }
 
@@ -915,36 +1330,53 @@ function drawArenas(c: Ctx, o: Office) {
  */
 function koStars(c: Ctx, e: Employee, s: DuelScript, t: number) {
   if (!s.ko) return;
-  const sx = Math.round(e.x + s.dx), sy = Math.round(e.y + s.dy - CH_H - 14);
-  for (let k = 0; k < 3; k++) { const a = t * 6 + k * 2.094; starDot(c, sx + Math.round(Math.cos(a) * 7), sy + Math.round(Math.sin(a) * 2.5)); }
+  const sx = Math.round(e.x + s.dx),
+    sy = Math.round(e.y + s.dy - CH_H - 14);
+  for (let k = 0; k < 3; k++) {
+    const a = t * 6 + k * 2.094;
+    starDot(c, sx + Math.round(Math.cos(a) * 7), sy + Math.round(Math.sin(a) * 2.5));
+  }
 }
 function drawDuels(c: Ctx, o: Office, t: number) {
   for (const d of o.duels) {
     if (d.phase !== "fight") continue;
-    const L = o.employees.get(d.l), R = o.employees.get(d.r);
+    const L = o.employees.get(d.l),
+      R = o.employees.get(d.r);
     if (!L || !R || o.isHidden(L) || o.isHidden(R)) continue;
     const u = t - d.t0;
     const top = Math.min(L.y, R.y) - CH_H - 14;
     if (d.still || u < 1.8) drawVs(c, L, R, (L.x + R.x) / 2, top);
     if (d.still) continue;
     if (u >= DUEL_FLOURISH) {
-      const w = d.winner === 0 ? L : R, lo = d.winner === 0 ? R : L, ls = duelScript(d, d.winner === 0 ? 1 : 0, u, SB);
+      const w = d.winner === 0 ? L : R,
+        lo = d.winner === 0 ? R : L,
+        ls = duelScript(d, d.winner === 0 ? 1 : 0, u, SB);
       crown(c, w.x, w.y - CH_H - 7, t);
       if (ls.ko) {
-        const sx = Math.round(lo.x + ls.dx), sy = Math.round(lo.y + ls.dy - CH_H - 14);
-        for (let k = 0; k < 3; k++) { const a = t * 6 + k * 2.094; starDot(c, sx + Math.round(Math.cos(a) * 7), sy + Math.round(Math.sin(a) * 2.5)); }
+        const sx = Math.round(lo.x + ls.dx),
+          sy = Math.round(lo.y + ls.dy - CH_H - 14);
+        for (let k = 0; k < 3; k++) {
+          const a = t * 6 + k * 2.094;
+          starDot(c, sx + Math.round(Math.cos(a) * 7), sy + Math.round(Math.sin(a) * 2.5));
+        }
       }
       continue;
     }
-    const s0 = duelScript(d, 0, u, S0), s1 = duelScript(d, 1, u, S1);
+    const s0 = duelScript(d, 0, u, S0),
+      s1 = duelScript(d, 1, u, S1);
     drawHpBar(c, L.x + s0.dx, L.y, s0.hp);
     drawHpBar(c, R.x + s1.dx, R.y, s1.hp);
     if (s0.ex < 0) continue;
-    koStars(c, L, s0, t); koStars(c, R, s1, t); // KO stars (final blow, before the flourish)
-    const imp = s0.big ? DUEL_IMPACT_FINAL : DUEL_IMPACT, stopLen = s0.big ? DUEL_STOP_FINAL : DUEL_STOP;
-    const ct = duelContact(L, R, s0, CPT), cx = Math.round(ct.x), cy = Math.round(ct.y);
+    koStars(c, L, s0, t);
+    koStars(c, R, s1, t); // KO stars (final blow, before the flourish)
+    const imp = s0.big ? DUEL_IMPACT_FINAL : DUEL_IMPACT,
+      stopLen = s0.big ? DUEL_STOP_FINAL : DUEL_STOP;
+    const ct = duelContact(L, R, s0, CPT),
+      cx = Math.round(ct.x),
+      cy = Math.round(ct.y);
     const since = s0.q - imp; // seconds since the impact
-    if (s0.atk < 0) { // blade lock: both blades cross at the contact point
+    if (s0.atk < 0) {
+      // blade lock: both blades cross at the contact point
       if (s0.stage >= 2 && since < 0.3) {
         blade(c, L.x + s0.dx + 9, L.y - 15, cx + 3, cy - 4);
         blade(c, R.x + s1.dx - 9, R.y - 15, cx - 3, cy - 4);
@@ -952,22 +1384,43 @@ function drawDuels(c: Ctx, o: Office, t: number) {
       if (since >= 0 && since < 0.3) impactStar(c, cx, cy - 2, since < stopLen ? 9 : since < 0.2 ? 7 : 5, "#ffe14a");
       continue;
     }
-    const A = s0.atk === 0 ? L : R, sa = s0.atk === 0 ? s0 : s1, dirA = s0.atk === 0 ? 1 : -1;
+    const A = s0.atk === 0 ? L : R,
+      sa = s0.atk === 0 ? s0 : s1,
+      dirA = s0.atk === 0 ? 1 : -1;
     const style = s0.atk === 0 ? d.styleL : d.styleR;
-    const hx = A.x + sa.dx + dirA * 10, hy = A.y - 15;
+    const hx = A.x + sa.dx + dirA * 10,
+      hy = A.y - 15;
     if (s0.act === 1) {
-      if (s0.stage === 2) for (let k = 0; k < 3; k++) rect(c, "#ffffff", Math.round(A.x + sa.dx - dirA * (11 + k * 4)) - (dirA > 0 ? 3 : 0), Math.round(A.y - 8 - k * 5), 4, 1); // speed lines
-      if (since >= 0 && since < 0.2) { // slash across the contact point
-        pxLine(c, cx - dirA * 5, cy - 8, cx + dirA * 3, cy + 7, INK, 4); pxLine(c, cx - dirA * 5, cy - 8, cx + dirA * 3, cy + 7, "#ffffff", 2);
+      if (s0.stage === 2)
+        for (let k = 0; k < 3; k++)
+          rect(
+            c,
+            "#ffffff",
+            Math.round(A.x + sa.dx - dirA * (11 + k * 4)) - (dirA > 0 ? 3 : 0),
+            Math.round(A.y - 8 - k * 5),
+            4,
+            1,
+          ); // speed lines
+      if (since >= 0 && since < 0.2) {
+        // slash across the contact point
+        pxLine(c, cx - dirA * 5, cy - 8, cx + dirA * 3, cy + 7, INK, 4);
+        pxLine(c, cx - dirA * 5, cy - 8, cx + dirA * 3, cy + 7, "#ffffff", 2);
       }
-    } else if (s0.stage === 2 && sa.fly >= 0) { // projectile in flight, ends on the defender's body
-      const p = sa.fly, ex = ct.x - dirA * (style === "arrow" ? 4 : 3);
-      const px = hx + (ex - hx) * p, py = hy + (ct.y - hy) * p;
+    } else if (s0.stage === 2 && sa.fly >= 0) {
+      // projectile in flight, ends on the defender's body
+      const p = sa.fly,
+        ex = ct.x - dirA * (style === "arrow" ? 4 : 3);
+      const px = hx + (ex - hx) * p,
+        py = hy + (ct.y - hy) * p;
       if (style === "arrow") arrowPx(c, px, py, dirA);
       else {
-        const r = s0.big ? 4 : 3, col = magicCol(A), px0 = Math.round(px), py0 = Math.round(py);
+        const r = s0.big ? 4 : 3,
+          col = magicCol(A),
+          px0 = Math.round(px),
+          py0 = Math.round(py);
         for (let k = 3; k >= 1; k--) rect(c, k === 1 ? "#ffffff" : col, px0 - dirA * k * 3 - 1, py0 - 1, 3, 3);
-        pxDisc(c, px0, py0, r + 1, INK, INK); pxDisc(c, px0, py0, r, col, col);
+        pxDisc(c, px0, py0, r + 1, INK, INK);
+        pxDisc(c, px0, py0, r, col, col);
         rect(c, "#ffffff", px0 - 1, py0 - 1, 3, 3);
       }
     }
@@ -984,15 +1437,18 @@ function drawClaimFlags(c: Ctx, o: Office, t: number) {
     const n = o.claimsOf(e.id);
     if (n <= 0) continue;
     const s = spotOf(e.deskIdx);
-    const fx = Math.round(s.x - 29), fy = Math.round(s.y + 3);
+    const fx = Math.round(s.x - 29),
+      fy = Math.round(s.y + 3);
     const wave = o.reducedMotion ? 0 : Math.round(Math.sin(t * 3 + e.order));
     shadow(c, fx, fy, 3);
-    rect(c, INK, fx, fy - 15, 2, 15);          // pole
+    rect(c, INK, fx, fy - 15, 2, 15); // pole
     rect(c, "#8a6a3a", fx, fy - 14, 1, 14);
-    rect(c, INK, fx + 2, fy - 15, 9, 8);       // cloth outline
+    rect(c, INK, fx + 2, fy - 15, 9, 8); // cloth outline
     rect(c, e.look.shirt, fx + 2, fy - 14, 8, 6 + wave);
     rect(c, "rgba(255,255,255,0.35)", fx + 2, fy - 14, 8, 1);
-    c.font = '800 6px ui-sans-serif, system-ui, sans-serif'; c.textAlign = "left"; c.textBaseline = "middle";
+    c.font = "800 6px ui-sans-serif, system-ui, sans-serif";
+    c.textAlign = "left";
+    c.textBaseline = "middle";
     outlined(c, String(n), fx + 12, fy - 10, CREAM);
   }
 }
@@ -1006,18 +1462,30 @@ function drawLinks(c: Ctx, n: number, t: number, o: Office) {
     const col = l.level === "clash" ? "#ff4a4a" : "#ffd94a";
     c.setLineDash([3, 2]);
     c.lineDashOffset = o.reducedMotion ? 0 : -(t * (l.level === "clash" ? 10 : 5));
-    c.strokeStyle = INK; c.lineWidth = 2.6;
-    c.beginPath(); c.moveTo(l.ax, l.ay); c.lineTo(l.bx, l.by); c.stroke();
-    c.strokeStyle = col; c.lineWidth = 1.2;
-    c.beginPath(); c.moveTo(l.ax, l.ay); c.lineTo(l.bx, l.by); c.stroke();
+    c.strokeStyle = INK;
+    c.lineWidth = 2.6;
+    c.beginPath();
+    c.moveTo(l.ax, l.ay);
+    c.lineTo(l.bx, l.by);
+    c.stroke();
+    c.strokeStyle = col;
+    c.lineWidth = 1.2;
+    c.beginPath();
+    c.moveTo(l.ax, l.ay);
+    c.lineTo(l.bx, l.by);
+    c.stroke();
   }
   c.setLineDash([]);
   c.lineWidth = 1; // thin tick from the link up to its badge (drawn under entities, so it never covers a character)
   for (let i = 0; i < n; i++) {
     const l = linkPool[i];
     c.strokeStyle = l.level === "clash" ? "#ff4a4a" : "#ffd94a";
-    const mx = Math.round((l.ax + l.bx) / 2) + 0.5, my = (l.ay + l.by) / 2;
-    c.beginPath(); c.moveTo(mx, my); c.lineTo(l.ix + 0.5, l.iy + ICON_R); c.stroke();
+    const mx = Math.round((l.ax + l.bx) / 2) + 0.5,
+      my = (l.ay + l.by) / 2;
+    c.beginPath();
+    c.moveTo(mx, my);
+    c.lineTo(l.ix + 0.5, l.iy + ICON_R);
+    c.stroke();
   }
   c.restore();
 }
@@ -1025,14 +1493,32 @@ function drawLinks(c: Ctx, n: number, t: number, o: Office) {
 const SWORD_BACKDROP = "#1a1c2c"; // fully opaque: nothing translucent in the territory layer
 function drawSwords(c: Ctx, x: number, y: number, col: string, k: number) {
   c.save();
-  c.translate(Math.round(x), Math.round(y)); c.scale(k, k);
+  c.translate(Math.round(x), Math.round(y));
+  c.scale(k, k);
   c.fillStyle = SWORD_BACKDROP;
-  c.beginPath(); c.arc(0, 0, 6, 0, Math.PI * 2); c.fill();
+  c.beginPath();
+  c.arc(0, 0, 6, 0, Math.PI * 2);
+  c.fill();
   c.lineCap = "round";
   for (let pass = 0; pass < 2; pass++) {
-    c.strokeStyle = pass === 0 ? INK : col; c.lineWidth = pass === 0 ? 2.4 : 1.2;
-    c.beginPath(); c.moveTo(-4, -4); c.lineTo(4, 4); c.moveTo(4, -4); c.lineTo(-4, 4); c.stroke();
-    if (pass === 1) { c.strokeStyle = CREAM; c.lineWidth = 1; c.beginPath(); c.moveTo(-2.4, 1.4); c.lineTo(-0.6, 3.2); c.moveTo(2.4, 1.4); c.lineTo(0.6, 3.2); c.stroke(); }
+    c.strokeStyle = pass === 0 ? INK : col;
+    c.lineWidth = pass === 0 ? 2.4 : 1.2;
+    c.beginPath();
+    c.moveTo(-4, -4);
+    c.lineTo(4, 4);
+    c.moveTo(4, -4);
+    c.lineTo(-4, 4);
+    c.stroke();
+    if (pass === 1) {
+      c.strokeStyle = CREAM;
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(-2.4, 1.4);
+      c.lineTo(-0.6, 3.2);
+      c.moveTo(2.4, 1.4);
+      c.lineTo(0.6, 3.2);
+      c.stroke();
+    }
   }
   c.restore();
 }
@@ -1040,12 +1526,15 @@ function drawSwords(c: Ctx, x: number, y: number, col: string, k: number) {
 function drawLinkIcons(c: Ctx, n: number, t: number, o: Office) {
   for (let i = 0; i < n; i++) {
     const l = linkPool[i];
-    const mx = l.ix, my = l.iy;
+    const mx = l.ix,
+      my = l.iy;
     if (l.level === "clash") {
       const ph = o.reducedMotion ? 0 : Math.sin(t * 5);
       drawSwords(c, mx, my, "#ff5a5a", 1 + 0.1 * ph);
-      if (!o.reducedMotion && Math.sin(t * 2.2) > 0.7) { // gentle glint
-        rect(c, "#ffffff", mx + 3, my - 6, 1, 3); rect(c, "#ffffff", mx + 2, my - 5, 3, 1);
+      if (!o.reducedMotion && Math.sin(t * 2.2) > 0.7) {
+        // gentle glint
+        rect(c, "#ffffff", mx + 3, my - 6, 1, 3);
+        rect(c, "#ffffff", mx + 2, my - 5, 3, 1);
       }
     } else drawSwords(c, mx, my, "#ffd94a", 0.85);
   }
@@ -1058,15 +1547,19 @@ function drawBannerQ(c: Ctx, o: Office) {
   const el = o.realTime - b.start;
   const slide = Math.min(1, el / 0.25, Math.max(0, (b.dur - el) / 0.25));
   const boss = b.kind === "boss";
-  c.font = boss ? '800 8px ui-sans-serif, system-ui, sans-serif' : WORLD_FONT;
-  const w = Math.ceil(c.measureText(b.text).width) + 22, h = 15;
-  const x = Math.round((W - w) / 2), y = Math.round(-h - 2 + (h + 8) * eob(Math.max(0, slide)));
+  c.font = boss ? "800 8px ui-sans-serif, system-ui, sans-serif" : WORLD_FONT;
+  const w = Math.ceil(c.measureText(b.text).width) + 22,
+    h = 15;
+  const x = Math.round((W - w) / 2),
+    y = Math.round(-h - 2 + (h + 8) * eob(Math.max(0, slide)));
   rect(c, "rgba(0,0,0,0.3)", x + 1, y + 2, w, h);
   rect(c, INK, x - 3, y - 1, w + 6, h + 2);
   rect(c, boss ? "#5a1a22" : "#ecd9a2", x, y, w, h);
   rect(c, boss ? "#8a2a34" : "#f6e8bf", x, y, w, 2);
-  rect(c, boss ? "#3a0f16" : "#c9a45e", x - 2, y, 3, h); rect(c, boss ? "#3a0f16" : "#c9a45e", x + w - 1, y, 3, h);
-  c.textAlign = "center"; c.textBaseline = "middle";
+  rect(c, boss ? "#3a0f16" : "#c9a45e", x - 2, y, 3, h);
+  rect(c, boss ? "#3a0f16" : "#c9a45e", x + w - 1, y, 3, h);
+  c.textAlign = "center";
+  c.textBaseline = "middle";
   c.fillStyle = boss ? "#ffdede" : "#3b2418";
   c.fillText(b.text, W / 2, y + h / 2 + 0.5);
 }
@@ -1083,11 +1576,14 @@ function drawAlertVignette(c: Ctx, o: Office) {
   if (age === Infinity) return;
   if (!vignette) {
     // edge-only ring (never reaches further than VIG_EDGE px in), so it can't tint characters
-    const m = mk(); vignette = m.cv;
+    const m = mk();
+    vignette = m.cv;
     for (let i = 0; i < VIG_EDGE; i++) {
       m.c.fillStyle = `rgba(255,30,30,${(0.85 * (1 - i / VIG_EDGE) ** 2).toFixed(3)})`;
-      m.c.fillRect(i, i, W - 2 * i, 1); m.c.fillRect(i, H - 1 - i, W - 2 * i, 1);
-      m.c.fillRect(i, i + 1, 1, H - 2 * i - 2); m.c.fillRect(W - 1 - i, i + 1, 1, H - 2 * i - 2);
+      m.c.fillRect(i, i, W - 2 * i, 1);
+      m.c.fillRect(i, H - 1 - i, W - 2 * i, 1);
+      m.c.fillRect(i, i + 1, 1, H - 2 * i - 2);
+      m.c.fillRect(W - 1 - i, i + 1, 1, H - 2 * i - 2);
     }
   }
   const calm = age > 60;
@@ -1097,73 +1593,115 @@ function drawAlertVignette(c: Ctx, o: Office) {
 }
 
 // rain: fixed pseudo-random drops, positions derived from time (no per-frame allocation)
-const DROPS = (() => { const r = rng(77); return Array.from({ length: 110 }, () => ({ x: r() * W, y: r() * H, v: 110 + r() * 60 })); })();
+const DROPS = (() => {
+  const r = rng(77);
+  return Array.from({ length: 110 }, () => ({ x: r() * W, y: r() * H, v: 110 + r() * 60 }));
+})();
 function drawRain(c: Ctx, o: Office) {
   const n = Math.min(DROPS.length, Math.round(DROPS.length * o.rain));
   if (n <= 0) return;
-  c.strokeStyle = "rgba(200,222,255,0.6)"; c.lineWidth = 1;
+  c.strokeStyle = "rgba(200,222,255,0.6)";
+  c.lineWidth = 1;
   c.beginPath();
   for (let i = 0; i < n; i++) {
     const d = DROPS[i];
-    const y = (d.y + o.ambT * d.v) % (H + 12) - 6;
+    const y = ((d.y + o.ambT * d.v) % (H + 12)) - 6;
     const x = (d.x + o.ambT * d.v * 0.3) % W;
     if (x < HALL_W - 2) continue; // the guild hall has a roof
-    const px = Math.round(x), py = Math.round(y);
-    c.moveTo(px, py); c.lineTo(px - 2, py + 5);
+    const px = Math.round(x),
+      py = Math.round(y);
+    c.moveTo(px, py);
+    c.lineTo(px - 2, py + 5);
   }
   c.stroke();
 }
 
 // ---------- squires ----------
 function drawBadge(c: Ctx, txt: string, x: number, y: number) {
-  c.font = TAG_FONT; c.textBaseline = "middle"; c.textAlign = "center";
+  c.font = TAG_FONT;
+  c.textBaseline = "middle";
+  c.textAlign = "center";
   const w = Math.ceil(c.measureText(txt).width) + 4;
-  c.fillStyle = "rgba(35,37,58,0.92)"; roundRect(c, x - w / 2, y - 6, w, 7, 2); c.fill();
-  c.fillStyle = CREAM; c.fillText(txt, x, y - 2.3);
+  c.fillStyle = "rgba(35,37,58,0.92)";
+  roundRect(c, x - w / 2, y - 6, w, 7, 2);
+  c.fill();
+  c.fillStyle = CREAM;
+  c.fillText(txt, x, y - 2.3);
 }
 
-function drawSquire(c: Ctx, e: Employee, it: Employee["interns"] extends Map<string, infer V> ? V : never, k: number, t: number) {
+function drawSquire(
+  c: Ctx,
+  e: Employee,
+  it: Employee["interns"] extends Map<string, infer V> ? V : never,
+  k: number,
+  t: number,
+) {
   const s = e.deskIdx >= 0 ? squirePoint(e.deskIdx, k) : campSquirePoint(e.slot, k);
   shadow(c, s.x, s.y, 8);
   let spr: HTMLCanvasElement;
   let dx = 0;
   if (it.act === "typing") {
     const f = Math.floor(t * 6) % 2;
-    spr = internSprite("attack", f); dx = f ? 2 : 0;
+    spr = internSprite("attack", f);
+    dx = f ? 2 : 0;
   } else if (it.act === "reading") spr = internSprite("read", Math.floor(t * 3) % 2);
   else if (it.act === "handup") spr = internSprite("hand_up", Math.floor(t * 4) % 2);
   else spr = internSprite("idle", Math.floor(t * 1.5 + k) % 2);
   c.drawImage(spr, Math.round(s.x - spr.width / 2 + dx), Math.round(s.y - spr.height));
   const top = s.y - spr.height;
-  if (it.act === "handup") { if (Math.floor(t * 4) % 2 === 0) drawBubble(c, s.x, top, "❗"); }
-  else if (it.act === "reading") drawBubble(c, s.x, top, "📜");
+  if (it.act === "handup") {
+    if (Math.floor(t * 4) % 2 === 0) drawBubble(c, s.x, top, "❗");
+  } else if (it.act === "reading") drawBubble(c, s.x, top, "📜");
   else if (it.act === "typing") drawBubble(c, s.x, top, "⚔️");
 }
 
 // ---------- adventurers ----------
-let duelDxNow = 0, duelDyNow = 0;
+let duelDxNow = 0,
+  duelDyNow = 0;
 function poseFor(e: Employee, t: number): { pose: Pose; frame: number } {
-  duelDxNow = 0; duelDyNow = 0;
-  if (e.duel && duelPoseInto(e, e.duel, t)) { duelDxNow = DP.dx; duelDyNow = DP.dy; return { pose: DP.pose, frame: DP.frame }; }
+  duelDxNow = 0;
+  duelDyNow = 0;
+  if (e.duel && duelPoseInto(e, e.duel, t)) {
+    duelDxNow = DP.dx;
+    duelDyNow = DP.dy;
+    return { pose: DP.pose, frame: DP.frame };
+  }
   switch (e.state) {
-    case "DUEL": return e.path.length ? { pose: "walk", frame: Math.floor(t * 8) % 4 } : { pose: "idle", frame: Math.floor(t * 4) % 2 };
-    case "ENTERING": case "LEAVING": case "TO_COFFEE": case "FROM_COFFEE":
-      if (e.holdUntil > t) return e.state === "LEAVING" ? { pose: "cheer", frame: Math.floor(t * 4) % 2 } : { pose: "idle", frame: 0 };
+    case "DUEL":
+      return e.path.length
+        ? { pose: "walk", frame: Math.floor(t * 8) % 4 }
+        : { pose: "idle", frame: Math.floor(t * 4) % 2 };
+    case "ENTERING":
+    case "LEAVING":
+    case "TO_COFFEE":
+    case "FROM_COFFEE":
+      if (e.holdUntil > t)
+        return e.state === "LEAVING" ? { pose: "cheer", frame: Math.floor(t * 4) % 2 } : { pose: "idle", frame: 0 };
       return { pose: "walk", frame: Math.floor(t * 8) % 4 };
-    case "STRETCH": return { pose: "cheer", frame: Math.floor(t * 3) % 2 };
-    case "DRINK": return { pose: "drink", frame: Math.floor(t * 1.5) % 2 };
+    case "STRETCH":
+      return { pose: "cheer", frame: Math.floor(t * 3) % 2 };
+    case "DRINK":
+      return { pose: "drink", frame: Math.floor(t * 1.5) % 2 };
   }
   if (e.resting) return { pose: "rest", frame: Math.floor(t * 1.2) % 2 };
   if (e.hurtUntil > t) return { pose: "hurt", frame: Math.floor(t * 10) % 2 };
   const hasMon = !!e.monPos && !e.monDead;
   switch (e.act) {
-    case "typing": case "mcp": return { pose: hasMon || e.act === "mcp" ? "cast" : "idle", frame: Math.floor(t * 8) % 2 };
-    case "bash": return { pose: hasMon ? "attack" : "idle", frame: Math.floor(t * 5) % 2 };
-    case "reading": return { pose: "read", frame: Math.floor(t * 3) % 2 };
-    case "sticky": return { pose: "write", frame: Math.floor(t * 6) % 2 };
-    case "handup": return { pose: "hand_up", frame: Math.floor(t * 4) % 2 };
-    case "phone": return { pose: "idle", frame: Math.floor(t * 1.5) % 2 };
-    default: return { pose: "idle", frame: Math.floor(t * 1.5) % 2 };
+    case "typing":
+    case "mcp":
+      return { pose: hasMon || e.act === "mcp" ? "cast" : "idle", frame: Math.floor(t * 8) % 2 };
+    case "bash":
+      return { pose: hasMon ? "attack" : "idle", frame: Math.floor(t * 5) % 2 };
+    case "reading":
+      return { pose: "read", frame: Math.floor(t * 3) % 2 };
+    case "sticky":
+      return { pose: "write", frame: Math.floor(t * 6) % 2 };
+    case "handup":
+      return { pose: "hand_up", frame: Math.floor(t * 4) % 2 };
+    case "phone":
+      return { pose: "idle", frame: Math.floor(t * 1.5) % 2 };
+    default:
+      return { pose: "idle", frame: Math.floor(t * 1.5) % 2 };
   }
 }
 
@@ -1172,9 +1710,13 @@ function drawAdventurer(c: Ctx, e: Employee, t: number) {
   const spr = charSprite(e.look, pose, frame);
   shadow(c, e.x + duelDxNow, e.y, 11);
   const hurt = e.state === "SEATED" && e.hurtUntil > t;
-  if (hurt) { // red flash behind the (opaque) sprite
+  if (hurt) {
+    // red flash behind the (opaque) sprite
     c.globalAlpha = 0.18 + 0.22 * Math.abs(Math.sin(t * 16));
-    c.fillStyle = "#ff3b3b"; c.beginPath(); c.arc(e.x, e.y - 12, 13, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#ff3b3b";
+    c.beginPath();
+    c.arc(e.x, e.y - 12, 13, 0, Math.PI * 2);
+    c.fill();
     c.globalAlpha = 1;
   }
   const bob = pose === "walk" && frame % 2 === 1 ? -1 : 0;
@@ -1185,12 +1727,18 @@ function drawAdventurer(c: Ctx, e: Employee, t: number) {
   if (fighting && e.lungeUntil > t) dx = 3;
   if (hurt) dx = -2;
   if (duelDxNow) dx = duelDxNow;
-  const px = Math.round(e.x - CH_W / 2 + dx), py = Math.round(e.y - CH_H + bob + duelDyNow);
+  const px = Math.round(e.x - CH_W / 2 + dx),
+    py = Math.round(e.y - CH_H + bob + duelDyNow);
   const red = e.redUntil > t && e.state === "SEATED";
   const put = (img: HTMLCanvasElement, a: number) => {
     c.globalAlpha = a;
-    if (e.facing < 0) { c.save(); c.translate(px + CH_W, py); c.scale(-1, 1); c.drawImage(img, 0, 0); c.restore(); }
-    else c.drawImage(img, px, py);
+    if (e.facing < 0) {
+      c.save();
+      c.translate(px + CH_W, py);
+      c.scale(-1, 1);
+      c.drawImage(img, 0, 0);
+      c.restore();
+    } else c.drawImage(img, px, py);
     c.globalAlpha = 1;
   };
   put(spr, 1);
@@ -1206,7 +1754,8 @@ function drawMonster(c: Ctx, e: Employee, t: number) {
     if (age < 0.2) return;
     const seated = e.state === "SEATED";
     const asleep = e.resting;
-    const hit = seated && !asleep && ((e.act === "bash" && (t * 2.5) % 1 < 0.3) || (e.act === "typing" && (t * 3) % 1 < 0.2));
+    const hit =
+      seated && !asleep && ((e.act === "bash" && (t * 2.5) % 1 < 0.3) || (e.act === "typing" && (t * 3) % 1 < 0.2));
     const frame = asleep ? 0 : Math.floor(t * 3 + e.order) % 2;
     let lunge = 0;
     if (e.monLungeUntil > t) lunge = -Math.round(9 * Math.sin(Math.min(1, 1 - (e.monLungeUntil - t) / 0.4) * Math.PI));
@@ -1217,10 +1766,15 @@ function drawMonster(c: Ctx, e: Employee, t: number) {
     const cx = p.x + (boss ? 4 : 0);
     shadow(c, cx, p.y, Math.min(boss ? 22 : 14, spr.width));
     const bob = asleep || Math.floor(t * 2 + e.order) % 2 === 0 ? 0 : -1;
-    const sx = Math.round(cx - spr.width / 2 + lunge + (hit ? 1 : 0)), sy = Math.round(p.y - spr.height + bob);
+    const sx = Math.round(cx - spr.width / 2 + lunge + (hit ? 1 : 0)),
+      sy = Math.round(p.y - spr.height + bob);
     c.drawImage(spr, sx, sy);
     if (e.flashUntil > t) c.drawImage(tinted(spr, "#ffffff"), sx, sy);
-    if (e.monLungeUntil > t) { c.globalAlpha = 0.3; c.drawImage(tinted(spr, "#ff2a2a"), sx, sy); c.globalAlpha = 1; }
+    if (e.monLungeUntil > t) {
+      c.globalAlpha = 0.3;
+      c.drawImage(tinted(spr, "#ff2a2a"), sx, sy);
+      c.globalAlpha = 1;
+    }
     // HP bar
     const top = Math.round(p.y - spr.height) - (boss ? 6 : 5);
     if (boss) hpBar(c, Math.round(cx), top, 24, 3, Math.max(0.12, 1 - (t - e.bossAt) / 120));
@@ -1243,7 +1797,9 @@ function drawMonster(c: Ctx, e: Employee, t: number) {
 function manaBar(c: Ctx, e: Employee, t: number, o: Office) {
   const f = o.ctxFrac(e.id);
   if (f === null) return;
-  const w = 12, x = Math.round(e.x - w / 2), y = Math.round(e.y + 13);
+  const w = 12,
+    x = Math.round(e.x - w / 2),
+    y = Math.round(e.y + 13);
   const col = f > 0.9 ? (Math.floor(t * 3) % 2 === 0 ? "#ff5a5a" : "#ff8f8f") : f > 0.7 ? "#f2c14e" : "#4aa3ff";
   rect(c, INK, x - 1, y - 1, w + 2, 4);
   rect(c, "#1f2b4a", x, y, w, 2);
@@ -1263,18 +1819,24 @@ function drawFx(c: Ctx, e: Employee, t: number, o: Office) {
     blitC(c, "chest", e.x + 12, e.y - 6);
     for (let k = 0; k < 3; k++) {
       const u = Math.max(0, dage - k * 0.18);
-      if (u > 0 && u < 0.9) { c.globalAlpha = 1 - u * 0.6; blitC(c, "coin", e.x - 6 + k * 6, e.y - 28 - u * 10); c.globalAlpha = 1; }
+      if (u > 0 && u < 0.9) {
+        c.globalAlpha = 1 - u * 0.6;
+        blitC(c, "coin", e.x - 6 + k * 6, e.y - 28 - u * 10);
+        c.globalAlpha = 1;
+      }
     }
   }
   if (e.state === "DRINK") {
     blitC(c, "steam" + (Math.floor(t * 3) % 3), e.x + 8, e.y - 26);
     if (Math.floor(t * 1.5) % 2 === 0) blitC(c, "ale", e.x + 9, e.y - 12);
   }
-  if (e.hasPaper && t - e.paperAt < 1 && e.state === "SEATED") blitC(c, "quest_note", e.x + 9, e.y - 30 - (t - e.paperAt) * 6);
+  if (e.hasPaper && t - e.paperAt < 1 && e.state === "SEATED")
+    blitC(c, "quest_note", e.x + 9, e.y - 30 - (t - e.paperAt) * 6);
   if (t < e.sparkUntil) blitC(c, "spark" + (Math.floor(t * 12) % 2), e.x + 8, e.y - 28);
   if (e.state !== "SEATED") return;
   if (e.resting && !e.duel) {
-    const fx = e.x + 10, fy = e.y + 1;
+    const fx = e.x + 10,
+      fy = e.y + 1;
     blitB(c, "campfire" + (Math.floor(t * 6) % 2), fx, fy);
   }
   if (e.deskIdx >= 0 && e.hearts < MAX_HEARTS) {
@@ -1294,15 +1856,22 @@ function drawFx(c: Ctx, e: Employee, t: number, o: Office) {
       if (fight) {
         for (let k = 0; k < 3; k++) {
           const u = (t * 1.7 + k / 3) % 1;
-          const sx = e.x + 9, sy = e.y - 14;
-          blitC(c, "magic" + ((Math.floor(t * 8) + k) % 2), sx + (mx - 5 - sx) * u, sy + (my - 9 - sy) * u - Math.sin(u * Math.PI) * 7);
+          const sx = e.x + 9,
+            sy = e.y - 14;
+          blitC(
+            c,
+            "magic" + ((Math.floor(t * 8) + k) % 2),
+            sx + (mx - 5 - sx) * u,
+            sy + (my - 9 - sy) * u - Math.sin(u * Math.PI) * 7,
+          );
         }
         if ((t * 1.7) % 1 > 0.8) blitC(c, "spark" + (Math.floor(t * 14) % 2), mx - 2, my - 10);
       } else blitC(c, "magic" + (Math.floor(t * 8) % 2), e.x + 11, e.y - 16);
       break;
     case "bash":
       if (fight && (t * 2.5) % 1 < 0.4) hitFx(c, e, mx, my, t, 12, ((t * 2.5) % 1) / 0.4);
-      if (t - e.actSince > 4) blitC(c, "sweat" + (Math.floor(t * 3) % 2), e.x - 9, e.y - 22 + (Math.floor(t * 3) % 2) * 2);
+      if (t - e.actSince > 4)
+        blitC(c, "sweat" + (Math.floor(t * 3) % 2), e.x - 9, e.y - 22 + (Math.floor(t * 3) % 2) * 2);
       break;
     case "reading":
       blitC(c, "scroll", e.x + 11, e.y - 17 + Math.sin(t * 3) * 1.2);
@@ -1317,14 +1886,25 @@ function drawFx(c: Ctx, e: Employee, t: number, o: Office) {
       const cyc = 5;
       const u = (t % cyc) / cyc; // 0..1: out and back
       const out = u < 0.5 ? u * 2 : (1 - u) * 2;
-      const ox = e.x + 8 + out * 70, oy = e.y - 20 - Math.sin(out * Math.PI) * 14 - out * 18;
+      const ox = e.x + 8 + out * 70,
+        oy = e.y - 20 - Math.sin(out * Math.PI) * 14 - out * 18;
       const s = prop("owl" + (Math.floor(t * 8) % 2));
-      if (out < 0.04) { c.drawImage(s, Math.round(e.x + 8 - s.width / 2), Math.round(e.y - 22 - s.height / 2)); break; }
+      if (out < 0.04) {
+        c.drawImage(s, Math.round(e.x + 8 - s.width / 2), Math.round(e.y - 22 - s.height / 2));
+        break;
+      }
       if (u < 0.5) c.drawImage(s, Math.round(ox - s.width / 2), Math.round(oy - s.height / 2));
-      else { c.save(); c.translate(Math.round(ox), Math.round(oy - s.height / 2)); c.scale(-1, 1); c.drawImage(s, -s.width / 2, 0); c.restore(); }
+      else {
+        c.save();
+        c.translate(Math.round(ox), Math.round(oy - s.height / 2));
+        c.scale(-1, 1);
+        c.drawImage(s, -s.width / 2, 0);
+        c.restore();
+      }
       break;
     }
-    default: break;
+    default:
+      break;
   }
   if (e.hurtUntil > t) {
     const u = 1 - (e.hurtUntil - t) / 0.8;
@@ -1345,18 +1925,23 @@ function isLooping(e: Employee): boolean {
 /** "Berserk": opaque red vein mark + steam puffs beside the head. Rects only, nothing translucent. */
 function drawBerserk(c: Ctx, e: Employee, t: number, still: boolean) {
   duelOffsetInto(e, t);
-  const hx = Math.round(e.x + DP.dx), hy = Math.round(e.y + DP.dy - CH_H);
+  const hx = Math.round(e.x + DP.dx),
+    hy = Math.round(e.y + DP.dy - CH_H);
   // anger vein (red cross-hatch) at the temple
-  const vx = hx + 4, vy = hy + 1;
+  const vx = hx + 4,
+    vy = hy + 1;
   rect(c, INK, vx - 1, vy - 1, 6, 6);
-  rect(c, "#e23b3b", vx, vy, 2, 1); rect(c, "#e23b3b", vx, vy + 1, 1, 1);
-  rect(c, "#e23b3b", vx + 3, vy, 1, 2); rect(c, "#e23b3b", vx + 2, vy + 3, 2, 1);
-  rect(c, "#e23b3b", vx, vy + 3, 1, 1); rect(c, "#ff8a7a", vx + 1, vy + 1, 1, 1);
+  rect(c, "#e23b3b", vx, vy, 2, 1);
+  rect(c, "#e23b3b", vx, vy + 1, 1, 1);
+  rect(c, "#e23b3b", vx + 3, vy, 1, 2);
+  rect(c, "#e23b3b", vx + 2, vy + 3, 2, 1);
+  rect(c, "#e23b3b", vx, vy + 3, 1, 1);
+  rect(c, "#ff8a7a", vx + 1, vy + 1, 1, 1);
   // two steam puffs rising off the head (opaque pixels that step up and reset; still frame when reduced motion).
   // Kept >= 11px to the side of the head so they never touch the ❗/🔁 bubble above it; skipped in duels (HP pips live there).
   if (e.duel) return;
   for (let i = 0; i < 2; i++) {
-    const u = still ? 0.4 : ((t * 1.3 + i * 0.5) % 1);
+    const u = still ? 0.4 : (t * 1.3 + i * 0.5) % 1;
     const px = hx + (i ? 13 : -15) + (still ? 0 : Math.round(Math.sin(t * 4 + i) * 1));
     const py = hy - 1 - Math.floor(u * 7);
     const sz = u < 0.5 ? 3 : 2;
@@ -1375,28 +1960,39 @@ function bubbleOf(e: Employee, t: number): string | null {
 }
 
 function drawBubble(c: Ctx, x: number, tipY: number, emoji: string) {
-  const w = 13, h = 12;
-  const bx = Math.round(x - w / 2), by = Math.round(tipY - h - 2);
+  const w = 13,
+    h = 12;
+  const bx = Math.round(x - w / 2),
+    by = Math.round(tipY - h - 2);
   rect(c, INK, bx + 1, by, w - 2, h);
   rect(c, INK, bx, by + 1, w, h - 2);
   rect(c, "#ffffff", bx + 1, by + 1, w - 2, h - 2);
   rect(c, INK, Math.round(x) - 1, by + h, 3, 1);
   rect(c, INK, Math.round(x), by + h + 1, 1, 1);
-  c.font = EMOJI_FONT; c.textAlign = "center"; c.textBaseline = "middle";
+  c.font = EMOJI_FONT;
+  c.textAlign = "center";
+  c.textBaseline = "middle";
   c.fillStyle = INK;
   c.fillText(emoji, x, by + h / 2 + 0.5);
 }
 
 /** Big red "!" bubble: the adventurer needs you. */
 function drawAlert(c: Ctx, x: number, tipY: number) {
-  const w = 13, h = 15;
-  const bx = Math.round(x - w / 2), by = Math.round(tipY - h - 2);
-  rect(c, INK, bx + 1, by, w - 2, h); rect(c, INK, bx, by + 1, w, h - 2);
+  const w = 13,
+    h = 15;
+  const bx = Math.round(x - w / 2),
+    by = Math.round(tipY - h - 2);
+  rect(c, INK, bx + 1, by, w - 2, h);
+  rect(c, INK, bx, by + 1, w, h - 2);
   rect(c, "#ff4a4a", bx + 1, by + 1, w - 2, h - 2);
   rect(c, "#ff8a8a", bx + 2, by + 2, w - 4, 1);
-  rect(c, INK, Math.round(x) - 1, by + h, 3, 1); rect(c, INK, Math.round(x), by + h + 1, 1, 1);
-  c.font = '800 11px ui-sans-serif, system-ui, sans-serif'; c.textAlign = "center"; c.textBaseline = "middle";
-  c.fillStyle = "#ffffff"; c.fillText("!", x, by + h / 2 + 0.8);
+  rect(c, INK, Math.round(x) - 1, by + h, 3, 1);
+  rect(c, INK, Math.round(x), by + h + 1, 1, 1);
+  c.font = "800 11px ui-sans-serif, system-ui, sans-serif";
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.fillStyle = "#ffffff";
+  c.fillText("!", x, by + h / 2 + 0.8);
 }
 
 function internTagLine(e: Employee): string {
@@ -1411,22 +2007,39 @@ function internTagLine(e: Employee): string {
 function drawTag(c: Ctx, e: Employee, topY: number, dx = 0) {
   const text = `${e.project} ${e.tag}`;
   c.font = TAG_FONT;
-  const w = Math.ceil(c.measureText(text).width) + 7, h = 9;
+  const w = Math.ceil(c.measureText(text).width) + 7,
+    h = 9;
   const bx = Math.max(1, Math.min(W - w - 1, e.x + dx - w / 2));
   const by = Math.max(1, topY - h);
-  c.fillStyle = "rgba(0,0,0,0.3)"; roundRect(c, bx, by + 1, w, h, 2.5); c.fill();
-  c.fillStyle = "#23253a"; roundRect(c, bx, by, w, h, 2.5); c.fill();
-  c.strokeStyle = "rgba(244,227,193,0.35)"; c.lineWidth = 0.5; roundRect(c, bx + 0.25, by + 0.25, w - 0.5, h - 0.5, 2.3); c.stroke();
-  c.textAlign = "left"; c.textBaseline = "middle"; c.fillStyle = CREAM;
+  c.fillStyle = "rgba(0,0,0,0.3)";
+  roundRect(c, bx, by + 1, w, h, 2.5);
+  c.fill();
+  c.fillStyle = "#23253a";
+  roundRect(c, bx, by, w, h, 2.5);
+  c.fill();
+  c.strokeStyle = "rgba(244,227,193,0.35)";
+  c.lineWidth = 0.5;
+  roundRect(c, bx + 0.25, by + 0.25, w - 0.5, h - 0.5, 2.3);
+  c.stroke();
+  c.textAlign = "left";
+  c.textBaseline = "middle";
+  c.fillStyle = CREAM;
   c.fillText(text, bx + 3.5, by + h / 2 + 0.3);
   const sub = internTagLine(e);
   if (sub) {
     const st = sub.length > 44 ? sub.slice(0, 43) + "…" : sub;
     const w2 = Math.ceil(c.measureText(st).width) + 7;
-    const bx2 = Math.max(1, Math.min(W - w2 - 1, e.x + dx - w2 / 2)), by2 = Math.max(1, by - h - 1);
-    c.fillStyle = "#23253a"; roundRect(c, bx2, by2, w2, h, 2.5); c.fill();
-    c.strokeStyle = "rgba(244,227,193,0.35)"; c.lineWidth = 0.5; roundRect(c, bx2 + 0.25, by2 + 0.25, w2 - 0.5, h - 0.5, 2.3); c.stroke();
-    c.fillStyle = "#bfe3ff"; c.fillText(st, bx2 + 3.5, by2 + h / 2 + 0.3);
+    const bx2 = Math.max(1, Math.min(W - w2 - 1, e.x + dx - w2 / 2)),
+      by2 = Math.max(1, by - h - 1);
+    c.fillStyle = "#23253a";
+    roundRect(c, bx2, by2, w2, h, 2.5);
+    c.fill();
+    c.strokeStyle = "rgba(244,227,193,0.35)";
+    c.lineWidth = 0.5;
+    roundRect(c, bx2 + 0.25, by2 + 0.25, w2 - 0.5, h - 0.5, 2.3);
+    c.stroke();
+    c.fillStyle = "#bfe3ff";
+    c.fillText(st, bx2 + 3.5, by2 + h / 2 + 0.3);
   }
 }
 
@@ -1434,18 +2047,29 @@ function drawTag(c: Ctx, e: Employee, topY: number, dx = 0) {
 function drawNpc(c: Ctx, t: number, o: Office) {
   const spr = charSprite(lookFor("guild-receptionist-npc"), "idle", Math.floor(t * 1.2) % 2);
   c.save();
-  c.beginPath(); c.rect(0, 0, W, COUNTER_BOX.y + 1); c.clip(); // counter hides the legs
+  c.beginPath();
+  c.rect(0, 0, W, COUNTER_BOX.y + 1);
+  c.clip(); // counter hides the legs
   c.drawImage(spr, Math.round(NPC_POS.x - CH_W / 2), Math.round(NPC_POS.y - CH_H));
   c.restore();
   // Lookout Bell: while someone needs the user the receptionist rings the counter bell (opaque swing; static when idle / reduced motion)
   if (o.bellRinging()) {
     const ph = o.reducedMotion ? 0 : Math.floor(t * 8) % 4;
     const dx = ph === 1 ? -1 : ph === 3 ? 1 : 0;
-    rect(c, "#d9a441", 106 + dx, 43, 6, 3); rect(c, "#f6d88a", 107 + dx, 42, 4, 1);
+    rect(c, "#d9a441", 106 + dx, 43, 6, 3);
+    rect(c, "#f6d88a", 107 + dx, 42, 4, 1);
     rect(c, "#8a6a42", 108 + dx, 46, 2, 1);
-    if (dx < 0) { rect(c, "#fff6d0", 104, 42, 1, 2); rect(c, "#fff6d0", 103, 40, 1, 1); }
-    else if (dx > 0) { rect(c, "#fff6d0", 107, 40, 1, 1); rect(c, "#fff6d0", 111, 40, 1, 1); }
-    else if (o.reducedMotion) { rect(c, "#fff6d0", 104, 42, 1, 2); rect(c, "#fff6d0", 115, 42, 1, 2); rect(c, "#fff6d0", 109, 40, 1, 1); } // static "ringing" cue
+    if (dx < 0) {
+      rect(c, "#fff6d0", 104, 42, 1, 2);
+      rect(c, "#fff6d0", 103, 40, 1, 1);
+    } else if (dx > 0) {
+      rect(c, "#fff6d0", 107, 40, 1, 1);
+      rect(c, "#fff6d0", 111, 40, 1, 1);
+    } else if (o.reducedMotion) {
+      rect(c, "#fff6d0", 104, 42, 1, 2);
+      rect(c, "#fff6d0", 115, 42, 1, 2);
+      rect(c, "#fff6d0", 109, 40, 1, 1);
+    } // static "ringing" cue
   }
 }
 
@@ -1474,8 +2098,10 @@ function drawAmbientAbove(c: Ctx, o: Office, night: number) {
     const k = Math.min(1, (night - 0.3) * 2);
     for (const f of o.fireflies) {
       const a = k * (0.25 + 0.75 * Math.pow(Math.abs(Math.sin(t * 1.6 + f.ph * 4)), 2));
-      c.globalAlpha = a * 0.25; rect(c, "#e8ff7a", f.x - 1, f.y - 1, 3, 3);
-      c.globalAlpha = a; blitC(c, "firefly", f.x, f.y);
+      c.globalAlpha = a * 0.25;
+      rect(c, "#e8ff7a", f.x - 1, f.y - 1, 3, 3);
+      c.globalAlpha = a;
+      blitC(c, "firefly", f.x, f.y);
     }
     c.globalAlpha = 1;
   }
@@ -1490,25 +2116,38 @@ export function drawScene(c: Ctx, o: Office) {
   c.globalAlpha = 1;
   c.save();
   const amp = 3 * o.trauma * o.trauma;
-  if (amp > 0.35 && !o.paused && !o.reducedMotion) c.translate(Math.round((Math.random() * 2 - 1) * amp), Math.round((Math.random() * 2 - 1) * amp));
+  if (amp > 0.35 && !o.paused && !o.reducedMotion)
+    c.translate(Math.round((Math.random() * 2 - 1) * amp), Math.round((Math.random() * 2 - 1) * amp));
   drawSky(c, t, hr);
   if (o.bird && night < 0.6 && o.rain < 0.5) {
     const b = o.bird;
     const spr = prop("bird" + (Math.floor(b.ph * 7) % 2));
-    const bx = Math.round(b.x - spr.width / 2), by = Math.round(b.y + Math.sin(b.ph * 3) * 2 - spr.height / 2);
-    if (b.vx > 0) { c.save(); c.translate(bx + spr.width, by); c.scale(-1, 1); c.drawImage(spr, 0, 0); c.restore(); }
-    else c.drawImage(spr, bx, by);
+    const bx = Math.round(b.x - spr.width / 2),
+      by = Math.round(b.y + Math.sin(b.ph * 3) * 2 - spr.height / 2);
+    if (b.vx > 0) {
+      c.save();
+      c.translate(bx + spr.width, by);
+      c.scale(-1, 1);
+      c.drawImage(spr, 0, 0);
+      c.restore();
+    } else c.drawImage(spr, bx, by);
   }
   if (!bg) bg = buildBg();
   const key = Math.floor(hr * 4);
-  if (key !== lightKey || !overlay) { buildLighting(hr); lightKey = key; }
+  if (key !== lightKey || !overlay) {
+    buildLighting(hr);
+    lightKey = key;
+  }
   c.drawImage(bg, 0, 0);
   drawEnvAnim(c, t);
   // Lighting tints only the environment; characters, monsters and emissive things stay solid and full-colour.
   c.drawImage(overlay!, 0, 0);
-  if (o.rain > 0) { // rain darkens the world (before entities, so characters stay solid)
-    c.fillStyle = `rgba(20,30,60,${0.2 * o.rain})`; c.fillRect(HALL_W, 0, W - HALL_W, H);
-    c.fillStyle = `rgba(20,30,60,${0.07 * o.rain})`; c.fillRect(0, 0, HALL_W, H);
+  if (o.rain > 0) {
+    // rain darkens the world (before entities, so characters stay solid)
+    c.fillStyle = `rgba(20,30,60,${0.2 * o.rain})`;
+    c.fillRect(HALL_W, 0, W - HALL_W, H);
+    c.fillStyle = `rgba(20,30,60,${0.07 * o.rain})`;
+    c.fillRect(0, 0, HALL_W, H);
   }
   drawLights(c, t);
   drawAmbientBelow(c, o, night);
@@ -1521,7 +2160,10 @@ export function drawScene(c: Ctx, o: Office) {
     if (o.isHidden(e)) continue;
     if (e.state === "SEATED" && e.resting) {
       c.globalAlpha = 0.16 + 0.05 * Math.sin(t * 9);
-      c.fillStyle = "#ffb050"; c.beginPath(); c.arc(e.x + 10, e.y - 4, 11, 0, Math.PI * 2); c.fill();
+      c.fillStyle = "#ffb050";
+      c.beginPath();
+      c.arc(e.x + 10, e.y - 4, 11, 0, Math.PI * 2);
+      c.fill();
       c.globalAlpha = 1;
     }
   }
@@ -1542,18 +2184,25 @@ export function drawScene(c: Ctx, o: Office) {
     const te = ts(e, t);
     ents.push({ y: e.y, fn: () => drawAdventurer(c, e, te) });
     ents.push({ y: e.y + 0.4, fn: () => drawFx(c, e, te, o) });
-    if (e.monPos) { const mp = e.monPos; ents.push({ y: mp.y, fn: () => drawMonster(c, e, te) }); }
+    if (e.monPos) {
+      const mp = e.monPos;
+      ents.push({ y: mp.y, fn: () => drawMonster(c, e, te) });
+    }
     if ((e.deskIdx >= 0 || e.slot >= 0) && e.state !== "LEAVING") {
       const camp = e.deskIdx < 0;
       let k = 0;
       for (const it of e.interns.values()) {
         if (k >= 2) break;
         const kk = k++;
-        ents.push({ y: (camp ? campSquirePoint(e.slot, kk) : squirePoint(e.deskIdx, kk)).y, fn: () => drawSquire(c, e, it, kk, t) });
+        ents.push({
+          y: (camp ? campSquirePoint(e.slot, kk) : squirePoint(e.deskIdx, kk)).y,
+          fn: () => drawSquire(c, e, it, kk, t),
+        });
       }
       if (e.interns.size > 2) {
         const s = camp ? standSlot(e.slot) : spotOf(e.deskIdx);
-        const bx = camp ? s.x + 8 : s.x - 24, by = camp ? s.y - 6 : s.y;
+        const bx = camp ? s.x + 8 : s.x - 24,
+          by = camp ? s.y - 6 : s.y;
         ents.push({ y: s.y + 1, fn: () => drawBadge(c, `+${e.interns.size - 2}`, bx, by) });
       }
     }
@@ -1580,7 +2229,8 @@ export function drawScene(c: Ctx, o: Office) {
     } else {
       const em = bubbleOf(e, t);
       // opaque 🔁 badge over a looping adventurer; alternates with any other bubble (static under reduced motion)
-      if (isLooping(e) && (!em || o.reducedMotion || Math.floor(t * 1.5) % 2 === 0)) drawBubble(c, e.x, e.y - CH_H - 1, "🔁");
+      if (isLooping(e) && (!em || o.reducedMotion || Math.floor(t * 1.5) % 2 === 0))
+        drawBubble(c, e.x, e.y - CH_H - 1, "🔁");
       else if (em) drawBubble(c, e.x, e.y - CH_H - 1, em);
     }
     if (isLooping(e)) drawBerserk(c, e, t, o.reducedMotion);
@@ -1588,17 +2238,28 @@ export function drawScene(c: Ctx, o: Office) {
     if (lu >= 0 && lu < 2.2 && e.state !== "LEAVING") {
       const u = lu / 2.2;
       c.globalAlpha = u > 0.75 ? (1 - u) / 0.25 : 1;
-      c.font = '800 7.5px ui-sans-serif, system-ui, sans-serif'; c.textAlign = "center"; c.textBaseline = "middle";
-      const ly = Math.round(e.y - CH_H - 20 - (bubbleOf(e, t) || e.act === "handup" || isLooping(e) ? 15 : 0) - eob(Math.min(1, lu * 2)) * 6);
+      c.font = "800 7.5px ui-sans-serif, system-ui, sans-serif";
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      const ly = Math.round(
+        e.y -
+          CH_H -
+          20 -
+          (bubbleOf(e, t) || e.act === "handup" || isLooping(e) ? 15 : 0) -
+          eob(Math.min(1, lu * 2)) * 6,
+      );
       outlined(c, `LEVEL UP! Lv.${e.lvlTo}`, Math.max(34, Math.min(W - 34, Math.round(e.x))), ly, "#ffe14a");
       c.globalAlpha = 1;
     }
     if (o.selectedId === e.id) {
       const bounce = Math.floor(o.realTime * 4) % 2;
       duelOffsetInto(e, t);
-      const ax = Math.round(e.x + DP.dx), ay = Math.round(e.y + DP.dy - 28 - (bubbleOf(e, t) || e.act === "handup" || isLooping(e) ? 16 : 0) - bounce);
-      rect(c, "#f2c14e", ax - 3, ay - 3, 7, 1); rect(c, "#f2c14e", ax - 2, ay - 2, 5, 1);
-      rect(c, "#f2c14e", ax - 1, ay - 1, 3, 1); rect(c, "#f2c14e", ax, ay, 1, 1);
+      const ax = Math.round(e.x + DP.dx),
+        ay = Math.round(e.y + DP.dy - 28 - (bubbleOf(e, t) || e.act === "handup" || isLooping(e) ? 16 : 0) - bounce);
+      rect(c, "#f2c14e", ax - 3, ay - 3, 7, 1);
+      rect(c, "#f2c14e", ax - 2, ay - 2, 5, 1);
+      rect(c, "#f2c14e", ax - 1, ay - 1, 3, 1);
+      rect(c, "#f2c14e", ax, ay, 1, 1);
     }
   }
   const hv = o.hoverId ? o.employees.get(o.hoverId) : undefined;
@@ -1607,10 +2268,26 @@ export function drawScene(c: Ctx, o: Office) {
     c.globalAlpha = 0.9;
     rect(c, "#f2c14e", Math.round(hv.x + DP.dx - CH_W / 2) - 1, Math.round(hv.y + DP.dy - CH_H) - 1, CH_W + 2, 1);
     c.globalAlpha = 1;
-    drawTag(c, hv, hv.y + DP.dy - CH_H - 3 - (bubbleOf(hv, t) || (hv.state === "SEATED" && hv.act === "handup") || isLooping(hv) ? 17 : 0), DP.dx);
+    drawTag(
+      c,
+      hv,
+      hv.y +
+        DP.dy -
+        CH_H -
+        3 -
+        (bubbleOf(hv, t) || (hv.state === "SEATED" && hv.act === "handup") || isLooping(hv) ? 17 : 0),
+      DP.dx,
+    );
   }
   c.restore(); // end of shaken scene; screen-space overlays below
   drawAlertVignette(c, o);
-  if (o.flash > 0) { if (!o.reducedMotion) { c.globalAlpha = o.flash; rect(c, "#ffffff", 0, 0, W, H); c.globalAlpha = 1; } o.flash = 0; }
+  if (o.flash > 0) {
+    if (!o.reducedMotion) {
+      c.globalAlpha = o.flash;
+      rect(c, "#ffffff", 0, 0, W, H);
+      c.globalAlpha = 1;
+    }
+    o.flash = 0;
+  }
   drawBannerQ(c, o);
 }

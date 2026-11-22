@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import { MAX_HEARTS, xpNeed } from "@/lib/office/engine";
+
 import { emp, ev, fixedRandom, newOffice, seat, sid, stubStorage, tick } from "./helpers";
 
 beforeEach(() => {
@@ -8,11 +10,18 @@ beforeEach(() => {
   stubStorage();
   fixedRandom(0.5); // xp 2 per hit, gold 2 per kill, no crit
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
-const pre = (id: string, tool: string, tid?: string) => ev(id, "PreToolUse", { tool_name: tool, ...(tid ? { tool_use_id: tid } : {}) });
-const post = (id: string, tool: string, tid?: string) => ev(id, "PostToolUse", { tool_name: tool, ...(tid ? { tool_use_id: tid } : {}) });
-const fail = (id: string, tool: string, tid?: string) => ev(id, "PostToolUseFailure", { tool_name: tool, ...(tid ? { tool_use_id: tid } : {}) });
+const pre = (id: string, tool: string, tid?: string) =>
+  ev(id, "PreToolUse", { tool_name: tool, ...(tid ? { tool_use_id: tid } : {}) });
+const post = (id: string, tool: string, tid?: string) =>
+  ev(id, "PostToolUse", { tool_name: tool, ...(tid ? { tool_use_id: tid } : {}) });
+const fail = (id: string, tool: string, tid?: string) =>
+  ev(id, "PostToolUseFailure", { tool_name: tool, ...(tid ? { tool_use_id: tid } : {}) });
 
 describe("monsters", () => {
   it("a seated adventurer has a monster with full HP", () => {
@@ -260,15 +269,18 @@ describe("boss", () => {
     expect(e.gold).toBe(0);
   });
 
-  it.each(["Agent", "Task", "Workflow", "AskUserQuestion", "ExitPlanMode", "EnterPlanMode"])("%s is never pending, so never a boss", (tool) => {
-    const o = newOffice();
-    const id = sid();
-    const e = seat(o, id);
-    o.event(pre(id, tool, "t1"));
-    expect(e.pending.size).toBe(0);
-    tick(o, 120);
-    expect(e.boss).toBeNull();
-  });
+  it.each(["Agent", "Task", "Workflow", "AskUserQuestion", "ExitPlanMode", "EnterPlanMode"])(
+    "%s is never pending, so never a boss",
+    (tool) => {
+      const o = newOffice();
+      const id = sid();
+      const e = seat(o, id);
+      o.event(pre(id, tool, "t1"));
+      expect(e.pending.size).toBe(0);
+      tick(o, 120);
+      expect(e.boss).toBeNull();
+    },
+  );
 
   it("Post for an Agent tool doesn't drop another tool's pending entry", () => {
     const o = newOffice();

@@ -1,6 +1,7 @@
+import { BYTES_PER_MB } from "@/lib/constants";
 import { addEvent, isForeignOrigin } from "@/lib/store";
 
-const MAX_BODY = 1024 * 1024; // bytes
+const MAX_BODY = BYTES_PER_MB; // bytes
 
 async function readLimited(req: Request, limit: number): Promise<string | null> {
   const declared = Number(req.headers.get("content-length"));

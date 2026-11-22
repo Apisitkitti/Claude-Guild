@@ -1,8 +1,19 @@
 import { RECEIPT_VERDICT_TEXT, receiptSummary, type ReceiptRow } from "@/lib/office/engine";
+
 import { agoText } from "./format";
 import { SectionHeading } from "./Section";
 
-function ReceiptItem({ r, now, selected, onSelect }: { r: ReceiptRow; now: number; selected: boolean; onSelect: () => void }) {
+function ReceiptItem({
+  r,
+  now,
+  selected,
+  onSelect,
+}: {
+  r: ReceiptRow;
+  now: number;
+  selected: boolean;
+  onSelect: () => void;
+}) {
   const chips: [string, string, number, string][] = [
     ["📝", "ไฟล์", r.files, "แก้ไฟล์สำเร็จ (ไม่ซ้ำ)"],
     ["✅", "ฟื้น", r.recovered, "test แดง → เขียว"],
@@ -21,32 +32,62 @@ function ReceiptItem({ r, now, selected, onSelect }: { r: ReceiptRow; now: numbe
         title={`${sum || "ไม่มีผลลัพธ์"} · ${r.calls} tool calls · ตามที่ hook รายงาน${r.live ? "" : " · นักผจญภัยออกจากกิลด์แล้ว"}`}
       >
         <span className="rhead">
-          <b>{r.tag} <span className="rproj">{r.project}</span></b>
+          <b>
+            {r.tag} <span className="rproj">{r.project}</span>
+          </b>
           <span className={`rverdict ${r.verdict}`}>{RECEIPT_VERDICT_TEXT[r.verdict]}</span>
         </span>
         <span className="rchips">
-          {chips.filter((c) => c[2] > 0).map((c) => (
-            <span key={c[1]} className="rchip" title={c[3]}><span aria-hidden="true">{c[0]}</span> {c[1]} {c[2]}</span>
-          ))}
+          {chips
+            .filter((c) => c[2] > 0)
+            .map((c) => (
+              <span key={c[1]} className="rchip" title={c[3]}>
+                <span aria-hidden="true">{c[0]}</span> {c[1]} {c[2]}
+              </span>
+            ))}
           {sum === "" && <span className="rnone">{r.calls} tool calls ไม่มีผลลัพธ์</span>}
         </span>
-        <span className="rage">{agoText(r.closedAt, now)}{r.squire > 0 ? ` · squire ${r.squire}` : ""}{r.staleRed && r.verdict !== "red" ? " · ยังแดงจากรอบก่อน" : ""}</span>
+        <span className="rage">
+          {agoText(r.closedAt, now)}
+          {r.squire > 0 ? ` · squire ${r.squire}` : ""}
+          {r.staleRed && r.verdict !== "red" ? " · ยังแดงจากรอบก่อน" : ""}
+        </span>
       </button>
     </li>
   );
 }
 
-export function ReceiptList({ rows, now, selectedId, hidden, onToggle, onJump }: {
-  rows: ReceiptRow[]; now: number; selectedId: string | null; hidden: boolean; onToggle: () => void; onJump: (sid: string) => void;
+export function ReceiptList({
+  rows,
+  now,
+  selectedId,
+  hidden,
+  onToggle,
+  onJump,
+}: {
+  rows: ReceiptRow[];
+  now: number;
+  selectedId: string | null;
+  hidden: boolean;
+  onToggle: () => void;
+  onJump: (sid: string) => void;
 }) {
   return (
     <>
-      <SectionHeading id="rcpt" hidden={hidden} onToggle={onToggle} count={rows.length}>📜 ใบเสร็จ</SectionHeading>
+      <SectionHeading id="rcpt" hidden={hidden} onToggle={onToggle} count={rows.length}>
+        📜 ใบเสร็จ
+      </SectionHeading>
       <div className="rcptsec" id="sec-rcpt" hidden={hidden}>
         <ul className="rcpts">
           {rows.length === 0 && <li className="empty">ยังไม่มีใบเสร็จ — ออกเมื่อ session จบรอบ (Stop)</li>}
           {rows.map((r) => (
-            <ReceiptItem key={r.id} r={r} now={now || r.closedAt} selected={r.sid === selectedId} onSelect={() => onJump(r.sid)} />
+            <ReceiptItem
+              key={r.id}
+              r={r}
+              now={now || r.closedAt}
+              selected={r.sid === selectedId}
+              onSelect={() => onJump(r.sid)}
+            />
           ))}
         </ul>
         <p className="terrnote">นับ “ผลลัพธ์” ไม่ใช่ความยุ่ง · ตามที่ hook รายงาน · เก็บ 2 ชม. ในหน่วยความจำเท่านั้น</p>

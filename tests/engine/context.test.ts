@@ -1,12 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import { ev, newOffice, seat, sid, stubStorage, tick } from "./helpers";
 
-beforeEach(() => { vi.useFakeTimers(); stubStorage(); });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+beforeEach(() => {
+  vi.useFakeTimers();
+  stubStorage();
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("context (mana)", () => {
   it("setContext shows in roster and frac", () => {
-    const o = newOffice(); const a = sid();
+    const o = newOffice();
+    const a = sid();
     seat(o, a);
     o.setContext(a, 250000, 1000000, true);
     expect(o.ctxFrac(a)).toBeCloseTo(0.25);
@@ -15,7 +24,8 @@ describe("context (mana)", () => {
   });
 
   it("null resets; unknown means no fields", () => {
-    const o = newOffice(); const a = sid();
+    const o = newOffice();
+    const a = sid();
     seat(o, a);
     o.setContext(a, 10, 100);
     o.setContext(a, null, null, false);
@@ -25,7 +35,8 @@ describe("context (mana)", () => {
   });
 
   it("rejects garbage and clamps >100%", () => {
-    const o = newOffice(); const a = sid();
+    const o = newOffice();
+    const a = sid();
     seat(o, a);
     o.setContext(a, 5, 0);
     expect(o.ctxFrac(a)).toBeNull();
@@ -34,7 +45,8 @@ describe("context (mana)", () => {
   });
 
   it("survives leave and re-enter", () => {
-    const o = newOffice(); const a = sid();
+    const o = newOffice();
+    const a = sid();
     seat(o, a);
     o.setContext(a, 50, 100);
     o.event(ev(a, "SessionEnd"));
@@ -43,8 +55,11 @@ describe("context (mana)", () => {
   });
 
   it("snapshot context applies, null resets, undefined keeps", () => {
-    const o = newOffice(); const a = sid();
-    o.loadSnapshot({ sessions: [{ session_id: a, cwd: "/w/p", context: { used: 20, limit: 100, limitGuessed: false } }] });
+    const o = newOffice();
+    const a = sid();
+    o.loadSnapshot({
+      sessions: [{ session_id: a, cwd: "/w/p", context: { used: 20, limit: 100, limitGuessed: false } }],
+    });
     expect(o.ctxFrac(a)).toBeCloseTo(0.2);
     o.loadSnapshot({ sessions: [{ session_id: a, cwd: "/w/p" }] });
     expect(o.ctxFrac(a)).toBeCloseTo(0.2);
@@ -53,7 +68,8 @@ describe("context (mana)", () => {
   });
 
   it("roster re-emits only when rounded percent changes", () => {
-    const o = newOffice(); const a = sid();
+    const o = newOffice();
+    const a = sid();
     seat(o, a);
     o.setContext(a, 500, 1000);
     const cb = vi.fn();
@@ -70,7 +86,9 @@ describe("context (mana)", () => {
 
 describe("session filter", () => {
   it("query hides non-matching from roster and hit-test, counts hidden", () => {
-    const o = newOffice(); const a = sid(), b = sid();
+    const o = newOffice();
+    const a = sid(),
+      b = sid();
     seat(o, a, { cwd: "/w/Alpha-App" });
     seat(o, b, { cwd: "/w/beta" });
     o.setFilter({ query: "ALPHA" });
@@ -85,17 +103,21 @@ describe("session filter", () => {
   });
 
   it("hideStray hides sessions without SessionStart and < 3 events", () => {
-    const o = newOffice(); const a = sid(), s = sid();
+    const o = newOffice();
+    const a = sid(),
+      s = sid();
     seat(o, a);
     o.event(ev(s, "UserPromptSubmit"));
     o.setFilter({ hideStray: true });
     expect(o.getView().roster.map((r) => r.id)).toEqual([a]);
-    o.event(ev(s, "Stop")); o.event(ev(s, "Stop"));
+    o.event(ev(s, "Stop"));
+    o.event(ev(s, "Stop"));
     expect(o.getView().roster).toHaveLength(2);
   });
 
   it("hideStray never hides a snapshot-listed session with few events", () => {
-    const o = newOffice(); const a = sid();
+    const o = newOffice();
+    const a = sid();
     o.loadSnapshot({ sessions: [{ session_id: a, cwd: "/w/p" }], events: [] });
     o.setFilter({ hideStray: true });
     expect(o.getView().roster.map((r) => r.id)).toEqual([a]);
@@ -103,7 +125,8 @@ describe("session filter", () => {
   });
 
   it("hideStray never hides a session waiting on the user", () => {
-    const o = newOffice(); const s = sid();
+    const o = newOffice();
+    const s = sid();
     o.event(ev(s, "UserPromptSubmit"));
     tick(o, 60);
     o.event(ev(s, "Notification", { notification_type: "permission_prompt" }));
@@ -114,7 +137,8 @@ describe("session filter", () => {
   });
 
   it("waitingIds / view.waiting include sessions hidden by the filter", () => {
-    const o = newOffice(); const a = sid();
+    const o = newOffice();
+    const a = sid();
     seat(o, a, { cwd: "/w/zzz" });
     o.event(ev(a, "Notification", { notification_type: "permission_prompt" }));
     o.setFilter({ query: "nomatch" });
@@ -126,7 +150,8 @@ describe("session filter", () => {
   });
 
   it("hidden employees keep updating", () => {
-    const o = newOffice(); const a = sid();
+    const o = newOffice();
+    const a = sid();
     seat(o, a, { cwd: "/w/zzz" });
     o.setFilter({ query: "nomatch" });
     o.event(ev(a, "UserPromptSubmit"));
@@ -137,9 +162,11 @@ describe("session filter", () => {
   });
 
   it("filtering drops hover/selection of hidden", () => {
-    const o = newOffice(); const a = sid();
+    const o = newOffice();
+    const a = sid();
     seat(o, a, { cwd: "/w/x" });
-    o.select(a); o.setHover(a);
+    o.select(a);
+    o.setHover(a);
     o.setFilter({ query: "y" });
     expect(o.selectedId).toBeNull();
     expect(o.hoverId).toBeNull();

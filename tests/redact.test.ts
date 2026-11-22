@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { REDACTED as R, isSecretKey, redactDeep, redactSecrets } from "@/lib/redact";
 
 const fake = {
@@ -27,8 +28,12 @@ describe("redactSecrets: known token shapes", () => {
 
 describe("redactSecrets: headers", () => {
   it("Authorization: Bearer (curl -H forms)", () => {
-    expect(redactSecrets(`curl -H "Authorization: Bearer abc.def-123" https://x.io`)).toBe(`curl -H "Authorization: Bearer ${R}" https://x.io`);
-    expect(redactSecrets("curl -H 'authorization: bearer s3cr3tvalue' u")).toBe(`curl -H 'authorization: bearer ${R}' u`);
+    expect(redactSecrets(`curl -H "Authorization: Bearer abc.def-123" https://x.io`)).toBe(
+      `curl -H "Authorization: Bearer ${R}" https://x.io`,
+    );
+    expect(redactSecrets("curl -H 'authorization: bearer s3cr3tvalue' u")).toBe(
+      `curl -H 'authorization: bearer ${R}' u`,
+    );
     expect(redactSecrets(`{"Authorization":"Basic dXNlcjpwYXNz"}`)).toBe(`{"Authorization":"Basic ${R}"}`);
   });
   it("lone Bearer token with digits, not prose", () => {
@@ -59,7 +64,9 @@ describe("redactSecrets: assignments", () => {
     expect(redactSecrets(`client_secret: 's3cret!'`)).toBe(`client_secret: '${R}'`);
   });
   it("config-style line starting with the key (spaced =)", () => {
-    expect(redactSecrets("[default]\naws_secret_access_key = wJalrXUtnFEMI/K7MDENG\nregion = x")).toBe(`[default]\naws_secret_access_key = ${R}\nregion = x`);
+    expect(redactSecrets("[default]\naws_secret_access_key = wJalrXUtnFEMI/K7MDENG\nregion = x")).toBe(
+      `[default]\naws_secret_access_key = ${R}\nregion = x`,
+    );
   });
   it("flag form: --password x / --token=x", () => {
     expect(redactSecrets("mycli --password hunter2 --user bob")).toBe(`mycli --password ${R} --user bob`);
@@ -67,8 +74,12 @@ describe("redactSecrets: assignments", () => {
     expect(redactSecrets(`mycli --api-key "k 1" go`)).toBe(`mycli --api-key "${R}" go`);
   });
   it("URLs with user:pass@ and curl -u", () => {
-    expect(redactSecrets("git clone https://bob:ghs3cret@github.com/a/b.git")).toBe(`git clone https://bob:${R}@github.com/a/b.git`);
-    expect(redactSecrets("DATABASE_URL=postgres://app:p4ss@db:5432/x")).toBe(`DATABASE_URL=postgres://app:${R}@db:5432/x`);
+    expect(redactSecrets("git clone https://bob:ghs3cret@github.com/a/b.git")).toBe(
+      `git clone https://bob:${R}@github.com/a/b.git`,
+    );
+    expect(redactSecrets("DATABASE_URL=postgres://app:p4ss@db:5432/x")).toBe(
+      `DATABASE_URL=postgres://app:${R}@db:5432/x`,
+    );
     expect(redactSecrets("curl -u admin:hunter2 https://x")).toBe(`curl -u admin:${R} https://x`);
   });
   it("is idempotent", () => {
@@ -108,7 +119,7 @@ describe("redactSecrets: no false positives", () => {
     "const fixture = 'dGhpcyBpcyBhIHRlc3QgZml4dHVyZSBzdHJpbmc='",
     "Authorization header is required",
     "--password-file ./pw.txt",
-    "grep -rn \"password\" src/",
+    'grep -rn "password" src/',
     "short",
     "",
   ];
@@ -139,7 +150,12 @@ describe("redactDeep / isSecretKey", () => {
   it("redacts nested strings and secret-named keys, keeps the rest", () => {
     const out = redactDeep({
       tool_name: "Bash",
-      tool_input: { command: "export X_TOKEN=abc123 && ls", env: { GITHUB_TOKEN: "ghp_whatever", NODE_ENV: "test" }, n: 3, ok: true },
+      tool_input: {
+        command: "export X_TOKEN=abc123 && ls",
+        env: { GITHUB_TOKEN: "ghp_whatever", NODE_ENV: "test" },
+        n: 3,
+        ok: true,
+      },
       todos: [{ content: "use password=hunter2", status: "completed" }],
       session_id: "s1",
       max_tokens: 100,
@@ -157,34 +173,69 @@ describe("redactDeep / isSecretKey", () => {
     expect((redactDeep(Array.from({ length: 1000 }, (_, i) => i)) as unknown[]).length).toBe(200);
   });
   it("isSecretKey", () => {
-    for (const k of ["token", "api_key", "GITHUB_TOKEN", "accessToken", "Authorization", "client_secret", "password", "x-api-key", "cookie"]) expect(isSecretKey(k)).toBe(true);
-    for (const k of ["max_tokens", "session_id", "command", "file_path", "tokenizer", "tool_name", "key"]) expect(isSecretKey(k)).toBe(false);
+    for (const k of [
+      "token",
+      "api_key",
+      "GITHUB_TOKEN",
+      "accessToken",
+      "Authorization",
+      "client_secret",
+      "password",
+      "x-api-key",
+      "cookie",
+    ])
+      expect(isSecretKey(k)).toBe(true);
+    for (const k of ["max_tokens", "session_id", "command", "file_path", "tokenizer", "tool_name", "key"])
+      expect(isSecretKey(k)).toBe(false);
   });
 });
 
 describe("review fixes", () => {
-  const time = (s: string) => { const t = performance.now(); redactSecrets(s); return performance.now() - t; };
+  const time = (s: string) => {
+    const t = performance.now();
+    redactSecrets(s);
+    return performance.now() - t;
+  };
   it("adversarial 40k inputs stay fast", () => {
     const cases: Record<string, string> = {
-      underscores: "_".repeat(40_000), dashA: "-a".repeat(20_000), dotA: ".a".repeat(20_000), xyU: "x.y_".repeat(10_000),
-      sk: "sk-".repeat(13_000), tokenRun: "token".repeat(8000), bearer: "bearer " + "a".repeat(40_000), auth: "authorization: " + "a".repeat(40_000),
-      cookie: "cookie:".repeat(5000), heredocish: "<<A\n".repeat(8000), eq: "token=".repeat(7000), urls: "a://b:".repeat(7000),
+      underscores: "_".repeat(40_000),
+      dashA: "-a".repeat(20_000),
+      dotA: ".a".repeat(20_000),
+      xyU: "x.y_".repeat(10_000),
+      sk: "sk-".repeat(13_000),
+      tokenRun: "token".repeat(8000),
+      bearer: "bearer " + "a".repeat(40_000),
+      auth: "authorization: " + "a".repeat(40_000),
+      cookie: "cookie:".repeat(5000),
+      heredocish: "<<A\n".repeat(8000),
+      eq: "token=".repeat(7000),
+      urls: "a://b:".repeat(7000),
     };
     for (const [n, s] of Object.entries(cases)) expect(time(s), n).toBeLessThan(50);
   });
   it("a 1MB MultiEdit-shaped payload through redactDeep < 300ms", () => {
     const big = ("const a_b = 1; // password=hunter2 \n" + "x".repeat(60)).repeat(10_000);
-    const payload = { tool_name: "MultiEdit", tool_input: { file_path: "/a", edits: Array.from({ length: 200 }, () => ({ old_string: big.slice(0, 5000), new_string: big.slice(0, 5000) })) }, junk: big };
+    const payload = {
+      tool_name: "MultiEdit",
+      tool_input: {
+        file_path: "/a",
+        edits: Array.from({ length: 200 }, () => ({ old_string: big.slice(0, 5000), new_string: big.slice(0, 5000) })),
+      },
+      junk: big,
+    };
     const t = performance.now();
     const out = redactDeep(payload);
     expect(performance.now() - t).toBeLessThan(300);
     expect(JSON.stringify(out)).not.toContain("hunter2");
   });
   it("YAML / compose / env style unquoted values", () => {
-    expect(redactSecrets("environment:\n  POSTGRES_PASSWORD: hunter2\n  NODE_ENV: test")).toBe(`environment:\n  POSTGRES_PASSWORD: ${R}\n  NODE_ENV: test`);
+    expect(redactSecrets("environment:\n  POSTGRES_PASSWORD: hunter2\n  NODE_ENV: test")).toBe(
+      `environment:\n  POSTGRES_PASSWORD: ${R}\n  NODE_ENV: test`,
+    );
     expect(redactSecrets("client_secret: abc123xyz")).toBe(`client_secret: ${R}`);
     expect(redactSecrets("  - api_key: k9x8")).toBe(`  - api_key: ${R}`);
-    for (const ok of ["token: string", "password: required", "API_TOKEN: string", "token: Token;", "  token: number"]) expect(redactSecrets(ok), ok).toBe(ok);
+    for (const ok of ["token: string", "password: required", "API_TOKEN: string", "token: Token;", "  token: number"])
+      expect(redactSecrets(ok), ok).toBe(ok);
   });
   it("Cookie / Set-Cookie header values", () => {
     expect(redactSecrets('curl -H "Cookie: sid=abc; theme=dark" u')).toBe(`curl -H "Cookie: ${R}" u`);

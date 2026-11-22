@@ -1,17 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import { conflictKey, type TerritoryMsg } from "@/lib/office/engine";
+
 import { newOffice, seat, sid, stubStorage, tick } from "./helpers";
 
-beforeEach(() => { vi.useFakeTimers(); stubStorage(); });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+beforeEach(() => {
+  vi.useFakeTimers();
+  stubStorage();
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const msg = (a: string, b: string, level: "overlap" | "clash" = "overlap"): TerritoryMsg => ({
-  claims: [{ sid: a, files: ["src/a.ts", "src/b.ts"] }, { sid: b, files: ["src/a.ts"] }],
+  claims: [
+    { sid: a, files: ["src/a.ts", "src/b.ts"] },
+    { sid: b, files: ["src/a.ts"] },
+  ],
   conflicts: [{ file: "src/a.ts", sids: [a, b], level, since: 1 }],
 });
 
 function two() {
-  const o = newOffice(); const a = sid(), b = sid();
+  const o = newOffice();
+  const a = sid(),
+    b = sid();
   seat(o, a, { cwd: "/w/alpha" });
   seat(o, b, { cwd: "/w/beta" });
   return { o, a, b };
@@ -22,7 +36,8 @@ describe("territory", () => {
     const { o, a, b } = two();
     o.setTerritory(msg(a, b));
     const rows = o.getView().roster;
-    const ra = rows.find((r) => r.id === a)!, rb = rows.find((r) => r.id === b)!;
+    const ra = rows.find((r) => r.id === a)!,
+      rb = rows.find((r) => r.id === b)!;
     expect([ra.claims, rb.claims]).toEqual([2, 1]);
     expect([ra.conflict, rb.conflict]).toEqual(["overlap", "overlap"]);
     o.setTerritory(msg(a, b, "clash"));
@@ -79,12 +94,16 @@ describe("territory", () => {
 
   it("a third session joining a clash does not re-alert nor undo a dismissal", () => {
     const { o, a, b } = two();
-    const c = sid(); seat(o, c, { cwd: "/w/gamma" });
+    const c = sid();
+    seat(o, c, { cwd: "/w/gamma" });
     o.banners.length = 0;
     o.setTerritory(msg(a, b, "clash"));
     expect(o.banners).toHaveLength(1);
     const logN = o.getView().log.length;
-    const three: TerritoryMsg = { claims: [], conflicts: [{ file: "src/a.ts", sids: [a, b, c], level: "clash", since: 1 }] };
+    const three: TerritoryMsg = {
+      claims: [],
+      conflicts: [{ file: "src/a.ts", sids: [a, b, c], level: "clash", since: 1 }],
+    };
     o.setTerritory(three);
     expect(o.banners).toHaveLength(1);
     expect(o.getView().log.length).toBe(logN);
@@ -95,7 +114,9 @@ describe("territory", () => {
   });
 
   it("clash alert deferred for an unknown session fires once it joins", () => {
-    const o = newOffice(); const a = sid(), b = sid();
+    const o = newOffice();
+    const a = sid(),
+      b = sid();
     seat(o, a, { cwd: "/w/alpha" });
     o.banners.length = 0;
     o.setTerritory(msg(a, b, "clash"));
@@ -119,7 +140,8 @@ describe("territory", () => {
 
   it("new clash raises banner, trauma and a log row once", () => {
     const { o, a, b } = two();
-    o.banners.length = 0; o.trauma = 0;
+    o.banners.length = 0;
+    o.trauma = 0;
     const logN = o.getView().log.length;
     o.setTerritory(msg(a, b, "clash"));
     expect(o.banners.at(-1)?.text).toContain("src/a.ts");
@@ -133,14 +155,16 @@ describe("territory", () => {
 
   it("no shake under reduced motion; overlap never alerts", () => {
     const { o, a, b } = two();
-    o.reducedMotion = true; o.trauma = 0;
+    o.reducedMotion = true;
+    o.trauma = 0;
     o.setTerritory(msg(a, b, "clash"));
     expect(o.trauma).toBe(0);
     const p = two();
     p.o.banners.length = 0;
     p.o.setTerritory(msg(p.a, p.b));
     expect(p.o.banners).toHaveLength(0);
-    void a; void b;
+    void a;
+    void b;
   });
 
   it("unknown sessions are ignored gracefully", () => {
@@ -155,14 +179,24 @@ describe("territory", () => {
   it("garbage input does not throw", () => {
     const { o } = two();
     expect(() => o.setTerritory(null)).not.toThrow();
-    expect(() => o.setTerritory({ claims: "x", conflicts: [{ file: 1 }, null, { file: "f", sids: ["a"], level: "clash", since: 0 }] } as unknown as TerritoryMsg)).not.toThrow();
+    expect(() =>
+      o.setTerritory({
+        claims: "x",
+        conflicts: [{ file: 1 }, null, { file: "f", sids: ["a"], level: "clash", since: 0 }],
+      } as unknown as TerritoryMsg),
+    ).not.toThrow();
     expect(o.getView().conflicts).toHaveLength(0);
   });
 
   it("snapshot territory applies quietly (no banner for existing clashes)", () => {
-    const o = newOffice(); const a = sid(), b = sid();
+    const o = newOffice();
+    const a = sid(),
+      b = sid();
     o.loadSnapshot({
-      sessions: [{ session_id: a, cwd: "/w/alpha" }, { session_id: b, cwd: "/w/beta" }],
+      sessions: [
+        { session_id: a, cwd: "/w/alpha" },
+        { session_id: b, cwd: "/w/beta" },
+      ],
       territory: msg(a, b, "clash"),
     });
     expect(o.getView().conflicts).toHaveLength(1);
@@ -192,7 +226,8 @@ describe("territory", () => {
   it("view re-emits when territory changes", () => {
     const { o, a, b } = two();
     const cb = vi.fn();
-    o.subscribe(cb); cb.mockClear();
+    o.subscribe(cb);
+    cb.mockClear();
     o.setTerritory(msg(a, b));
     o.publish();
     expect(cb).toHaveBeenCalledTimes(1);

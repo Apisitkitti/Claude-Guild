@@ -5,11 +5,14 @@ import { open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { BYTES_PER_KB } from "@/lib/constants";
+
 export type ContextUsage = { used: number; limit: number; limitGuessed: boolean };
 // `compacted`: the latest thing in the transcript is a compaction with no assistant usage after it yet.
 export type ContextRead = ContextUsage | { compacted: true } | null;
 
-const TAIL_BYTES = 256 * 1024;
+const TAIL_BYTES_KB = 256;
+const TAIL_BYTES = TAIL_BYTES_KB * BYTES_PER_KB;
 const DEFAULT_LIMIT = 200_000;
 const GUESSED_LIMIT = 1_000_000;
 
@@ -64,7 +67,11 @@ export async function readContext(transcriptPath: unknown): Promise<ContextRead>
       } catch {
         continue;
       }
-      if (obj && typeof obj === "object" && ((obj.type === "system" && obj.subtype === "compact_boundary") || obj.isCompactSummary === true)) {
+      if (
+        obj &&
+        typeof obj === "object" &&
+        ((obj.type === "system" && obj.subtype === "compact_boundary") || obj.isCompactSummary === true)
+      ) {
         return { compacted: true };
       }
       if (!obj || typeof obj !== "object" || obj.type !== "assistant" || obj.isSidechain === true) continue;

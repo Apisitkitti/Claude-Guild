@@ -1,10 +1,11 @@
 import type { RosterAct, RosterRow } from "@/lib/office/engine";
 import { CLASS_LABEL } from "@/lib/office/palette";
+
 import { Avatar } from "./Avatar";
+import { isNum } from "./format";
 import { InternList } from "./InternList";
 import { Mana } from "./Mana";
 import { Stats } from "./Stats";
-import { isNum } from "./format";
 import type { OfficeRef, RpgRow } from "./types";
 
 const ACT_CHIP: Record<RosterAct, { cls: string; label: string }> = {
@@ -23,8 +24,22 @@ const ACT_CHIP: Record<RosterAct, { cls: string; label: string }> = {
   leave: { cls: "c-grey", label: "กลับกิลด์" },
 };
 
-export function RosterCard({ r, highlighted, selected, flashing, internsHidden, onToggleInterns, officeRef }: {
-  r: RosterRow; highlighted: boolean; selected: boolean; flashing: boolean; internsHidden: boolean; onToggleInterns: () => void; officeRef: OfficeRef;
+export function RosterCard({
+  r,
+  highlighted,
+  selected,
+  flashing,
+  internsHidden,
+  onToggleInterns,
+  officeRef,
+}: {
+  r: RosterRow;
+  highlighted: boolean;
+  selected: boolean;
+  flashing: boolean;
+  internsHidden: boolean;
+  onToggleInterns: () => void;
+  officeRef: OfficeRef;
 }) {
   const chip = ACT_CHIP[r.act] ?? ACT_CHIP.thinking;
   const p = r as RpgRow;
@@ -40,7 +55,11 @@ export function RosterCard({ r, highlighted, selected, flashing, internsHidden, 
       >
         <Avatar look={r.look} />
         <span className="who">
-          <b>{r.tag}{r.look.cls ? <span className="cls">{CLASS_LABEL[r.look.cls]}</span> : null}{isNum(p.level) ? <span className="lv">Lv.{p.level}</span> : null}</b>
+          <b>
+            {r.tag}
+            {r.look.cls ? <span className="cls">{CLASS_LABEL[r.look.cls]}</span> : null}
+            {isNum(p.level) ? <span className="lv">Lv.{p.level}</span> : null}
+          </b>
           <span className="proj">{r.project}</span>
         </span>
         <span className={`chip ${chip.cls}`}>{chip.label}</span>
@@ -49,9 +68,21 @@ export function RosterCard({ r, highlighted, selected, flashing, internsHidden, 
       <Mana p={p} />
       {(isNum(r.claims) || r.conflict) && (
         <div className="terr">
-          {isNum(r.claims) && <span className="tb claims" title={`ถือครอง ${r.claims} ไฟล์`}>🏳 {r.claims}</span>}
-          {r.conflict === "clash" && <span className="tb clash" role="img" aria-label="ชนกัน" title="ชนกัน!">⚔️</span>}
-          {r.conflict === "overlap" && <span className="tb overlap" role="img" aria-label="แตะไฟล์เดียวกัน" title="แตะไฟล์เดียวกัน">⚔</span>}
+          {isNum(r.claims) && (
+            <span className="tb claims" title={`ถือครอง ${r.claims} ไฟล์`}>
+              🏳 {r.claims}
+            </span>
+          )}
+          {r.conflict === "clash" && (
+            <span className="tb clash" role="img" aria-label="ชนกัน" title="ชนกัน!">
+              ⚔️
+            </span>
+          )}
+          {r.conflict === "overlap" && (
+            <span className="tb overlap" role="img" aria-label="แตะไฟล์เดียวกัน" title="แตะไฟล์เดียวกัน">
+              ⚔
+            </span>
+          )}
         </div>
       )}
       {r.interns > 0 && (

@@ -1,0 +1,13 @@
+.next
+node_modules
+out
+build
+coverage
+package-lock.json
+tsconfig.tsbuildinfo
+next-env.d.ts
+paraglide/
+hackathon/
+public/
+*.md
+!docs/*.md

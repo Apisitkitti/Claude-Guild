@@ -1,19 +1,42 @@
 import { describe, expect, it } from "vitest";
+
 import {
-  AttentionTracker, CTX_PRESSURE, DONE_STALE_MS, PERM_STALE_MS, errorLine, LOOP_STALE_MS, LOOP_WINDOW_MS, MAX_KEYS, MAX_ROWS,
-  looksAsked, normalizeCommand, normalizeError,
+  AttentionTracker,
+  CTX_PRESSURE,
+  DONE_STALE_MS,
+  PERM_STALE_MS,
+  errorLine,
+  LOOP_STALE_MS,
+  LOOP_WINDOW_MS,
+  MAX_KEYS,
+  MAX_ROWS,
+  looksAsked,
+  normalizeCommand,
+  normalizeError,
 } from "@/lib/attention";
 
 const MIN = 60_000;
 let uid = 0;
 const fail = (t: AttentionTracker, now: number, o: Record<string, unknown> = {}) =>
-  t.ingest({ session_id: "s1", hook_event_name: "PostToolUseFailure", tool_name: "Bash", tool_input: { command: "npm test" }, error: "Command exited with status 1: expected 3 got 2", tool_use_id: "u" + uid++, ...o }, now);
+  t.ingest(
+    {
+      session_id: "s1",
+      hook_event_name: "PostToolUseFailure",
+      tool_name: "Bash",
+      tool_input: { command: "npm test" },
+      error: "Command exited with status 1: expected 3 got 2",
+      tool_use_id: "u" + uid++,
+      ...o,
+    },
+    now,
+  );
 const loops = (t: AttentionTracker, now = 0) => t.queue(now).filter((r) => r.kind === "loop");
 
 describe("loop detector", () => {
   it("triggers at 3 same-error failures within 5 minutes", () => {
     const t = new AttentionTracker();
-    fail(t, 0); fail(t, 10_000);
+    fail(t, 0);
+    fail(t, 10_000);
     expect(loops(t)).toHaveLength(0);
     fail(t, 20_000);
     const [r] = loops(t);
@@ -30,12 +53,16 @@ describe("loop detector", () => {
     fail(t, 1000, { error: "failed in 98ms at /tmp/zzz9/x.js:12 id 0xcafe1234" });
     fail(t, 2000, { error: "failed in 5s at /private/var/folders/aa/bb/x.js:99 id 0x1" });
     expect(loops(t)).toHaveLength(1);
-    expect(normalizeCommand("npm test --seed 123 > /tmp/out-9.txt")).toBe(normalizeCommand("npm test --seed 456 > /tmp/out-77.txt"));
+    expect(normalizeCommand("npm test --seed 123 > /tmp/out-9.txt")).toBe(
+      normalizeCommand("npm test --seed 456 > /tmp/out-77.txt"),
+    );
     expect(normalizeError("took 3.5s")).toBe(normalizeError("took 12ms"));
   });
   it("different errors do not loop", () => {
     const t = new AttentionTracker();
-    fail(t, 0, { error: "alpha problem" }); fail(t, 1000, { error: "beta problem" }); fail(t, 2000, { error: "gamma problem" });
+    fail(t, 0, { error: "alpha problem" });
+    fail(t, 1000, { error: "beta problem" });
+    fail(t, 2000, { error: "gamma problem" });
     expect(loops(t)).toHaveLength(0);
   });
   it("different commands do not loop together", () => {
@@ -45,45 +72,66 @@ describe("loop detector", () => {
   });
   it("failures older than 5 minutes fall out of the window", () => {
     const t = new AttentionTracker();
-    fail(t, 0); fail(t, 1000);
+    fail(t, 0);
+    fail(t, 1000);
     fail(t, LOOP_WINDOW_MS + 5000);
     expect(loops(t)).toHaveLength(0);
   });
   it("a successful Edit/Write resets", () => {
     for (const tool of ["Edit", "Write", "MultiEdit", "NotebookEdit"]) {
       const t = new AttentionTracker();
-      fail(t, 0); fail(t, 1000); fail(t, 2000);
+      fail(t, 0);
+      fail(t, 1000);
+      fail(t, 2000);
       expect(loops(t)).toHaveLength(1);
-      t.ingest({ session_id: "s1", hook_event_name: "PostToolUse", tool_name: tool, tool_input: { file_path: "/a/b.ts", old_string: "x" }, tool_use_id: "e" + uid++ }, 3000);
+      t.ingest(
+        {
+          session_id: "s1",
+          hook_event_name: "PostToolUse",
+          tool_name: tool,
+          tool_input: { file_path: "/a/b.ts", old_string: "x" },
+          tool_use_id: "e" + uid++,
+        },
+        3000,
+      );
       expect(loops(t)).toHaveLength(0);
-      fail(t, 4000); fail(t, 5000);
+      fail(t, 4000);
+      fail(t, 5000);
       expect(loops(t)).toHaveLength(0);
     }
   });
   it("a failed Edit does not reset, and Edit failures with same file+old_string loop", () => {
     const t = new AttentionTracker();
     const e = { tool_name: "Edit", tool_input: { file_path: "/a/b.ts", old_string: "foo" }, error: "String not found" };
-    fail(t, 0, e); fail(t, 1000, e); fail(t, 2000, e);
+    fail(t, 0, e);
+    fail(t, 1000, e);
+    fail(t, 2000, e);
     expect(loops(t)[0].text).toContain("a/b.ts");
   });
   it("UserPromptSubmit and Stop reset", () => {
     for (const name of ["UserPromptSubmit", "Stop"]) {
       const t = new AttentionTracker();
-      fail(t, 0); fail(t, 1000); fail(t, 2000);
+      fail(t, 0);
+      fail(t, 1000);
+      fail(t, 2000);
       t.ingest({ session_id: "s1", hook_event_name: name }, 3000);
       expect(loops(t)).toHaveLength(0);
-      fail(t, 4000); fail(t, 5000);
+      fail(t, 4000);
+      fail(t, 5000);
       expect(loops(t)).toHaveLength(0);
     }
   });
   it("dedupes by tool_use_id", () => {
     const t = new AttentionTracker();
-    fail(t, 0, { tool_use_id: "same" }); fail(t, 1000, { tool_use_id: "same" }); fail(t, 2000, { tool_use_id: "same" });
+    fail(t, 0, { tool_use_id: "same" });
+    fail(t, 1000, { tool_use_id: "same" });
+    fail(t, 2000, { tool_use_id: "same" });
     expect(loops(t)).toHaveLength(0);
   });
   it("ignores is_interrupt failures", () => {
     const t = new AttentionTracker();
-    fail(t, 0); fail(t, 1000);
+    fail(t, 0);
+    fail(t, 1000);
     fail(t, 2000, { is_interrupt: true });
     expect(loops(t)).toHaveLength(0);
     fail(t, 3000);
@@ -91,9 +139,12 @@ describe("loop detector", () => {
   });
   it("keys sessions and agents separately", () => {
     const t = new AttentionTracker();
-    fail(t, 0); fail(t, 1000, { agent_id: "ag1" }); fail(t, 2000, { session_id: "s2" });
+    fail(t, 0);
+    fail(t, 1000, { agent_id: "ag1" });
+    fail(t, 2000, { session_id: "s2" });
     expect(loops(t)).toHaveLength(0);
-    fail(t, 3000, { agent_id: "ag1" }); fail(t, 4000, { agent_id: "ag1" });
+    fail(t, 3000, { agent_id: "ag1" });
+    fail(t, 4000, { agent_id: "ag1" });
     const r = loops(t);
     expect(r).toHaveLength(1);
     expect(r[0].sid).toBe("s1");
@@ -106,7 +157,10 @@ describe("loop detector", () => {
   });
   it("loop keys include the agent so two agents looping the same command stay separate", () => {
     const t = new AttentionTracker();
-    for (let i = 0; i < 3; i++) { fail(t, i); fail(t, i, { agent_id: "ag1" }); }
+    for (let i = 0; i < 3; i++) {
+      fail(t, i);
+      fail(t, i, { agent_id: "ag1" });
+    }
     const r = loops(t);
     expect(r).toHaveLength(2);
     expect(new Set(r.map((x) => x.key)).size).toBe(2);
@@ -123,7 +177,9 @@ describe("loop detector", () => {
   it("long errors sharing a prefix do not collide, and only a short display line is kept", () => {
     const t = new AttentionTracker();
     const pre = "same prefix ".repeat(60);
-    fail(t, 0, { error: pre + "alpha" }); fail(t, 1, { error: pre + "beta" }); fail(t, 2, { error: pre + "gamma" });
+    fail(t, 0, { error: pre + "alpha" });
+    fail(t, 1, { error: pre + "beta" });
+    fail(t, 2, { error: pre + "gamma" });
     expect(loops(t)).toHaveLength(0);
     const t2 = new AttentionTracker();
     for (let i = 0; i < 3; i++) fail(t2, i, { error: pre + "same" });
@@ -138,8 +194,18 @@ describe("loop detector", () => {
   });
   it("a success of the same attempt breaks the streak", () => {
     const t = new AttentionTracker();
-    fail(t, 0); fail(t, 1000);
-    t.ingest({ session_id: "s1", hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "npm test" }, tool_use_id: "ok1" }, 1500);
+    fail(t, 0);
+    fail(t, 1000);
+    t.ingest(
+      {
+        session_id: "s1",
+        hook_event_name: "PostToolUse",
+        tool_name: "Bash",
+        tool_input: { command: "npm test" },
+        tool_use_id: "ok1",
+      },
+      1500,
+    );
     fail(t, 2000);
     expect(loops(t)).toHaveLength(0);
   });
@@ -172,7 +238,15 @@ describe("asked detector", () => {
   ])("looksAsked(%j) = %s", (m, want) => expect(looksAsked(m)).toBe(want));
 
   const stop = (t: AttentionTracker, msg: unknown, now = 0, o: Record<string, unknown> = {}) =>
-    t.ingest({ session_id: "s1", hook_event_name: "Stop", ...(msg === undefined ? {} : { last_assistant_message: msg }), ...o }, now);
+    t.ingest(
+      {
+        session_id: "s1",
+        hook_event_name: "Stop",
+        ...(msg === undefined ? {} : { last_assistant_message: msg }),
+        ...o,
+      },
+      now,
+    );
   it("question -> asked row with a tail of at most 80 chars; plain -> done; missing field -> done", () => {
     const t = new AttentionTracker();
     stop(t, "x".repeat(500) + " ใช้ Prisma ไหม?");
@@ -210,11 +284,20 @@ describe("queue", () => {
     t.setWaiting("p2", 50);
     t.setWaiting("p1", 20);
     const q = t.queue(1000);
-    expect(q.map((r) => `${r.kind}:${r.sid}`)).toEqual(["permission:p1", "permission:p2", "loop:l", "asked:q", "context:c", "done:d2", "done:d"]);
+    expect(q.map((r) => `${r.kind}:${r.sid}`)).toEqual([
+      "permission:p1",
+      "permission:p2",
+      "loop:l",
+      "asked:q",
+      "context:c",
+      "done:d2",
+      "done:d",
+    ]);
   });
   it("waiting keeps its first since; clears on null", () => {
     const t = new AttentionTracker();
-    t.setWaiting("p", 10); t.setWaiting("p", 99);
+    t.setWaiting("p", 10);
+    t.setWaiting("p", 99);
     expect(t.queue(100)[0].since).toBe(10);
     t.setWaiting("p", null);
     expect(t.queue(100)).toHaveLength(0);
@@ -223,7 +306,8 @@ describe("queue", () => {
     const t = new AttentionTracker();
     t.setContext("c", CTX_PRESSURE - 0.01, 0);
     expect(t.queue(0)).toHaveLength(0);
-    t.setContext("c", 0.86, 1); t.setContext("c", 0.92, 5);
+    t.setContext("c", 0.86, 1);
+    t.setContext("c", 0.92, 5);
     const [r] = t.queue(5);
     expect(r.kind).toBe("context");
     expect(r.since).toBe(1);
@@ -235,7 +319,11 @@ describe("queue", () => {
     const t = new AttentionTracker();
     for (let i = 0; i < 3; i++) fail(t, 100 + i, { session_id: "l" });
     t.setWaiting("p", 0);
-    expect(t.queue(PERM_STALE_MS - 1)[0]).toMatchObject({ kind: "permission", sid: "p", text: expect.stringContaining("รออนุญาต") });
+    expect(t.queue(PERM_STALE_MS - 1)[0]).toMatchObject({
+      kind: "permission",
+      sid: "p",
+      text: expect.stringContaining("รออนุญาต"),
+    });
     const q = t.queue(PERM_STALE_MS + 1);
     expect(q.map((r) => `${r.kind}:${r.sid}`)).toEqual(["loop:l", "permission:p"]);
     expect(q[1].text).toContain("อาจอนุญาตแล้ว");
@@ -265,7 +353,8 @@ describe("bounds", () => {
     const t = new AttentionTracker();
     for (let i = 0; i < 3; i++) fail(t, i);
     t.ingest({ session_id: "s1", hook_event_name: "Stop", last_assistant_message: "ok?" }, 1);
-    t.setWaiting("s1", 1); t.setContext("s1", 0.9, 1);
+    t.setWaiting("s1", 1);
+    t.setContext("s1", 0.9, 1);
     t.dropSession("s1");
     expect(t.queue(5)).toHaveLength(0);
     expect(t.size()).toEqual({ keys: 0, done: 0, waiting: 0, ctx: 0 });

@@ -1,11 +1,19 @@
 import path from "node:path";
 
+import { MS_PER_MINUTE } from "@/lib/constants";
+
 // Territory Clash: tracks which top-level session "holds" (recently edited) which files, and reports
 // overlaps (>=2 sessions hold the same file) and clashes (an edit failed on a file someone else holds /
 // just touched). Pure + injectable `now` so it is easy to test. Hooks are async: this can warn, not block.
 
 /** `failer` (clash only): sid whose edit failed (the loser of the clash). With several failers, the most recent one. */
-export type TerritoryConflict = { file: string; sids: string[]; level: "overlap" | "clash"; since: number; failer?: string };
+export type TerritoryConflict = {
+  file: string;
+  sids: string[];
+  level: "overlap" | "clash";
+  since: number;
+  failer?: string;
+};
 export type TerritoryMsg = { claims: { sid: string; files: string[] }[]; conflicts: TerritoryConflict[] };
 
 export type TerritoryEvent = {
@@ -17,9 +25,13 @@ export type TerritoryEvent = {
   tool_input?: Record<string, unknown>;
 };
 
-export const CLAIM_TTL_MS = 10 * 60 * 1000;
-export const RECENT_MS = 2 * 60 * 1000;
-export const CLASH_TTL_MS = 10 * 60 * 1000;
+/** trailing path segments shown for a file */
+const PATH_TAIL_SEGMENTS = 2;
+const CLAIM_TTL_MINUTES = 10;
+export const CLAIM_TTL_MS = CLAIM_TTL_MINUTES * MS_PER_MINUTE;
+export const RECENT_MS = 2 * MS_PER_MINUTE;
+const CLASH_TTL_MINUTES = 10;
+export const CLASH_TTL_MS = CLASH_TTL_MINUTES * MS_PER_MINUTE;
 export const MAX_CLAIMS_PER_SESSION = 50;
 export const MAX_CLAIMS_TOTAL = 2000;
 export const MAX_RECENT = 2000;
@@ -47,7 +59,7 @@ export function displayPath(abs: string, cwd: string | undefined): string {
     if (root && abs.startsWith(root + "/")) return abs.slice(root.length + 1);
   }
   const segs = abs.split("/").filter(Boolean);
-  return segs.slice(-2).join("/");
+  return segs.slice(-PATH_TAIL_SEGMENTS).join("/");
 }
 
 export class TerritoryTracker {
@@ -115,7 +127,8 @@ export class TerritoryTracker {
     mine.set(file, { file, display: displayPath(file, cwd), lastTouch: now });
     if (mine.size > MAX_CLAIMS_PER_SESSION) {
       let oldest: string | null = null;
-      for (const [f, c] of mine) if (f !== file && (oldest === null || c.lastTouch < mine.get(oldest)!.lastTouch)) oldest = f;
+      for (const [f, c] of mine)
+        if (f !== file && (oldest === null || c.lastTouch < mine.get(oldest)!.lastTouch)) oldest = f;
       if (oldest) mine.delete(oldest);
     }
     let total = 0;
@@ -124,11 +137,13 @@ export class TerritoryTracker {
       let os: string | null = null;
       let of: string | null = null;
       let ot = Infinity;
-      for (const [s, m] of this.claims) for (const [f, c] of m) if (!(s === sid && f === file) && c.lastTouch < ot) {
-          os = s;
-          of = f;
-          ot = c.lastTouch;
-        }
+      for (const [s, m] of this.claims)
+        for (const [f, c] of m)
+          if (!(s === sid && f === file) && c.lastTouch < ot) {
+            os = s;
+            of = f;
+            ot = c.lastTouch;
+          }
       if (os === null || of === null) break;
       const m = this.claims.get(os)!;
       m.delete(of);
@@ -144,7 +159,8 @@ export class TerritoryTracker {
 
   private pruneRecent(now: number) {
     for (const [file, m] of this.recent) {
-      for (const [s, t] of m) if (now - t >= RECENT_MS) {
+      for (const [s, t] of m)
+        if (now - t >= RECENT_MS) {
           m.delete(s);
           this.recentCount--;
         }
@@ -154,11 +170,13 @@ export class TerritoryTracker {
       let of: string | null = null;
       let os: string | null = null;
       let ot = Infinity;
-      for (const [f, m] of this.recent) for (const [s, t] of m) if (t < ot) {
-          of = f;
-          os = s;
-          ot = t;
-        }
+      for (const [f, m] of this.recent)
+        for (const [s, t] of m)
+          if (t < ot) {
+            of = f;
+            os = s;
+            ot = t;
+          }
       if (of === null || os === null) break;
       const m = this.recent.get(of)!;
       m.delete(os);
@@ -177,7 +195,13 @@ export class TerritoryTracker {
     const sids = [sid, ...others].sort();
     const existing = this.clashes.get(key);
     // Repeated failures keep the original `since` so the client doesn't re-alert; the sid set may grow.
-    this.clashes.set(key, { file, display: displayPath(file, cwd), failer: sid, sids: existing ? [...new Set([...existing.sids, ...sids])].sort() : sids, since: existing?.since ?? now });
+    this.clashes.set(key, {
+      file,
+      display: displayPath(file, cwd),
+      failer: sid,
+      sids: existing ? [...new Set([...existing.sids, ...sids])].sort() : sids,
+      since: existing?.since ?? now,
+    });
   }
 
   /**
@@ -193,7 +217,8 @@ export class TerritoryTracker {
       if (m.size === 0) this.claims.delete(sid);
     }
     for (const [file, m] of this.recent) {
-      for (const [s, t] of m) if (now - t >= RECENT_MS) {
+      for (const [s, t] of m)
+        if (now - t >= RECENT_MS) {
           m.delete(s);
           this.recentCount--;
         }
@@ -241,12 +266,26 @@ export class TerritoryTracker {
         const sids = [...new Set([...h, ...cl.flatMap((c) => c.sids)])].sort();
         let top = cl[0];
         for (const c of cl) if (c.since > top.since || (c.since === top.since && c.failer < top.failer)) top = c;
-        conflicts.push({ file: display.get(file)!, sids, level: "clash", since: Math.max(...cl.map((c) => c.since)), failer: top.failer });
+        conflicts.push({
+          file: display.get(file)!,
+          sids,
+          level: "clash",
+          since: Math.max(...cl.map((c) => c.since)),
+          failer: top.failer,
+        });
       } else if (h.length >= 2) {
-        conflicts.push({ file: display.get(file)!, sids: [...h].sort(), level: "overlap", since: this.overlapSince.get(file)! });
+        conflicts.push({
+          file: display.get(file)!,
+          sids: [...h].sort(),
+          level: "overlap",
+          since: this.overlapSince.get(file)!,
+        });
       }
     }
-    conflicts.sort((a, b) => (a.level === b.level ? 0 : a.level === "clash" ? -1 : 1) || b.since - a.since || (a.file < b.file ? -1 : 1));
+    conflicts.sort(
+      (a, b) =>
+        (a.level === b.level ? 0 : a.level === "clash" ? -1 : 1) || b.since - a.since || (a.file < b.file ? -1 : 1),
+    );
     return { claims, conflicts };
   }
 

@@ -5,11 +5,17 @@ export function useDocumentTitle({ waitingN, clashN, bellN }: { waitingN: number
   const baseTitle = useRef<string | null>(null);
   useEffect(() => {
     baseTitle.current = document.title;
-    return () => { if (baseTitle.current !== null) document.title = baseTitle.current; };
+    return () => {
+      if (baseTitle.current !== null) document.title = baseTitle.current;
+    };
   }, []);
   useEffect(() => {
     if (baseTitle.current === null) return;
-    const parts = [bellN > 0 ? `🔔(${bellN})` : "", waitingN > 0 ? `❗(${waitingN})` : "", clashN > 0 ? `⚔️(${clashN})` : ""].filter(Boolean);
+    const parts = [
+      bellN > 0 ? `🔔(${bellN})` : "",
+      waitingN > 0 ? `❗(${waitingN})` : "",
+      clashN > 0 ? `⚔️(${clashN})` : "",
+    ].filter(Boolean);
     document.title = parts.length ? `${parts.join(" ")} Claude Guild` : baseTitle.current;
   }, [waitingN, clashN, bellN]);
 }

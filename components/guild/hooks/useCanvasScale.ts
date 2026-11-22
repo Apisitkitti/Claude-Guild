@@ -1,5 +1,7 @@
 import { useEffect, useState, type RefObject } from "react";
+
 import { H, W } from "@/lib/office/layout";
+
 import type { OfficeRef } from "../types";
 
 /** Fits the canvas to the stage and keeps the backing store crisp (scale * devicePixelRatio device px per logical px). */
@@ -18,9 +20,14 @@ export function useCanvasScale(stageRef: RefObject<HTMLDivElement | null>, offic
     };
     upd();
     window.addEventListener("resize", upd);
-    return () => { window.removeEventListener("resize", upd); mq?.removeEventListener("change", upd); };
+    return () => {
+      window.removeEventListener("resize", upd);
+      mq?.removeEventListener("change", upd);
+    };
   }, []);
-  useEffect(() => { officeRef.current?.setPixelScale(scale * dpr); }, [scale, dpr, officeRef]);
+  useEffect(() => {
+    officeRef.current?.setPixelScale(scale * dpr);
+  }, [scale, dpr, officeRef]);
 
   // Scale fitting: snap so scale * devicePixelRatio is a whole number of device px per logical px
   // (crisp pixel art, but 0.5 steps on retina instead of wasting space with integer-only scale).
@@ -42,7 +49,10 @@ export function useCanvasScale(stageRef: RefObject<HTMLDivElement | null>, offic
     ro.observe(stageRef.current!);
     window.addEventListener("resize", calc);
     calc();
-    return () => { ro.disconnect(); window.removeEventListener("resize", calc); };
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", calc);
+    };
   }, [stageRef]);
   return scale;
 }

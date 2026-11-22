@@ -1,3 +1,12 @@
+import {
+  BASE36,
+  FNV_OFFSET_BASIS,
+  FNV_PRIME,
+  HEX_BYTE_DIGITS,
+  HEX_RADIX,
+  MINUTES_PER_HOUR,
+  MS_PER_MINUTE,
+} from "@/lib/constants";
 // Receipt Ledger: "did this session actually get something done?". Server-side tracker that turns hook events into one
 // small receipt per TURN (UserPromptSubmit -> Stop) counting OUTCOMES, not activity:
 //   files changed (unique Edit/Write/MultiEdit/NotebookEdit that succeeded), tests recovered (a test runner that was
@@ -7,8 +16,14 @@
 // no command text, no file names, no commit subjects. Hooks are async: the numbers are "as the hooks reported".
 
 // ---- tuning knobs ----
+/** wrapper prefixes (env, sudo, ...) stripped when finding a command's runner */
+const RUNNER_PREFIX_MAX_STRIPS = 8;
+/** TodoWrite items read per call */
+const MAX_TODOS = 200;
+/** owners whose todo-done counters are remembered */
+const MAX_TODO_OWNERS = 20;
 /** a closed receipt is dropped by sweep (and hidden from rows) after this */
-export const RECEIPT_TTL_MS = 2 * 60 * 60 * 1000;
+export const RECEIPT_TTL_MS = 2 * MINUTES_PER_HOUR * MS_PER_MINUTE;
 /** closed receipts kept in total (oldest evicted first) */
 export const MAX_CLOSED = 30;
 /** sessions tracked at once */
@@ -65,12 +80,12 @@ export type ReceiptEvent = {
 
 // ---- command analysis (exported for tests) ----
 function fnv(s: string): string {
-  let h = 0x811c9dc5;
+  let h = FNV_OFFSET_BASIS;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
+    h = Math.imul(h, FNV_PRIME) >>> 0;
   }
-  return h.toString(16).padStart(8, "0");
+  return h.toString(HEX_RADIX).padStart(HEX_BYTE_DIGITS, "0");
 }
 
 const HEREDOC_START = /<<-?[ \t]*(['"]?)([A-Za-z_]\w*)\1[^\n]{0,200}\n/g;
@@ -94,11 +109,17 @@ function stripHeredocs(s: string): string {
     while (pos <= limit) {
       let nl = s.indexOf("\n", pos);
       if (nl < 0 || nl > limit) nl = s.length;
-      if (s.slice(pos, nl).trim() === delim) { end = nl; break; }
+      if (s.slice(pos, nl).trim() === delim) {
+        end = nl;
+        break;
+      }
       if (nl >= s.length) break;
       pos = nl + 1;
     }
-    if (end < 0) { missing.add(delim); continue; }
+    if (end < 0) {
+      missing.add(delim);
+      continue;
+    }
     out += s.slice(last, m.index);
     last = end;
     HEREDOC_START.lastIndex = end;
@@ -139,14 +160,24 @@ export function commandShape(cmd: string): { ok: boolean; segments: string[] } {
   let s = stripQuotes(stripHeredocs(cmd));
   s = s.replace(/\d*[<>]&\d*-?/g, " ").replace(/&>>?/g, " ");
   if (/[|;\n`]/.test(s) || /(?<!&)&(?!&)/.test(s) || s.includes("$(")) return { ok: false, segments: [] };
-  return { ok: true, segments: s.split("&&").map((x) => x.trim()).filter(Boolean) };
+  return {
+    ok: true,
+    segments: s
+      .split("&&")
+      .map((x) => x.trim())
+      .filter(Boolean),
+  };
 }
 
-const PREFIX = /^(?:[A-Za-z_]\w*=\S*|time|sudo|nohup|exec|command|env|timeout\s+\d+\S*|npx(?:\s+(?:-y|--yes|--no-install))*|pnpm\s+(?:exec|dlx)|yarn\s+dlx|bunx|npm\s+exec(?:\s+--)?|(?:poetry|uv|pipenv|pdm|hatch)\s+run|bundle\s+exec)\s+/;
+const PREFIX =
+  /^(?:[A-Za-z_]\w*=\S*|time|sudo|nohup|exec|command|env|timeout\s+\d+\S*|npx(?:\s+(?:-y|--yes|--no-install))*|pnpm\s+(?:exec|dlx)|yarn\s+dlx|bunx|npm\s+exec(?:\s+--)?|(?:poetry|uv|pipenv|pdm|hatch)\s+run|bundle\s+exec)\s+/;
 const RUNNERS: [string, RegExp][] = [
   // vitest / jest / mocha and `npm|pnpm|yarn|bun [run] test[:x]` share one runner: red with one, green with the other = recovered
   ["node-test", /^(?:\S*\/)?(?:vitest|jest|mocha)(?![\w-])/],
-  ["node-test", /^(?:npm|pnpm|yarn|bun)(?:\s+(?:-C|--prefix|--filter|-F|--cwd|--workspace|-w)(?:=|\s+)\S+)*(?:\s+run)?\s+(?:test|t)(?::[\w:-]+)?(?![\w-])/],
+  [
+    "node-test",
+    /^(?:npm|pnpm|yarn|bun)(?:\s+(?:-C|--prefix|--filter|-F|--cwd|--workspace|-w)(?:=|\s+)\S+)*(?:\s+run)?\s+(?:test|t)(?::[\w:-]+)?(?![\w-])/,
+  ],
   ["node-test", /^yarn\s+(?:vitest|jest|mocha)(?![\w-])/],
   ["playwright", /^(?:\S*\/)?playwright\s+test(?![\w-])/],
   ["pytest", /^(?:(?:python3?|py)\s+-m\s+)?(?:\S*\/)?(?:pytest|py\.test)(?![\w-])/],
@@ -163,7 +194,7 @@ const RUNNERS: [string, RegExp][] = [
 /** which test runner a (single, quote-stripped) command segment starts, or null. `echo vitest` is not one. */
 export function runnerOf(segment: string): string | null {
   let r = segment.trim();
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < RUNNER_PREFIX_MAX_STRIPS; i++) {
     const m = PREFIX.exec(r);
     if (!m) break;
     r = r.slice(m[0].length);
@@ -176,12 +207,15 @@ const GIT_COMMIT = /^(?:[A-Za-z_]\w*=\S*\s+)*git(?:\s+(?:-[A-Za-z]\s+\S+|--[\w-]
 
 /** "commit" | "amend" when some part of a trustworthy && chain is `git commit` (success of the whole chain implies the commit ran) */
 export function commitKind(segments: string[]): "commit" | "amend" | null {
-  for (const seg of segments) if (GIT_COMMIT.test(seg)) return /(?:^|\s)--dry-run(?![\w-])/.test(seg) ? null : /(?:^|\s)--amend(?![\w-])/.test(seg) ? "amend" : "commit";
+  for (const seg of segments)
+    if (GIT_COMMIT.test(seg))
+      return /(?:^|\s)--dry-run(?![\w-])/.test(seg) ? null : /(?:^|\s)--amend(?![\w-])/.test(seg) ? "amend" : "commit";
   return null;
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
-const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
 type Receipt = {
   id: string;
@@ -229,12 +263,24 @@ export class ReceiptTracker {
   private closed: Receipt[] = []; // oldest first
   private n = 0;
   /** ids stay unique across server restarts / store rebuilds (the client remembers ids it has seen) */
-  private nonce = Date.now().toString(36);
+  private nonce = Date.now().toString(BASE36);
 
   private state(sid: string, now: number): SessionState {
     let st = this.sessions.get(sid);
-    if (st) this.sessions.delete(sid); // re-insert = most recently used
-    else st = { sid, cwd: "", open: null, lastClosed: null, runners: new Map(), ids: [], todoDone: new Map(), taskIds: new Set(), touched: now };
+    if (st)
+      this.sessions.delete(sid); // re-insert = most recently used
+    else
+      st = {
+        sid,
+        cwd: "",
+        open: null,
+        lastClosed: null,
+        runners: new Map(),
+        ids: [],
+        todoDone: new Map(),
+        taskIds: new Set(),
+        touched: now,
+      };
     this.sessions.set(sid, st);
     if (this.sessions.size > MAX_SESSIONS) {
       const oldest = this.sessions.keys().next().value as string;
@@ -264,7 +310,24 @@ export class ReceiptTracker {
   }
 
   private openNew(st: SessionState, now: number): Receipt {
-    const r: Receipt = { id: `${this.nonce}-${++this.n}`, sid: st.sid, project: projectOf(st.cwd), openedAt: now, closedAt: 0, files: new Set(), recovered: 0, commits: 0, amends: 0, tasks: 0, squire: 0, calls: 0, failed: new Set(), red: false, staleRed: false, listed: false };
+    const r: Receipt = {
+      id: `${this.nonce}-${++this.n}`,
+      sid: st.sid,
+      project: projectOf(st.cwd),
+      openedAt: now,
+      closedAt: 0,
+      files: new Set(),
+      recovered: 0,
+      commits: 0,
+      amends: 0,
+      tasks: 0,
+      squire: 0,
+      calls: 0,
+      failed: new Set(),
+      red: false,
+      staleRed: false,
+      listed: false,
+    };
     st.open = r;
     st.lastClosed = null;
     return r;
@@ -349,14 +412,14 @@ export class ReceiptTracker {
         }
       }
     } else if (!failed && tool === "TodoWrite") {
-      const todos = Array.isArray(input.todos) ? input.todos.slice(0, 200) : [];
+      const todos = Array.isArray(input.todos) ? input.todos.slice(0, MAX_TODOS) : [];
       let done = 0;
       for (const t of todos) if (obj(t).status === "completed") done++;
       const who = agent || "main";
       const delta = Math.max(0, done - (st.todoDone.get(who) ?? 0));
       st.todoDone.delete(who);
       st.todoDone.set(who, done);
-      if (st.todoDone.size > 20) st.todoDone.delete(st.todoDone.keys().next().value as string);
+      if (st.todoDone.size > MAX_TODO_OWNERS) st.todoDone.delete(st.todoDone.keys().next().value as string);
       r.tasks += delta;
       if (delta) r.squire += sq;
     }
@@ -385,8 +448,7 @@ export class ReceiptTracker {
     if (failed) {
       st.runners.set(key, "red");
       r.failed.add(key);
-    }
-    else {
+    } else {
       st.runners.set(key, "green");
       if (prev === "red") {
         r.recovered++;
@@ -404,9 +466,19 @@ export class ReceiptTracker {
       if (now - r.closedAt > RECEIPT_TTL_MS) continue;
       const n = outcomes(r);
       out.push({
-        id: r.id, sid: r.sid, project: r.project, closedAt: r.closedAt,
-        files: r.files.size, recovered: r.recovered, commits: r.commits, amends: r.amends, tasks: r.tasks, squire: r.squire, calls: r.calls,
-        verdict: r.red ? "red" : n > 0 ? "done" : "none", staleRed: r.staleRed,
+        id: r.id,
+        sid: r.sid,
+        project: r.project,
+        closedAt: r.closedAt,
+        files: r.files.size,
+        recovered: r.recovered,
+        commits: r.commits,
+        amends: r.amends,
+        tasks: r.tasks,
+        squire: r.squire,
+        calls: r.calls,
+        verdict: r.red ? "red" : n > 0 ? "done" : "none",
+        staleRed: r.staleRed,
       });
     }
     out.sort((a, b) => b.closedAt - a.closedAt);

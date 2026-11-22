@@ -1,6 +1,22 @@
+import { FNV_OFFSET_BASIS, FNV_PRIME } from "@/lib/constants";
 export const PAL = [
-  "transparent", "#1a1c2c", "#3b2f3f", "#8b5e3c", "#c69c6d", "#f4e3c1", "#e8c9a0", "#b9805a", "#6e4a36",
-  "#4a6fa5", "#d95763", "#5fa55a", "#f2c14e", "#8fd3ff", "#2b3a67", "#ffffff", "#7b5ea7",
+  "transparent",
+  "#1a1c2c",
+  "#3b2f3f",
+  "#8b5e3c",
+  "#c69c6d",
+  "#f4e3c1",
+  "#e8c9a0",
+  "#b9805a",
+  "#6e4a36",
+  "#4a6fa5",
+  "#d95763",
+  "#5fa55a",
+  "#f2c14e",
+  "#8fd3ff",
+  "#2b3a67",
+  "#ffffff",
+  "#7b5ea7",
 ] as const;
 
 // ---- adventurer classes / monsters ----
@@ -21,9 +37,24 @@ export const MONSTER_KINDS: MonsterKind[] = ["slime", "goblin", "bat", "skeleton
 export type BossKind = "ogre" | "dragon";
 export const BOSS_KINDS: BossKind[] = ["ogre", "dragon"];
 
+const PAL_SHIRT_A = 9;
+const PAL_SHIRT_B = 10;
+const PAL_SHIRT_C = 11;
+const PAL_SHIRT_D = 12;
+const PAL_SHIRT_E = 16;
+const PAL_SHIRT_F = 13;
+const PAL_SKIN_A = 6;
+const PAL_SKIN_B = 7;
+const PAL_SKIN_C = 8;
+/** hash bits consumed by each look trait (so traits vary independently) */
+const HASH_SHIFT_SHIRT = 3;
+const HASH_SHIFT_SKIN = 6;
+const HASH_SHIFT_CLASS = 9;
+
 const HAIRS = ["#3b2f3f", "#8b5e3c", "#f2c14e", "#d95763", "#1a1c2c", "#7b5ea7"];
-const SHIRTS = [9, 10, 11, 12, 16, 13];
-const SKINS = [6, 7, 8];
+/** indices into PAL */
+const SHIRTS = [PAL_SHIRT_A, PAL_SHIRT_B, PAL_SHIRT_C, PAL_SHIRT_D, PAL_SHIRT_E, PAL_SHIRT_F];
+const SKINS = [PAL_SKIN_A, PAL_SKIN_B, PAL_SKIN_C];
 
 export interface Look {
   hair: string;
@@ -33,10 +64,10 @@ export interface Look {
 }
 
 export function fnv1a(s: string): number {
-  let h = 0x811c9dc5;
+  let h = FNV_OFFSET_BASIS;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
+    h = Math.imul(h, FNV_PRIME) >>> 0;
   }
   return h >>> 0;
 }
@@ -44,10 +75,10 @@ export function fnv1a(s: string): number {
 export function lookFor(sessionId: string): Look {
   const h = fnv1a(sessionId);
   return {
-    hair: HAIRS[h % 6],
-    shirt: PAL[SHIRTS[(h >>> 3) % 6]],
-    skin: PAL[SKINS[(h >>> 6) % 3]],
-    cls: ADV_CLASSES[(h >>> 9) % ADV_CLASSES.length],
+    hair: HAIRS[h % HAIRS.length],
+    shirt: PAL[SHIRTS[(h >>> HASH_SHIFT_SHIRT) % SHIRTS.length]],
+    skin: PAL[SKINS[(h >>> HASH_SHIFT_SKIN) % SKINS.length]],
+    cls: ADV_CLASSES[(h >>> HASH_SHIFT_CLASS) % ADV_CLASSES.length],
   };
 }
 
@@ -56,21 +87,43 @@ export const INTERN_LOOK: Look = { hair: "#6e4a36", shirt: "#7a9a5a", skin: "#e8
 
 // Fixed colours for sprite string chars (H/S/K are per-employee).
 export const SPRITE_COLORS: Record<string, string> = {
-  O: PAL[1], d: PAL[2], n: PAL[3], l: PAL[4], c: PAL[5], P: PAL[14], b: PAL[9], r: PAL[10],
-  g: PAL[11], y: PAL[12], k: PAL[13], w: PAL[15], p: PAL[16], a: "#8d93a0",
+  O: PAL[1],
+  d: PAL[2],
+  n: PAL[3],
+  l: PAL[4],
+  c: PAL[5],
+  P: PAL[14],
+  b: PAL[9],
+  r: PAL[10],
+  g: PAL[11],
+  y: PAL[12],
+  k: PAL[13],
+  w: PAL[15],
+  p: PAL[16],
+  a: "#8d93a0",
 };
 
 // ---- cozy environment colours (kept for compatibility) + fantasy additions ----
 export const COZY = {
   floorTones: ["#c9965f", "#c08d58", "#b98750", "#cf9e68", "#bd8b55"],
   seam: "#8a5c36",
-  wallA: "#f1dfba", wallB: "#ead3a6", wallDot: "#e0c394",
-  woodDark: "#4a2f20", woodMid: "#7b5236", woodLight: "#a8764a", woodTop: "#d2a574", woodHi: "#e6c295",
-  curtain: "#c8606b", curtainHi: "#da7a84", curtainLo: "#a24853",
+  wallA: "#f1dfba",
+  wallB: "#ead3a6",
+  wallDot: "#e0c394",
+  woodDark: "#4a2f20",
+  woodMid: "#7b5236",
+  woodLight: "#a8764a",
+  woodTop: "#d2a574",
+  woodHi: "#e6c295",
+  curtain: "#c8606b",
+  curtainHi: "#da7a84",
+  curtainLo: "#a24853",
   chairs: ["#4f8f8b", "#c8606b", "#d9a441", "#5b7fb5"],
   rugs: [
-    ["#b9553f", "#f1dfba", "#e0a050"], ["#4f7f6b", "#f1dfba", "#d9c27a"],
-    ["#4f6f9f", "#f1dfba", "#e8b86a"], ["#8f5a7a", "#f1dfba", "#e0a050"],
+    ["#b9553f", "#f1dfba", "#e0a050"],
+    ["#4f7f6b", "#f1dfba", "#d9c27a"],
+    ["#4f6f9f", "#f1dfba", "#e8b86a"],
+    ["#8f5a7a", "#f1dfba", "#e0a050"],
   ],
   // fantasy additions
   grass: ["#5a9e4b", "#52964a", "#62a653", "#4f8c44", "#5ea150"],
