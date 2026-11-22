@@ -69,9 +69,6 @@ const LEATHER = "#6b4a36",
   BELT = "#4a3426",
   BOOT = "#4a3426",
   BOOT_HI = "#6e4f3a";
-const CAPE = "#8c2f3f",
-  CAPE_SH = "#64202d";
-const SHIELD = "#b8353f";
 const GEM = "#6ff0ff",
   GEM_HI = "#d6fbff";
 const PAPER = "#efe2c0",
@@ -94,6 +91,11 @@ class Grid {
     x += this.dx;
     y += this.dy;
     if (x >= 0 && x < this.width && y >= 0 && y < this.height) this.cells[y * this.width + x] = color;
+  }
+  get(x: number, y: number): string | null {
+    x += this.dx;
+    y += this.dy;
+    return x >= 0 && x < this.width && y >= 0 && y < this.height ? this.cells[y * this.width + x] : null;
   }
   row(y: number, x0: number, x1: number, color: string) {
     for (let x = x0; x <= x1; x++) this.set(x, y, color);
@@ -148,46 +150,98 @@ const normFrame = (frame: number, count: number): number => {
 
 // ---------------------------------------------------------------- palette from Look
 interface Pal {
+  cls: PalCls;
   hair: string;
   hHi: string;
   hSh: string;
   skin: string;
   skSh: string;
   blush: string;
+  /** class cloth colour (steel plate for warriors, robe for mages, dark leather for rogues ...) */
   main: string;
   mHi: string;
   mSh: string;
+  /** the session's shirt colour, used as the class's accent (tabard, plume, scarf, feather) */
   accent: string;
+  sleeve: string;
+  glove: string;
   pants: string;
   pSh: string;
   style: number;
 }
 
-const CLASS_PANTS: Record<AdvClass, string> = {
+type PalCls = AdvClass | "squire";
+
+const CLASS_PANTS: Record<PalCls, string> = {
   warrior: "#4a4f63",
   mage: "#3d3a58",
   rogue: "#2f2f3f",
   cleric: "#cfc6b0",
   ranger: "#6b5a3a",
+  squire: "#4a4f63",
 };
 
-const mkPal = (look: Look, cls: AdvClass): Pal => {
+const BEARD = "#e9e6f0",
+  BEARD_SH = "#b9b4c8";
+const HOOD_SHADOW = "#16131f";
+const IRON = "#9aa3b2",
+  IRON_HI = "#c7cfdb",
+  IRON_SH = "#6a7384";
+
+interface Cloth {
+  main: string;
+  mHi: string;
+  mSh: string;
+  sleeve: string;
+  glove: string | null;
+}
+
+const clothFor = (cls: PalCls, look: Look, base: string): Cloth => {
+  switch (cls) {
+    case "warrior":
+      return { main: STEEL, mHi: STEEL_HI, mSh: STEEL_SH, sleeve: STEEL_SH, glove: STEEL_HI };
+    case "cleric":
+      return { main: "#f6f1e4", mHi: WHITE, mSh: "#cfc6b0", sleeve: "#e6dfcb", glove: null };
+    case "rogue": {
+      const main = darken(sat(look.shirt, 0.1), 0.45);
+      return { main, mHi: lighten(main, 0.4), mSh: darken(main, 0.35), sleeve: main, glove: "#2a2530" };
+    }
+    case "ranger": {
+      const main = mix("#8fae3e", base, 0.15);
+      return { main, mHi: lighten(main, 0.3), mSh: darken(main, 0.32), sleeve: LEATHER, glove: WOOD_SH };
+    }
+    default: {
+      const mSh = darken(sat(look.shirt, 0.3), 0.32);
+      return {
+        main: base,
+        mHi: lighten(base, 0.3),
+        mSh,
+        sleeve: cls === "mage" ? darken(base, 0.12) : mSh,
+        glove: null,
+      };
+    }
+  }
+};
+
+const mkPal = (look: Look, cls: PalCls): Pal => {
   const hash = fnv1a(look.hair + "|" + look.shirt + "|" + look.skin);
   const shirt = sat(look.shirt, 0.2);
-  const cleric = cls === "cleric";
-  const main = cleric ? "#f6f1e4" : shirt;
+  const cloth = clothFor(cls, look, shirt);
   const pants = CLASS_PANTS[cls];
   return {
+    cls,
     hair: look.hair,
     hHi: lighten(sat(look.hair, 0.3), 0.38),
     hSh: darken(look.hair, 0.3),
     skin: look.skin,
     skSh: sat(darken(look.skin, 0.2), 0.25),
     blush: mix(look.skin, "#ff5f7c", 0.55),
-    main,
-    mHi: cleric ? "#ffffff" : lighten(main, 0.3),
-    mSh: cleric ? "#cfc6b0" : darken(sat(look.shirt, 0.3), 0.32),
+    main: cloth.main,
+    mHi: cloth.mHi,
+    mSh: cloth.mSh,
     accent: shirt,
+    sleeve: cloth.sleeve,
+    glove: cloth.glove ?? look.skin,
     pants,
     pSh: darken(pants, 0.28),
     style: hash % 3,
@@ -201,127 +255,309 @@ type Expr = "normal" | "blink" | "down" | "happy" | "wide" | "wince";
 type MouthT = "smile" | "open" | "flat";
 
 // ---------------------------------------------------------------- character (16x24)
-const drawLegs = (grid: Grid, palette: Pal, wf: number, robe: boolean) => {
+const isRobe = (cls: AdvClass) => cls === "mage" || cls === "cleric";
+
+/** horizontal sway of robe hems / cloak tails per walk frame (0 when standing) */
+const SWAY = [-1, 0, 1, 0];
+const swayOf = (wf: number) => (wf < 0 ? 0 : SWAY[wf % SWAY.length]);
+
+const drawLegs = (grid: Grid, palette: Pal, wf: number, cls: AdvClass) => {
   grid.dx = 0;
   grid.dy = 0;
-  const top = robe ? 20 : 19;
+  if (isRobe(cls)) return; // the robe hides the legs; its hem + boot tips are drawn with the body
+  const top = 19;
   const leg = (x0: number, lifted: boolean) => {
     const end = lifted ? top + 1 : top + 2;
+    if (cls === "ranger") {
+      // thigh then tall folded boots
+      grid.rect(x0, top, x0 + 1, top, palette.pants);
+      grid.rect(x0, top + 1, x0 + 2, lifted ? top + 1 : top + 2, BOOT);
+      grid.row(top + 1, x0, x0 + 2, BOOT_HI);
+      grid.row(end + 1, x0, x0 + 2, BOOT);
+      return;
+    }
     for (let y = top; y <= end; y++) {
       grid.set(x0, y, palette.pants);
       grid.set(x0 + 1, y, palette.pSh);
     }
+    if (cls === "warrior") {
+      grid.set(x0, top + 1, STEEL); // knee cop
+      grid.set(x0 + 1, top + 1, STEEL_SH);
+    }
     const sy = end + 1;
     grid.row(sy, x0, x0 + 2, BOOT);
     grid.set(x0, sy, BOOT_HI);
+    if (cls === "warrior") grid.row(sy, x0, x0 + 2, STEEL_SH);
   };
-  leg(5, wf === 0);
-  leg(9, wf === 2);
+  const xs = cls === "rogue" ? [6, 9] : [5, 9];
+  leg(xs[0], wf === 0);
+  leg(xs[1], wf === 2);
 };
 
-const drawBody = (grid: Grid, palette: Pal, cls: AdvClass) => {
+interface BodyOpt {
+  wf: number;
+  /** cross-legged: no skirt, hem or cloak tail below the belt */
+  seated: boolean;
+}
+
+/** robe boot tips peeking under the hem */
+const robeTips = (grid: Grid, wf: number) => {
+  for (const [x0, lifted] of [
+    [5, wf === 0],
+    [9, wf === 2],
+  ] as const) {
+    if (lifted) continue;
+    grid.row(22, x0, x0 + 1, BOOT);
+    grid.set(x0, 22, BOOT_HI);
+  }
+};
+
+const bodyWarrior = (grid: Grid, palette: Pal, opt: BodyOpt) => {
+  const { accent } = palette;
+  // chest plate
+  grid.rect(5, 11, 10, 16, STEEL);
+  grid.row(11, 5, 10, STEEL_HI);
+  for (let y = 11; y <= 16; y++) grid.set(10, y, STEEL_SH);
+  grid.row(16, 5, 10, STEEL_SH);
+  grid.rect(5, 12, 5, 14, STEEL_HI);
+  grid.row(15, 6, 9, STEEL_SH);
+  grid.rect(7, 13, 8, 14, accent);
+  grid.set(7, 13, lighten(accent, 0.35));
+  // broad pauldrons
+  grid.row(11, 3, 5, STEEL_HI);
+  grid.row(12, 3, 5, STEEL);
+  grid.row(13, 4, 5, STEEL_SH);
+  grid.set(3, 12, STEEL_HI);
+  grid.set(4, 12, GOLD);
+  grid.row(11, 10, 12, STEEL);
+  grid.row(12, 10, 12, STEEL_SH);
+  grid.row(13, 10, 11, STEEL_SH);
+  grid.set(11, 11, STEEL_HI);
+  grid.set(11, 12, GOLD_SH);
+  // belt + faulds + tabard flap
+  grid.row(17, 5, 10, BELT);
+  grid.set(8, 17, GOLD);
+  grid.row(18, 5, 10, STEEL_SH);
+  grid.row(18, 7, 8, accent);
+  if (!opt.seated) grid.rect(7, 19, 8, 20, accent);
+};
+
+const bodyMage = (grid: Grid, palette: Pal, opt: BodyOpt) => {
+  const { main, mHi, mSh } = palette;
+  grid.rect(5, 11, 10, 16, main);
+  for (let y = 11; y <= 16; y++) grid.set(10, y, mSh);
+  grid.row(11, 5, 10, mHi);
+  grid.set(5, 12, mHi);
+  grid.set(5, 13, mHi);
+  grid.set(6, 12, mHi);
+  // gold trim down the opening + sash with a tassel
+  for (let y = 12; y <= 16; y++) grid.set(8, y, y % 2 ? GOLD_SH : GOLD);
+  grid.row(16, 5, 10, GOLD);
+  grid.set(7, 13, GOLD_HI);
+  grid.set(6, 14, GOLD_SH);
+  grid.set(9, 15, GOLD_SH);
+  if (opt.seated) return;
+  const sway = swayOf(opt.wf);
+  // long flowing skirt that flares to the hem
+  grid.rect(5, 17, 10, 17, main);
+  grid.rect(4, 18, 11, 19, main);
+  grid.rect(3, 20, 12, 20, main);
+  grid.row(21, 3 + sway, 12 + sway, GOLD);
+  grid.row(21, 3 + sway, 4 + sway, GOLD_HI);
+  for (let y = 17; y <= 20; y++) grid.set(y > 19 ? 12 : y > 17 ? 11 : 10, y, mSh);
+  grid.set(11, 20, mSh);
+  for (let y = 18; y <= 20; y++) grid.set(6, y, mSh);
+  grid.set(4, 19, mHi);
+  grid.set(3, 20, mHi);
+  grid.set(8, 17, GOLD);
+  grid.set(8, 18, GOLD_SH);
+  grid.set(9, 17, GOLD_SH);
+  grid.set(9, 18, GOLD);
+  grid.set(10, 19, GOLD_HI);
+  grid.set(5, 20, GOLD_HI);
+  robeTips(grid, opt.wf);
+};
+
+const bodyRogue = (grid: Grid, palette: Pal, opt: BodyOpt) => {
+  const { main, mHi, mSh, accent } = palette;
+  // hooded cloak hanging behind (tail trails with the walk)
+  const sway = swayOf(opt.wf);
+  grid.rect(4, 11, 5, 14, main);
+  grid.rect(3, 15, 5, 17, main);
+  grid.set(3, 12, mSh);
+  grid.set(4, 13, mSh);
+  grid.set(3, 16, mSh);
+  grid.set(4, 15, mHi);
+  if (!opt.seated) {
+    grid.rect(2 + sway, 18, 4 + sway, 20, main);
+    grid.set(2 + sway, 19, mSh);
+    grid.set(3 + sway, 20, mSh);
+    grid.set(3 + sway, 21, mSh);
+    grid.set(2 + sway, 20, mSh);
+  }
+  // slim dark leather vest over an undershirt
+  grid.rect(6, 11, 9, 16, main);
+  grid.rect(7, 11, 8, 13, accent);
+  grid.set(8, 12, darken(accent, 0.25));
+  grid.set(9, 11, mSh);
+  for (let y = 11; y <= 16; y++) grid.set(9, y, mSh);
+  grid.set(6, 12, mHi);
+  grid.set(6, 13, mHi);
+  // crossed bandolier
+  for (let i = 0; i <= 5; i++) grid.set(6 + Math.floor((i * 4) / 6), 11 + i, LEATHER);
+  grid.set(8, 14, GOLD_SH);
+  // belt with a dagger on each hip
+  grid.row(17, 6, 9, BELT);
+  grid.set(7, 17, GOLD_SH);
+  grid.row(18, 6, 9, palette.pants);
+  grid.set(5, 16, GOLD_SH);
+  grid.set(5, 17, WOOD_SH);
+  grid.rect(5, 18, 5, 19, STEEL_HI);
+  grid.set(10, 16, GOLD_SH);
+  grid.set(10, 17, WOOD_SH);
+  grid.rect(10, 18, 10, 19, STEEL_SH);
+};
+
+const bodyCleric = (grid: Grid, palette: Pal, opt: BodyOpt) => {
+  const { main, mSh, accent } = palette;
+  grid.rect(5, 11, 10, 16, main);
+  for (let y = 11; y <= 16; y++) grid.set(10, y, mSh);
+  // gold-trimmed mantle over the shoulders
+  grid.row(11, 4, 11, WHITE);
+  grid.row(12, 4, 5, GOLD_SH);
+  grid.row(12, 10, 11, GOLD_SH);
+  grid.set(4, 11, GOLD);
+  grid.set(11, 11, GOLD);
+  // tabard in the session colour with a holy cross
+  grid.rect(6, 12, 9, opt.seated ? 18 : 20, accent);
+  for (let y = 12; y <= (opt.seated ? 18 : 20); y++) grid.set(9, y, darken(accent, 0.22));
+  grid.set(6, 12, GOLD);
+  grid.set(9, 12, GOLD);
+  for (let y = 13; y <= 16; y++) grid.set(8, y, GOLD);
+  grid.row(14, 7, 9, GOLD);
+  grid.set(8, 13, GOLD_HI);
+  // rope belt
+  grid.row(17, 5, 10, GOLD_SH);
+  grid.set(7, 17, GOLD);
+  grid.set(5, 12, WHITE);
+  if (opt.seated) return;
+  const sway = swayOf(opt.wf);
+  // straight cassock to the feet
+  grid.rect(5, 18, 5, 20, main);
+  grid.rect(10, 18, 10, 20, mSh);
+  grid.rect(4, 19, 4, 20, main);
+  grid.rect(11, 19, 11, 20, mSh);
+  grid.row(21, 4 + sway, 11 + sway, GOLD_SH);
+  grid.row(21, 6 + sway, 9 + sway, GOLD);
+  grid.set(4, 20, WHITE);
+  grid.set(5, 18, WHITE);
+  robeTips(grid, opt.wf);
+};
+
+const bodyRanger = (grid: Grid, palette: Pal, opt: BodyOpt) => {
+  const { main, mHi, mSh, accent } = palette;
+  const sway = swayOf(opt.wf);
+  // hooded cape behind the back
+  grid.rect(3, 10, 5, 14, main);
+  grid.rect(2, 15, 5, 17, main);
+  grid.set(3, 11, mHi);
+  grid.set(2, 16, mSh);
+  grid.set(3, 14, mSh);
+  grid.set(5, 15, mSh);
+  if (!opt.seated) {
+    grid.rect(2 + sway, 18, 4 + sway, 19, main);
+    grid.set(2 + sway, 19, mSh);
+    grid.set(4 + sway, 18, mSh);
+    grid.set(3 + sway, 20, mSh);
+  }
+  // quiver strapped to the back with arrows sticking out
+  grid.rect(2, 10, 3, 16, LEATHER);
+  grid.set(2, 10, WOOD_HI);
+  grid.set(2, 12, WOOD_SH);
+  grid.set(3, 14, WOOD_SH);
+  grid.set(3, 16, WOOD_SH);
+  grid.rect(2, 6, 2, 9, WOOD_HI);
+  grid.rect(3, 7, 3, 9, WOOD_HI);
+  grid.rect(1, 8, 1, 9, WOOD_HI);
+  grid.set(2, 5, FEATHER);
+  grid.set(2, 6, FEATHER);
+  grid.set(3, 6, FEATHER);
+  grid.set(3, 7, accent);
+  grid.set(1, 7, FEATHER);
+  grid.set(1, 6, accent);
+  // leather jerkin
+  grid.rect(5, 11, 10, 16, LEATHER);
+  for (let y = 11; y <= 16; y++) grid.set(10, y, WOOD_SH);
+  grid.row(16, 5, 10, WOOD_SH);
+  grid.rect(5, 12, 5, 14, WOOD_HI);
+  grid.row(11, 7, 9, lighten(accent, 0.15));
+  for (let i = 0; i <= 4; i++) grid.set(6 + i, 12 + i, WOOD_HI);
+  grid.set(7, 14, WOOD);
+  grid.set(8, 13, WOOD);
+  // short mantle over the shoulders
+  grid.row(11, 4, 6, main);
+  grid.row(11, 10, 11, main);
+  grid.set(4, 12, main);
+  grid.set(11, 12, mSh);
+  grid.set(5, 11, mHi);
+  // belt, pouch
+  grid.row(17, 5, 10, BELT);
+  grid.set(7, 17, GOLD_SH);
+  grid.rect(9, 17, 10, 18, LEATHER);
+  grid.set(9, 17, WOOD_HI);
+  grid.row(18, 5, 8, palette.pants);
+  grid.set(8, 18, palette.pSh);
+};
+
+const drawBody = (grid: Grid, palette: Pal, cls: AdvClass, opt: BodyOpt) => {
   grid.dx = 0;
   grid.dy = 0;
-  const robe = cls === "mage" || cls === "cleric";
-  // behind-the-body items
-  if (cls === "rogue") {
-    grid.rect(3, 11, 4, 18, CAPE);
-    grid.rect(3, 12, 3, 19, CAPE_SH);
-    grid.set(4, 19, CAPE_SH);
-  }
-  if (cls === "ranger") {
-    grid.rect(3, 10, 4, 16, LEATHER);
-    grid.set(3, 9, FEATHER);
-    grid.set(4, 8, FEATHER);
-    grid.set(4, 9, "#d95763");
-    grid.set(3, 10, WOOD_HI);
-    grid.set(3, 12, WOOD_SH);
-    grid.set(4, 14, WOOD_SH);
-  }
-  // torso
-  grid.rect(5, 11, 10, 16, palette.main);
-  for (let y = 11; y <= 16; y++) grid.set(10, y, palette.mSh);
-  grid.row(16, 5, 10, palette.mSh);
-  grid.set(5, 12, palette.mHi);
-  grid.set(5, 13, palette.mHi);
-  grid.set(6, 12, palette.mHi);
-  if (robe) {
-    grid.rect(4, 17, 11, 19, palette.main);
-    grid.rect(11, 17, 11, 19, palette.mSh);
-    grid.row(19, 4, 11, cls === "mage" ? GOLD : GOLD_SH);
-    grid.set(4, 18, palette.mHi);
-    grid.row(17, 4, 11, cls === "mage" ? GOLD : GOLD_SH);
-    grid.set(8, 17, GOLD_HI);
-  } else {
-    grid.row(17, 5, 10, BELT);
-    grid.set(8, 17, GOLD);
-    grid.row(18, 5, 10, palette.pants);
-    grid.set(10, 18, palette.pSh);
-  }
   switch (cls) {
     case "warrior":
-      grid.row(12, 6, 9, STEEL_HI);
-      grid.rect(6, 13, 9, 14, STEEL);
-      grid.row(15, 6, 9, STEEL_SH);
-      grid.set(7, 13, "#d95763");
-      grid.set(8, 13, "#d95763");
-      grid.set(4, 11, STEEL_HI);
-      grid.set(11, 11, STEEL);
-      grid.set(5, 11, STEEL);
-      grid.set(10, 11, STEEL_SH);
-      break;
+      return bodyWarrior(grid, palette, opt);
     case "mage":
-      grid.set(7, 13, GOLD);
-      grid.set(8, 13, GOLD_HI);
-      grid.set(6, 15, GOLD_SH);
-      grid.set(9, 14, GOLD_SH);
-      grid.row(11, 5, 10, palette.mHi);
-      break;
+      return bodyMage(grid, palette, opt);
     case "rogue":
-      grid.set(7, 12, palette.mSh);
-      grid.set(8, 13, palette.mSh);
-      grid.set(7, 14, palette.mSh);
-      grid.set(8, 15, palette.mSh);
-      grid.rect(9, 17, 10, 18, LEATHER);
-      grid.set(9, 17, WOOD_HI);
-      break;
+      return bodyRogue(grid, palette, opt);
     case "cleric":
-      grid.rect(7, 11, 8, 18, palette.accent);
-      grid.set(8, 12, darken(palette.accent, 0.2));
-      grid.set(8, 14, darken(palette.accent, 0.2));
-      grid.set(8, 16, darken(palette.accent, 0.2));
-      grid.rect(7, 13, 8, 14, GOLD);
-      grid.set(7, 13, GOLD_HI);
-      grid.set(8, 14, GOLD_SH);
-      break;
+      return bodyCleric(grid, palette, opt);
     case "ranger":
-      for (let i = 0; i <= 5; i++) grid.set(5 + i, 11 + i, LEATHER);
-      grid.set(6, 11, WOOD_HI);
-      break;
+      return bodyRanger(grid, palette, opt);
   }
 };
 
-/** A thin arm from the shoulder to a hand; sleeve pixels then a skin hand. */
+/** A thin arm from the shoulder to a hand; sleeve pixels then a gloved/skin hand. */
 const arm = (grid: Grid, palette: Pal, x0: number, y0: number, x1: number, y1: number) => {
-  const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
-  const sleeve = palette.main === "#f6f1e4" ? "#e6dfcb" : palette.mSh;
+  const left = x0 < 8;
+  const sx = palette.cls === "rogue" ? (left ? x0 + 1 : x0 - 1) : x0; // slimmer shoulders
+  const steps = Math.max(Math.abs(x1 - sx), Math.abs(y1 - y0), 1);
+  const points: [number, number][] = [];
   for (let i = 0; i < steps; i++) {
-    const x = Math.round(x0 + ((x1 - x0) * i) / steps);
+    const x = Math.round(sx + ((x1 - sx) * i) / steps);
     const y = Math.round(y0 + ((y1 - y0) * i) / steps);
-    grid.set(x, y, i === 0 ? palette.main : sleeve);
+    grid.set(x, y, i === 0 ? palette.main : palette.sleeve);
+    points.push([x, y]);
   }
-  grid.set(x1, y1, palette.skin);
+  if (palette.cls === "mage") {
+    // wide bell sleeves with a gold cuff
+    const out = left ? -1 : 1;
+    for (const [x, y] of points.slice(-2)) grid.set(x + out, y, palette.main);
+    const [cx, cy] = points[points.length - 1];
+    grid.set(cx + out, cy, palette.mSh);
+    grid.set(cx, cy, GOLD);
+  }
+  grid.set(x1, y1, palette.glove);
 };
 
 const drawHead = (grid: Grid, palette: Pal, cls: AdvClass, expr: Expr, mouth: MouthT) => {
   const { hair, hHi, hSh, skin, skSh, blush } = palette;
-  // back hair
-  if (cls !== "rogue") {
+  // back hair (only where no helm / hood covers it)
+  if (cls === "cleric" || (cls === "mage" && palette.style === 1)) {
     grid.rect(2, 5, 3, 9, hSh);
     grid.rect(3, 5, 3, 9, hair);
-    if (palette.style === 1 && cls !== "warrior") {
-      grid.rect(2, 10, 3, 11, hSh);
-      grid.set(3, 10, hair);
+    if (cls === "mage" || palette.style === 1) {
+      grid.rect(2, 10, 3, cls === "mage" ? 15 : 11, hSh);
+      grid.rect(3, 10, 3, cls === "mage" ? 15 : 11, hair);
     }
   }
   // face
@@ -390,95 +626,164 @@ const drawHead = (grid: Grid, palette: Pal, cls: AdvClass, expr: Expr, mouth: Mo
   // hair (no headwear) or headwear
   switch (cls) {
     case "warrior": {
+      // great helm: dome, brow plate, cheek guards, nasal bar, and a swept plume
+      const plume = palette.accent;
       grid.row(3, 5, 10, STEEL);
       grid.row(4, 4, 11, STEEL);
-      grid.row(5, 3, 11, STEEL_SH);
+      grid.row(5, 3, 11, STEEL);
+      grid.row(6, 3, 11, STEEL_SH);
+      grid.rect(3, 7, 4, 9, STEEL_SH);
+      grid.rect(3, 5, 3, 9, STEEL);
       grid.set(6, 3, STEEL_HI);
+      grid.set(5, 4, STEEL_HI);
       grid.set(6, 4, STEEL_HI);
       grid.set(7, 4, STEEL_HI);
-      grid.set(5, 4, STEEL_HI);
-      grid.rect(3, 6, 4, 8, STEEL_SH);
-      grid.set(3, 6, STEEL);
-      grid.set(8, 5, GOLD);
-      grid.row(2, 7, 9, "#d95763");
-      grid.set(8, 1, "#d95763");
-      grid.set(7, 2, "#f08a94");
       grid.set(10, 3, STEEL_SH);
+      grid.set(11, 4, STEEL_SH);
+      grid.set(11, 5, STEEL_SH);
+      grid.rect(8, 6, 9, 7, STEEL);
+      grid.set(8, 6, STEEL_HI);
+      grid.set(8, 5, GOLD);
+      grid.row(2, 5, 10, plume);
+      grid.row(1, 6, 9, plume);
+      grid.row(1, 7, 8, lighten(plume, 0.3));
+      grid.rect(3, 2, 4, 4, plume);
+      grid.set(2, 3, darken(plume, 0.25));
+      grid.set(2, 4, darken(plume, 0.25));
+      grid.set(3, 4, darken(plume, 0.25));
       break;
     }
     case "mage": {
-      grid.row(5, 3, 12, palette.main);
-      grid.row(5, 10, 12, palette.mSh);
-      grid.row(4, 5, 10, GOLD);
-      grid.row(4, 5, 6, GOLD_HI);
-      grid.row(3, 6, 9, palette.main);
-      grid.set(9, 3, palette.mSh);
-      grid.set(6, 3, palette.mHi);
-      grid.row(2, 7, 8, palette.main);
-      grid.set(8, 2, palette.mSh);
-      grid.set(8, 1, palette.main);
-      grid.set(9, 1, palette.mSh);
-      grid.set(7, 3, GOLD_HI);
-      grid.row(6, 5, 8, hair);
-      grid.set(6, 6, hHi);
+      // beard (white, or the hair colour) or long hair; wide-brimmed pointed hat
+      const longHair = palette.style === 1;
+      if (!longHair) {
+        const beard = palette.style === 2 ? hair : BEARD;
+        const beardSh = palette.style === 2 ? hSh : BEARD_SH;
+        grid.row(10, 5, 10, beard);
+        grid.row(11, 6, 10, beard);
+        grid.row(12, 6, 9, beard);
+        grid.set(4, 9, beard);
+        grid.set(5, 9, beard);
+        grid.set(11, 9, beard);
+        if (palette.style === 0) {
+          grid.row(13, 7, 9, beard);
+          grid.row(14, 7, 8, beard);
+          grid.set(8, 15, beard);
+          grid.set(9, 13, beardSh);
+          grid.set(8, 14, beardSh);
+        }
+        grid.set(10, 10, beardSh);
+        grid.set(10, 11, beardSh);
+        grid.set(9, 12, beardSh);
+      }
+      grid.row(5, 4, 8, hair);
+      grid.set(6, 5, hHi);
+      grid.row(4, 2, 12, palette.main);
+      grid.row(4, 11, 12, palette.mSh);
+      grid.set(2, 4, palette.mHi);
+      grid.set(3, 4, palette.mHi);
+      grid.row(3, 5, 10, GOLD);
+      grid.set(5, 3, GOLD_HI);
+      grid.row(2, 6, 9, palette.main);
+      grid.row(1, 7, 8, palette.main);
+      grid.set(9, 1, palette.main);
+      grid.set(9, 2, palette.mSh);
+      grid.set(8, 1, palette.mSh);
+      grid.set(7, 2, GOLD_HI);
+      grid.set(6, 2, palette.mHi);
       break;
     }
     case "rogue": {
-      grid.row(2, 6, 9, palette.main);
-      grid.row(3, 4, 11, palette.main);
-      grid.row(4, 3, 12, palette.main);
-      grid.row(5, 4, 11, palette.mSh);
-      grid.set(3, 5, palette.main);
-      grid.set(12, 5, palette.main);
-      grid.rect(2, 5, 3, 10, palette.main);
-      grid.rect(3, 6, 4, 10, palette.main);
-      grid.rect(2, 8, 3, 10, palette.mSh);
-      grid.set(12, 6, palette.main);
-      grid.set(12, 4, palette.main);
-      grid.set(6, 2, palette.mHi);
-      grid.set(5, 3, palette.mHi);
-      grid.set(4, 4, palette.mHi);
-      grid.row(5, 6, 9, hair);
-      grid.set(7, 5, hHi);
-      grid.rect(5, 6, 5, 9, skSh);
-      grid.set(5, 10, palette.mSh);
+      // deep hood: the brow is a pit of shadow, only the eyes show, a scarf hides the mouth
+      const { main, mHi, mSh, accent } = palette;
+      grid.row(1, 7, 8, main);
+      grid.row(2, 5, 10, main);
+      grid.row(3, 4, 11, main);
+      grid.row(4, 3, 12, main);
+      grid.rect(2, 5, 4, 10, main);
+      grid.rect(12, 5, 12, 8, main);
+      grid.rect(11, 4, 12, 4, mSh);
+      grid.set(6, 2, mHi);
+      grid.set(5, 3, mHi);
+      grid.set(4, 4, mHi);
+      grid.set(2, 6, mSh);
+      grid.rect(2, 8, 3, 10, mSh);
+      for (let y = 5; y <= 6; y++) {
+        for (let x = 5; x <= 11; x++) {
+          const cell = grid.get(x, y);
+          if (cell !== EYE && cell !== WHITE) grid.set(x, y, HOOD_SHADOW);
+        }
+      }
+      grid.row(9, 5, 11, accent);
+      grid.row(10, 5, 10, darken(accent, 0.25));
+      grid.set(6, 9, lighten(accent, 0.25));
+      grid.set(8, 9, darken(accent, 0.12));
+      grid.set(4, 9, darken(accent, 0.25));
+      // trailing scarf end
+      grid.set(3, 10, accent);
+      grid.set(3, 11, darken(accent, 0.25));
+      grid.set(2, 12, accent);
       break;
     }
     case "cleric": {
-      grid.row(3, 5, 10, hair);
-      grid.row(4, 4, 11, hair);
-      grid.row(3, 6, 7, hHi);
-      grid.row(4, 9, 11, hSh);
-      if (palette.style === 2) {
-        grid.set(5, 2, hair);
-        grid.set(8, 2, hair);
-        grid.set(10, 2, hSh);
-        grid.set(8, 3, hHi);
+      if (palette.style !== 2) {
+        // mitre: split peak with a gold band and cross
+        grid.row(1, 5, 6, WHITE);
+        grid.row(1, 9, 10, WHITE);
+        grid.row(2, 5, 10, WHITE);
+        grid.row(3, 4, 11, WHITE);
+        grid.row(4, 4, 11, GOLD);
+        grid.row(4, 4, 5, GOLD_HI);
+        grid.set(8, 4, GEM);
+        grid.set(9, 4, GEM_HI);
+        grid.rect(8, 1, 8, 3, GOLD);
+        grid.set(7, 2, GOLD);
+        grid.set(9, 2, GOLD_SH);
+        grid.rect(10, 1, 11, 3, "#cfc6b0");
+        grid.set(10, 1, WHITE);
+        grid.set(10, 2, WHITE);
+        grid.set(11, 3, "#cfc6b0");
+        grid.row(5, 4, 5, hair);
+        grid.row(5, 9, 11, hSh);
+      } else {
+        // bare head with a circlet and a floating halo
+        grid.row(3, 5, 10, hair);
+        grid.row(4, 4, 11, hair);
+        grid.row(3, 6, 7, hHi);
+        grid.row(4, 9, 11, hSh);
+        grid.row(1, 6, 9, GOLD_HI);
+        grid.set(5, 2, GOLD);
+        grid.set(10, 2, GOLD);
+        grid.row(5, 4, 11, GOLD);
+        grid.set(4, 5, GOLD_SH);
+        grid.set(11, 5, GOLD_SH);
+        grid.set(8, 5, GEM);
+        grid.set(9, 5, GEM_HI);
       }
-      grid.row(5, 4, 11, GOLD);
-      grid.set(4, 5, GOLD_SH);
-      grid.set(11, 5, GOLD_SH);
-      grid.set(8, 5, GEM);
-      grid.set(9, 5, GEM_HI);
       break;
     }
     case "ranger": {
-      const cap = palette.mSh;
-      grid.row(3, 5, 10, cap);
-      grid.row(4, 4, 11, cap);
-      grid.set(6, 3, palette.main);
-      grid.set(7, 3, palette.main);
-      grid.set(5, 4, palette.main);
-      grid.set(6, 4, palette.main);
-      grid.set(7, 4, palette.main);
-      grid.row(4, 9, 11, darken(cap, 0.25));
-      grid.row(5, 9, 12, darken(cap, 0.3));
+      // open green hood with a swept-back point and a tall feather
+      const { main, mHi, mSh, accent } = palette;
+      grid.row(1, 3, 6, main);
+      grid.row(2, 4, 9, main);
+      grid.row(3, 4, 11, main);
+      grid.row(4, 3, 12, main);
+      grid.rect(12, 5, 12, 6, mSh);
+      grid.rect(3, 5, 3, 8, mSh);
+      grid.set(4, 2, mHi);
+      grid.set(5, 3, mHi);
+      grid.set(6, 3, mHi);
+      grid.set(5, 2, mHi);
+      grid.row(4, 9, 12, mSh);
+      grid.row(3, 10, 11, mSh);
       grid.row(5, 4, 8, hair);
       grid.set(6, 5, hHi);
-      grid.set(4, 2, FEATHER);
-      grid.set(3, 2, FEATHER);
-      grid.set(3, 1, "#d95763");
-      grid.set(4, 3, FEATHER);
+      grid.set(9, 5, hSh);
+      grid.set(11, 3, accent);
+      grid.set(12, 3, FEATHER);
+      grid.set(12, 2, accent);
+      grid.set(13, 2, FEATHER);
       break;
     }
   }
@@ -516,6 +821,14 @@ const drawWeapon = (
         grid.set(ax, hy - len - 2, WHITE);
         grid.set(ax - 1, hy - len - 1, WOOD_HI);
         grid.set(ax + 2, hy - len - 1, WOOD_HI);
+        grid.set(ax - 1, hy - len - 2, GEM_HI);
+        grid.set(ax + 2, hy - len - 3, GEM_HI);
+        grid.set(ax + 1, hy - len - 3, GEM);
+        if (opt.glow) {
+          grid.set(ax - 2, hy - len - 2, GEM);
+          grid.set(ax + 3, hy - len - 2, GEM);
+          grid.set(ax, hy - len - 4, GEM);
+        }
         break;
       }
       case "rogue": {
@@ -529,17 +842,21 @@ const drawWeapon = (
         break;
       }
       case "cleric": {
-        for (let y = hy - 5; y <= hy + 1; y++) grid.set(ax, y, WOOD);
-        grid.rect(ax - 1, hy - 8, ax + 1, hy - 6, GOLD);
-        grid.set(ax - 1, hy - 8, GOLD_HI);
-        grid.set(ax, hy - 7, GOLD_HI);
-        grid.row(hy - 6, ax - 1, ax + 1, GOLD_SH);
-        grid.set(ax, hy - 9, GOLD_HI);
+        // holy staff topped with a golden cross
+        for (let y = hy - 5; y <= hy + 1; y++) grid.set(ax, y, y % 3 === 0 ? WOOD_HI : WOOD);
+        grid.rect(ax, hy - 10, ax, hy - 6, GOLD);
+        grid.row(hy - 8, ax - 1, ax + 1, GOLD);
+        grid.set(ax, hy - 10, GOLD_HI);
+        grid.set(ax, hy - 8, GOLD_HI);
+        grid.set(ax + 1, hy - 8, GOLD_SH);
+        grid.set(ax, hy - 6, GOLD_SH);
         break;
       }
       case "ranger": {
         const wood = [
-          [0, -6],
+          [0, -8],
+          [1, -7],
+          [1, -6],
           [1, -5],
           [1, -4],
           [1, -3],
@@ -548,10 +865,12 @@ const drawWeapon = (
           [1, 0],
           [1, 1],
           [1, 2],
-          [0, 3],
+          [1, 3],
+          [1, 4],
+          [0, 5],
         ];
         for (const [ox, oy] of wood) grid.set(ax + ox, hy + oy, ox === 0 ? WOOD_SH : WOOD_HI);
-        for (let y = hy - 5; y <= hy + 2; y++) grid.set(ax, y, FEATHER);
+        for (let y = hy - 7; y <= hy + 4; y++) grid.set(ax, y, FEATHER);
         break;
       }
     }
@@ -603,21 +922,45 @@ const drawWeapon = (
   }
 };
 
-const drawShield = (grid: Grid) => {
+/** What the left hand carries: the warrior's heater shield, the cleric's holy book. */
+const drawOffhand = (grid: Grid, palette: Pal, cls: AdvClass) => {
   grid.dx = 0;
   grid.dy = 0;
-  grid.row(13, 3, 4, STEEL);
-  grid.set(2, 14, STEEL);
-  grid.row(14, 3, 4, SHIELD);
-  grid.set(5, 14, STEEL_SH);
-  grid.set(2, 15, STEEL);
-  grid.set(3, 15, STEEL_HI);
-  grid.set(4, 15, SHIELD);
-  grid.set(5, 15, STEEL_SH);
-  grid.set(2, 16, STEEL);
-  grid.row(16, 3, 4, SHIELD);
-  grid.set(5, 16, STEEL_SH);
-  grid.row(17, 3, 4, STEEL_SH);
+  if (cls === "warrior") {
+    const face = palette.accent;
+    grid.row(12, 2, 5, STEEL);
+    grid.set(1, 13, STEEL);
+    grid.row(13, 2, 4, face);
+    grid.set(5, 13, STEEL_SH);
+    grid.set(1, 14, STEEL);
+    grid.row(14, 2, 4, face);
+    grid.set(3, 14, GOLD);
+    grid.set(5, 14, STEEL_SH);
+    grid.set(1, 15, STEEL);
+    grid.set(2, 15, lighten(face, 0.3));
+    grid.set(3, 15, GOLD_HI);
+    grid.set(4, 15, face);
+    grid.set(5, 15, STEEL_SH);
+    grid.set(1, 16, STEEL);
+    grid.row(16, 2, 4, darken(face, 0.15));
+    grid.set(5, 16, STEEL_SH);
+    grid.set(2, 17, STEEL);
+    grid.row(17, 3, 4, darken(face, 0.3));
+    grid.set(5, 17, STEEL_SH);
+    grid.row(18, 3, 4, STEEL_SH);
+    grid.set(3, 19, STEEL_SH);
+  } else if (cls === "cleric") {
+    const cover = darken(palette.accent, 0.1);
+    grid.rect(1, 14, 3, 17, cover);
+    grid.rect(3, 14, 3, 17, PAPER);
+    grid.set(3, 15, PAPER_SH);
+    grid.set(3, 17, PAPER_SH);
+    grid.rect(1, 14, 1, 17, darken(cover, 0.25));
+    grid.set(2, 16, GOLD);
+    grid.row(16, 1, 3, GOLD_SH);
+    grid.set(2, 14, GOLD_HI);
+    grid.set(2, 15, GOLD_HI);
+  }
 };
 
 const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => {
@@ -626,10 +969,10 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
   const frameIdx = normFrame(frame, pose === "walk" ? 4 : 2);
   if (pose === "rest") return buildRest(palette, cls, frameIdx);
   const grid = new Grid(16, 24);
-  const robe = cls === "mage" || cls === "cleric";
+  const walkFrame = pose === "walk" ? frameIdx : -1;
 
-  drawLegs(grid, palette, pose === "walk" ? frameIdx : -1, robe);
-  drawBody(grid, palette, cls);
+  drawLegs(grid, palette, walkFrame, cls);
+  drawBody(grid, palette, cls, { wf: walkFrame, seated: false });
 
   let expr: Expr = "normal",
     mouth: MouthT = "smile",
@@ -645,7 +988,7 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
         arm(grid, palette, 4, 12, 4, 15);
         arm(grid, palette, 11, 12, 12, 15);
         drawWeapon(grid, palette, cls, 12, 15, "up");
-        if (cls === "warrior") drawShield(grid);
+        drawOffhand(grid, palette, cls);
       };
       break;
     case "walk": {
@@ -656,7 +999,7 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
         arm(grid, palette, 4, 12, 4, ly);
         arm(grid, palette, 11, 12, 12, ry);
         drawWeapon(grid, palette, cls, 12, ry, "up");
-        if (cls === "warrior") drawShield(grid);
+        drawOffhand(grid, palette, cls);
       };
       break;
     }
@@ -672,7 +1015,7 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
             arm(grid, palette, 11, 12, 12, 10);
             drawWeapon(grid, palette, cls, 12, 10, "up");
           }
-          if (cls === "warrior") drawShield(grid);
+          drawOffhand(grid, palette, cls);
         };
       } else {
         mouth = "open";
@@ -686,7 +1029,7 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
             arm(grid, palette, 11, 12, 11, 14);
             drawWeapon(grid, palette, cls, 11, 14, "fwd", { glow: true });
           }
-          if (cls === "warrior") drawShield(grid);
+          drawOffhand(grid, palette, cls);
         };
       }
       break;
@@ -757,7 +1100,7 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
       draw = () => {
         arm(grid, palette, 4, 12, 2, 13 + frameIdx);
         arm(grid, palette, 11, 12, 13, 13 + frameIdx);
-        if (cls === "warrior") drawShield(grid);
+        drawOffhand(grid, palette, cls);
         grid.set(13, 5, GEM_HI);
         grid.set(14, 6, GEM);
       };
@@ -813,10 +1156,10 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
 /** Sitting cross-legged on the ground; frame 1 = eyes closed + slow breath. */
 const buildRest = (palette: Pal, cls: AdvClass, frame: number): HTMLCanvasElement => {
   const grid = new Grid(16, 24);
-  const robe = cls === "mage" || cls === "cleric";
+  const robe = isRobe(cls);
   // standing torso drawn in a scratch grid, then dropped 3 rows (legs are replaced by a crossed sit)
   const scratch = new Grid(16, 24);
-  drawBody(scratch, palette, cls);
+  drawBody(scratch, palette, cls, { wf: -1, seated: true });
   const SH = 3;
   for (let y = 0; y < 24 - SH; y++) {
     for (let x = 0; x < 16; x++) {
@@ -872,11 +1215,12 @@ export const charSprite = (look: Look, pose: Pose, frame: number): HTMLCanvasEle
 type InternPose = "idle" | "walk" | "attack" | "read" | "hand_up";
 
 const buildIntern = (pose: InternPose, frame: number): HTMLCanvasElement => {
-  const palette = mkPal(INTERN_LOOK, "warrior");
+  const palette = mkPal(INTERN_LOOK, "squire");
   const grid = new Grid(12, 18);
-  const CAP = "#8b5e3c",
-    CAP_HI = "#b9814f",
-    CAP_SH = "#5c3d28";
+  const TABARD = "#e9dcc0",
+    TABARD_SH = "#c9b88a";
+  const SACK = "#a9794a",
+    SACK_SH = "#7a5230";
   const main = palette.main,
     mSh = palette.mSh;
   // legs
@@ -892,14 +1236,16 @@ const buildIntern = (pose: InternPose, frame: number): HTMLCanvasElement => {
   leg(3, liftL);
   leg(7, liftR);
   grid.row(12, 3, 8, palette.pants);
-  // body
+  // plain green tunic with a cream tabard and a rope belt
   grid.rect(3, 8, 8, 11, main);
   for (let y = 8; y <= 11; y++) grid.set(8, y, mSh);
-  grid.row(11, 3, 8, mSh);
   grid.set(3, 9, palette.mHi);
-  grid.set(4, 9, palette.mHi);
+  grid.rect(4, 8, 7, 12, TABARD);
+  grid.rect(7, 8, 7, 12, TABARD_SH);
+  grid.set(5, 9, GOLD_SH);
+  grid.set(5, 10, GOLD_SH);
   grid.row(11, 3, 8, BELT);
-  grid.set(6, 11, GOLD);
+  grid.set(5, 11, GOLD);
   // head
   const hdy = pose === "idle" ? frame : pose === "walk" && frame === 1 ? -1 : 0;
   grid.dy = hdy;
@@ -908,17 +1254,21 @@ const buildIntern = (pose: InternPose, frame: number): HTMLCanvasElement => {
   grid.set(2, 5, palette.hair);
   grid.set(2, 6, palette.hSh);
   grid.set(2, 4, palette.hair);
-  grid.row(1, 4, 7, CAP);
-  grid.row(2, 3, 8, CAP);
-  grid.row(3, 2, 8, CAP);
-  grid.set(4, 1, CAP_HI);
-  grid.set(5, 1, CAP_HI);
-  grid.set(4, 2, CAP_HI);
-  grid.row(3, 9, 10, CAP_SH);
-  grid.set(8, 2, CAP_SH);
-  grid.set(7, 3, CAP_SH);
-  grid.row(3, 2, 6, CAP_SH);
-  grid.row(3, 3, 6, CAP);
+  // pot helmet: round iron dome with a flat rim
+  grid.row(0, 4, 7, IRON);
+  grid.row(1, 3, 8, IRON);
+  grid.row(2, 2, 9, IRON);
+  grid.row(3, 1, 10, IRON_SH);
+  grid.set(4, 0, IRON_HI);
+  grid.set(5, 0, IRON_HI);
+  grid.set(3, 1, IRON_HI);
+  grid.set(4, 1, IRON_HI);
+  grid.set(3, 2, IRON_HI);
+  grid.set(8, 1, IRON_SH);
+  grid.set(9, 2, IRON_SH);
+  grid.set(7, 0, IRON_SH);
+  grid.set(1, 3, IRON);
+  grid.set(2, 3, IRON);
   const blink = pose === "idle" && frame === 1;
   const down = pose === "read";
   for (const x of [6, 8]) {
@@ -938,23 +1288,23 @@ const buildIntern = (pose: InternPose, frame: number): HTMLCanvasElement => {
     grid.set(8, 7, MOUTH);
   } else grid.set(7, 7, MOUTH);
   grid.dy = 0;
-  // arms / items
-  const shield = () => {
-    grid.rect(1, 9, 2, 11, WOOD_HI);
-    grid.set(1, 9, WOOD_SH);
-    grid.set(2, 11, WOOD_SH);
-    grid.set(1, 11, WOOD_SH);
-    grid.set(2, 10, GOLD);
-    grid.set(2, 9, WOOD);
+  // arms / items: a bundle sack on a strap instead of a shield, a wooden practice stick instead of a sword
+  const sack = () => {
+    grid.rect(0, 10, 2, 12, SACK);
+    grid.row(10, 0, 2, SACK_SH);
+    grid.set(1, 9, SACK_SH);
+    grid.set(0, 12, SACK_SH);
+    grid.set(2, 12, SACK_SH);
+    grid.set(1, 11, GOLD_SH);
+    grid.set(0, 11, SACK_SH);
   };
   const sword = (hx: number, hy: number, dir: "up" | "fwd") => {
     if (dir === "up") {
-      grid.set(hx + 1, hy, WOOD);
-      grid.row(hy - 1, hx, hx + 1, GOLD);
-      for (let y = hy - 6; y <= hy - 2; y++) grid.set(hx + 1, y, y === hy - 6 ? WHITE : STEEL_HI);
+      grid.set(hx + 1, hy, WOOD_SH);
+      for (let y = hy - 5; y <= hy - 1; y++) grid.set(hx + 1, y, y === hy - 5 ? WOOD_HI : WOOD);
     } else {
-      grid.rect(hx + 1, hy - 1, hx + 1, hy + 1, GOLD);
-      grid.set(hx + 2, hy, STEEL_HI);
+      grid.rect(hx + 1, hy, hx + 3, hy, WOOD);
+      grid.set(hx + 3, hy, WOOD_HI);
     }
   };
   const rarm = (x1: number, y1: number) => {
@@ -968,7 +1318,7 @@ const buildIntern = (pose: InternPose, frame: number): HTMLCanvasElement => {
     grid.set(2, 9, mSh);
     rarm(9, 10 + (pose === "walk" && frame === 1 ? 1 : 0));
     sword(9, 10, "up");
-    shield();
+    sack();
   } else if (pose === "attack") {
     grid.set(2, 9, mSh);
     if (frame === 0) {
@@ -980,7 +1330,7 @@ const buildIntern = (pose: InternPose, frame: number): HTMLCanvasElement => {
       grid.set(9, 10, palette.skin);
       sword(9, 10, "fwd");
     }
-    shield();
+    sack();
   } else if (pose === "read") {
     grid.rect(3, 9, 8, 12, PAPER);
     grid.row(9, 3, 8, PAPER_SH);
@@ -999,7 +1349,7 @@ const buildIntern = (pose: InternPose, frame: number): HTMLCanvasElement => {
     grid.set(10, 3, palette.skin);
     if (frame) grid.set(11, 3, palette.skin);
     else grid.set(10, 2, palette.skin);
-    shield();
+    sack();
   }
   grid.outline();
   return grid.toCanvas();

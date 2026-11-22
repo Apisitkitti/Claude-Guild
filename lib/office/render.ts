@@ -54,7 +54,7 @@ import {
   standSlot,
   CAMP_MAX,
 } from "./layout";
-import { lookFor } from "./palette";
+import { bardSprite, chefSprite, innkeeperSprite } from "./npcSprites";
 import { bossSprite, butterflySprite, charSprite, internSprite, monsterSprite, prop, type Pose } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
@@ -1204,18 +1204,19 @@ const drawFeastTable = (ctx: Ctx, office: Office, time: number) => {
   }
 };
 
-const CHEF_LOOK = lookFor("guild-chef-npc");
-const BARD_LOOK = lookFor("guild-bard-npc");
 const drawChef = (ctx: Ctx, office: Office, time: number) => {
   const chef = office.chef;
   const moving = chef.path.length > 0;
   const waiting = moving && chef.holdUntil > office.clock;
-  const pose: Pose = !moving ? "write" : waiting ? "idle" : "walk";
-  const frame = !moving ? Math.floor(time * 4) % 2 : waiting ? 0 : Math.floor(time * 8) % 4;
-  const sprite = charSprite(CHEF_LOOK, pose, frame);
+  const carrying = chef.plate >= 0;
+  const sprite = !moving
+    ? chefSprite("stir", Math.floor(time * 5))
+    : waiting
+      ? chefSprite(carrying ? "hold" : "idle", 0)
+      : chefSprite(carrying ? "carry" : "walk", Math.floor(time * 8));
   shadow(ctx, chef.x, chef.y, 11);
   const px = Math.round(chef.x - CH_W / 2),
-    py = Math.round(chef.y - CH_H + (moving && !waiting && frame % 2 === 1 ? -1 : 0));
+    py = Math.round(chef.y - CH_H);
   if (chef.face < 0) {
     ctx.save();
     ctx.translate(px + CH_W, py);
@@ -1223,18 +1224,7 @@ const drawChef = (ctx: Ctx, office: Office, time: number) => {
     ctx.drawImage(sprite, 0, 0);
     ctx.restore();
   } else ctx.drawImage(sprite, px, py);
-  // apron and the tall white hat (opaque pixels over the sprite)
-  rect(ctx, "#f5efe0", px + 5, py + 12, 6, 8);
-  rect(ctx, "#c9c2ae", px + 5, py + 19, 6, 1);
-  rect(ctx, "#c9c2ae", px + 7, py + 14, 2, 1);
-  rect(ctx, INK, px + 3, py - 4, 10, 1);
-  rect(ctx, INK, px + 2, py - 3, 1, 7);
-  rect(ctx, INK, px + 13, py - 3, 1, 7);
-  rect(ctx, "#ffffff", px + 3, py - 3, 10, 7);
-  rect(ctx, "#e6e1d2", px + 3, py + 2, 10, 2);
-  rect(ctx, "#ffffff", px + 4, py - 5, 8, 1);
-  rect(ctx, INK, px + 4, py - 6, 8, 1);
-  if (chef.plate >= 0) {
+  if (carrying) {
     const hx = Math.round(chef.x + chef.face * 8);
     drawDish(ctx, chef.plate, hx, Math.round(chef.y - 10));
   }
@@ -1242,29 +1232,9 @@ const drawChef = (ctx: Ctx, office: Office, time: number) => {
 
 const drawBard = (ctx: Ctx, office: Office, time: number) => {
   const playing = office.bardOn;
-  const pose: Pose = playing ? "write" : "idle";
-  const frame = playing ? Math.floor(time * 6) % 2 : Math.floor(time * 1.2) % 2;
-  const sprite = charSprite(BARD_LOOK, pose, frame);
+  const sprite = bardSprite(playing, playing ? Math.floor(time * 6) : Math.floor(time * 1.2));
   shadow(ctx, BARD_POS.x, BARD_POS.y, 11);
-  const px = Math.round(BARD_POS.x - CH_W / 2),
-    py = Math.round(BARD_POS.y - CH_H);
-  ctx.drawImage(sprite, px, py);
-  // feathered cap
-  rect(ctx, "#2f6a3f", px + 3, py - 1, 10, 3);
-  rect(ctx, "#4f9a52", px + 3, py - 1, 10, 1);
-  rect(ctx, "#d95763", px + 12, py - 4, 1, 4);
-  rect(ctx, "#d95763", px + 13, py - 5, 1, 2);
-  // the lute: round body, neck with a headstock, strings
-  const strum = playing ? Math.floor(time * 6) % 2 : 0;
-  const lx = px + 8,
-    ly = py + 14 + strum;
-  rect(ctx, INK, lx - 1, ly - 1, 8, 7);
-  rect(ctx, "#a8764a", lx, ly, 6, 5);
-  rect(ctx, "#6e4a36", lx + 4, ly + 2, 2, 3);
-  rect(ctx, INK, lx + 2, ly + 2, 2, 2);
-  rect(ctx, "#6e4a36", lx + 6, ly - 4, 1, 4);
-  rect(ctx, "#6e4a36", lx + 7, ly - 8, 2, 4);
-  rect(ctx, "#e3bd86", lx, ly, 6, 1);
+  ctx.drawImage(sprite, Math.round(BARD_POS.x - CH_W / 2), Math.round(BARD_POS.y - CH_H));
 };
 
 /** opaque "Cheers!" pill above the table (never translucent, drawn after the characters) */
@@ -2726,7 +2696,7 @@ const drawTag = (ctx: Ctx, emp: Employee, topY: number, dx = 0) => {
 
 // ---------- guild receptionist ----------
 const drawNpc = (ctx: Ctx, time: number, office: Office) => {
-  const sprite = charSprite(lookFor("guild-receptionist-npc"), "idle", Math.floor(time * 1.2) % 2);
+  const sprite = innkeeperSprite(Math.floor(time * 3));
   ctx.save();
   ctx.beginPath();
   ctx.rect(VIEW_X0, 0, VIEW_W, COUNTER_BOX.y + 1);
