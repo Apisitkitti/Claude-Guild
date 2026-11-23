@@ -1128,8 +1128,8 @@ export interface Particle {
   spr: string | null;
   /** drawn BEFORE the entity pass (duel effects: they may fade, so they must never sit over a character) */
   under: boolean;
-  /** raider effect: lives in the dungeon scene only (drawn there, skipped on the field) */
-  dungeon: boolean;
+  /** raider effect: the dungeon floor (1..3) it lives on, drawn only there; 0 = the field */
+  dungeon: number;
 }
 export interface Popup {
   x: number;
@@ -1140,8 +1140,8 @@ export interface Popup {
   born: number;
   dur: number;
   star: boolean;
-  /** raider effect: lives in the dungeon scene only */
-  dungeon: boolean;
+  /** raider effect: the dungeon floor (1..3) it lives on; 0 = the field */
+  dungeon: number;
 }
 export interface Banner {
   kind: "quest" | "boss";
@@ -1559,6 +1559,9 @@ export class Office {
   /** the guild hall's cat, dog and regulars (render reads these) */
   readonly hall = new HallLife();
   private readonly hallWalkers: Pt[] = [];
+  /** the local hour the hall life last saw, and the realTime it was read at */
+  private hallHour = 0;
+  private hallHourAt = -Infinity;
   /** reusable scratch points for the guild master's safety check (runs every frame while he is out) */
   private gmStandPt: Pt = { x: 0, y: 0 };
   private gmDuelPt: Pt = { x: 0, y: 0 };
@@ -1619,11 +1622,11 @@ export class Office {
     size: 1,
     spr: null,
     under: false,
-    dungeon: false,
+    dungeon: 0,
   }));
   private pIdx = 0;
-  /** while true, emitted particles / popups are tagged as dungeon-scene effects (set by raider effect helpers) */
-  private fxDungeon = false;
+  /** while > 0, emitted particles / popups are tagged as effects of that dungeon floor (set by raider effect helpers) */
+  private fxDungeon = 0;
   popups: Popup[] = [];
   banners: Banner[] = [];
   trauma = 0;
@@ -2010,7 +2013,7 @@ export class Office {
   /** Replace the Quest Board (every session's todo list). Malformed rows are skipped; the notes on the board follow. */
   setQuests(rows: unknown) {
     this.quests = sanitizeQuests(rows);
-    this.board.update(this.quests, this.clock, this.reducedMotion);
+    if (this.board.update(this.quests, this.clock, this.reducedMotion) > 0) this.sfx("questDone"); // a wax stamp landed
     this.questVer++;
     this.dirty = true;
   }
@@ -2081,8 +2084,8 @@ export class Office {
     this.selectedId = id;
     const target = id ? this.employees.get(id) : undefined;
     if (target && !this.isHidden(target)) {
-      if (target.inDungeon) this.setDungeonFloor(target.floor);
       this.setScene(target.inDungeon ? "dungeon" : "guild"); // show where they are
+      if (target.inDungeon) this.setDungeonFloor(target.floor); // after setScene: it opens on the busiest floor
     }
     this.selectedUntil = this.realTime + SELECT_HOLD_S;
     this.dirty = true;
@@ -2098,6 +2101,7 @@ export class Office {
     this.ctxMap.clear();
     this.attn = [];
     this.bellKeys = null;
+    this.sfxQueue.length = 0;
     this.attnDismissed.clear();
     this.bumpAttn();
     this.rcpts = [];
@@ -3346,7 +3350,7 @@ export class Office {
   /** run `emit` with raider effects tagged to the dungeon scene (no-op tagging for field adventurers) */
   private fxFor(emp: Employee, emit: () => void) {
     const prev = this.fxDungeon;
-    this.fxDungeon = emp.inDungeon;
+    this.fxDungeon = emp.inDungeon ? emp.floor : 0;
     try {
       emit();
     } finally {
@@ -3846,10 +3850,15 @@ export class Office {
 
   /** the stair walk ends: the raider appears on the next floor with a fresh foe (or in the Lord's hall) */
   private arriveOnNextFloor(emp: Employee) {
+    const from = emp.floor;
     emp.floor = Math.min(DUNGEON_FLOORS, emp.floor + 1);
     emp.floorKills = 0;
     emp.stairsAt = -1;
     this.newRaidFoe(emp);
+    this.sfx("enterDungeon");
+    // the camera follows a selected raider down the stairs
+    if (this.selectedId === emp.id && this.scene === "dungeon" && this.dungeonFloor === from)
+      this.setDungeonFloor(emp.floor);
     this.bumpStats();
   }
 
@@ -3873,10 +3882,12 @@ export class Office {
     if (lord.hp <= 0) return;
     lord.hp = Math.max(0, lord.hp - dmg / LORD_HP);
     lord.hitAt = this.clock;
+    this.sfx("hit");
     if (lord.hp > 0) return;
     lord.deadAt = this.clock;
     lord.slain++;
     this.stats.bosses++;
+    this.sfx("bossDown");
     const at = dungeonLordPoint();
     let first: Employee | null = null;
     for (const raider of this.dungeonRaiders()) {
@@ -3945,8 +3956,10 @@ export class Office {
     if (!foe || foe.hp <= 0) return;
     foe.hp = Math.max(0, foe.hp - dmg / (MON_HP[MONSTER_KINDS[foe.kind]] * foe.tough));
     foe.hitAt = this.clock;
+    this.sfx("hit");
     if (foe.hp > 0) return;
     foe.deadAt = this.clock;
+    this.sfx("kill");
     const gold = 1 + Math.floor(Math.random() * GOLD_ROLL_MAX);
     emp.kills++;
     emp.gold += gold;
@@ -4970,10 +4983,14 @@ export class Office {
     const walkers = this.hallWalkers;
     walkers.length = 0;
     for (const emp of this.employees.values()) if (!emp.inDungeon && !this.isHidden(emp)) walkers.push(emp);
-    const now = new Date();
+    if (this.realTime - this.hallHourAt >= 1 || this.realTime < this.hallHourAt) {
+      const now = new Date(); // the wall clock changes slowly: read it once a second, not every frame
+      this.hallHour = now.getHours() + now.getMinutes() / MINUTES_PER_HOUR;
+      this.hallHourAt = this.realTime;
+    }
     this.hall.update({
       dt,
-      hour: now.getHours() + now.getMinutes() / MINUTES_PER_HOUR,
+      hour: this.hallHour,
       reduced: this.reducedMotion,
       bossOut: this.bossAlive > 0,
       busy: this.employees.size > 0,

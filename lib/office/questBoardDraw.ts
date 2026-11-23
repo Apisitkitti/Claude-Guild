@@ -47,9 +47,17 @@ const mix = (base: string, over: string, amount: number): string => {
   return `#${parts.join("")}`;
 };
 
+/** note colour per session, cached (drawn every frame); cleared when it grows past the board's session cap */
+const BODY_CACHE_MAX = 64;
+const bodyCache = new Map<string, string>();
 const bodyColor = (sid: string): string => {
+  const hit = bodyCache.get(sid);
+  if (hit) return hit;
   const shirt = lookFor(sid).shirt;
-  return /^#[0-9a-f]{6}$/i.test(shirt) ? mix(PARCHMENT, shirt, TINT) : PARCHMENT;
+  const color = /^#[0-9a-f]{6}$/i.test(shirt) ? mix(PARCHMENT, shirt, TINT) : PARCHMENT;
+  if (bodyCache.size >= BODY_CACHE_MAX) bodyCache.clear();
+  bodyCache.set(sid, color);
+  return color;
 };
 
 const drawNote = (ctx: Ctx, note: BoardNote, time: number, reduced: boolean) => {

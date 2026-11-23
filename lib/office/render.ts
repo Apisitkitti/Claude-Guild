@@ -1,3 +1,5 @@
+import { m } from "@/paraglide/messages";
+
 import { bossCenterX, bossSprite } from "./bossSprites";
 import { LORD_ATTACK_FROM, lordSprite } from "./dungeonLordSprite";
 import {
@@ -1513,7 +1515,7 @@ const outlined = (ctx: Ctx, text: string, x: number, y: number, fill: string) =>
 };
 
 /** `under`: the duel/territory particles, drawn before the entity pass (they fade, so they must never sit over a character) */
-const drawParticles = (ctx: Ctx, office: Office, under: boolean, dungeon = false) => {
+const drawParticles = (ctx: Ctx, office: Office, under: boolean, dungeon = 0) => {
   for (const particle of office.particles) {
     if (!particle.on || particle.under !== under || particle.dungeon !== dungeon) continue;
     const progress = particle.age / particle.life;
@@ -1524,7 +1526,7 @@ const drawParticles = (ctx: Ctx, office: Office, under: boolean, dungeon = false
   ctx.globalAlpha = 1;
 };
 
-const drawPopups = (ctx: Ctx, office: Office, dungeon = false) => {
+const drawPopups = (ctx: Ctx, office: Office, dungeon = 0) => {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (const popup of office.popups) {
@@ -2976,10 +2978,12 @@ const drawLordBar = (ctx: Ctx, office: Office, time: number) => {
   const lord = office.lord;
   const cx = Math.round(VIEW_X0 + VIEW_W / 2),
     { w, h, y } = LORD_BAR;
-  const label = lord.hp > 0 ? `Dungeon Lord  ${Math.ceil(lord.hp * 100)}%` : "Dungeon Lord is down";
+  const label = `${m.dungeon_floor_lord()} — ${
+    lord.hp > 0 ? m.dungeon_floor_lord_alive({ hp: Math.ceil(lord.hp * 100) }) : m.dungeon_floor_lord_down()
+  }`;
   rect(ctx, INK, cx - w / 2 - 3, y - 12, w + 6, h + 17);
   rect(ctx, "#2a1a24", cx - w / 2 - 2, y - 11, w + 4, h + 15);
-  ctx.font = "700 7px ui-sans-serif, system-ui, sans-serif";
+  ctx.font = '700 7px ui-sans-serif, system-ui, "Sukhumvit Set", "Noto Sans Thai", sans-serif';
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "#ffffff";
@@ -3023,11 +3027,11 @@ const drawDungeonScene = (ctx: Ctx, office: Office, time: number) => {
     ents.push({ y: spot.y + 2, fn: () => drawBadge(ctx, `+${stacked}`, spot.x, spot.y + 9) });
   }
   ents.sort((entA, entB) => entA.y - entB.y);
-  drawParticles(ctx, office, true, true);
+  drawParticles(ctx, office, true, floor);
   for (const entity of ents) entity.fn();
   drawDungeonFront(ctx, time, still);
-  drawParticles(ctx, office, false, true);
-  drawPopups(ctx, office, true);
+  drawParticles(ctx, office, false, floor);
+  drawPopups(ctx, office, floor);
   if (onLordFloor) drawLordBar(ctx, office, time);
   raiders.forEach((emp) => {
     atSpot(emp, office.raiderPoint(emp), () => {

@@ -339,6 +339,49 @@ describe("the floor on screen", () => {
     expect(office.dungeonFloor).toBe(2);
   });
 
+  it("selecting a raider shows their floor even when another floor is busier", () => {
+    const { office, raiderIds } = withRaiders(3);
+    const [lone, ...crowd] = raiderIds.map((id) => emp(office, id));
+    lone.floor = 2;
+    for (const raider of crowd) raider.floor = 3;
+    office.select(lone.id);
+    expect(office.scene).toBe("dungeon");
+    expect(office.dungeonFloor).toBe(2);
+  });
+
+  it("raider effects are tagged with their floor (a B1 kill does not pop on B3)", () => {
+    const { office, raiderIds } = withRaiders(1);
+    const raider = emp(office, raiderIds[0]);
+    killFoe(office, raider);
+    const tagged = [
+      ...office.popups.map((popup) => popup.dungeon),
+      ...office.particles.filter((particle) => particle.on).map((particle) => particle.dungeon),
+    ];
+    expect(tagged.length).toBeGreaterThan(0);
+    expect(tagged.every((floor) => floor === 1)).toBe(true);
+  });
+
+  it("queues sound cues for raid hits, kills, the stair descent and the Lord's fall", () => {
+    const { office, raiderIds } = withRaiders(1);
+    const raider = emp(office, raiderIds[0]);
+    office.sfxQueue.length = 0;
+    killFoe(office, raider);
+    expect(office.sfxQueue).toContain("hit");
+    expect(office.sfxQueue).toContain("kill");
+    office.sfxQueue.length = 0;
+    raider.floorKills = RAID_FLOOR_KILLS - 1;
+    tick(office, 2);
+    killFoe(office, raider);
+    tick(office, 3);
+    expect(raider.floor).toBe(2);
+    expect(office.sfxQueue).toContain("enterDungeon");
+    sendToLord(raider);
+    office.sfxQueue.length = 0;
+    for (let i = 0; i < 60 && office.lord.hp > 0; i++) strike(office, raider.id);
+    expect(office.lord.hp).toBe(0);
+    expect(office.sfxQueue).toContain("bossDown");
+  });
+
   it("the gate stats count raiders per floor and the filter hides them", () => {
     const { office, raiderIds } = withRaiders(3);
     emp(office, raiderIds[0]).floor = 3;

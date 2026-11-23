@@ -134,6 +134,46 @@ describe("BoardNotes", () => {
     expect(board.overflow).toBe(0);
   });
 
+  it("update() reports how many open notes got stamped", () => {
+    const board = new BoardNotes();
+    expect(
+      board.update(
+        [
+          row("a", [
+            ["one", "pending"],
+            ["two", "pending"],
+          ]),
+        ],
+        0,
+      ),
+    ).toBe(0);
+    expect(
+      board.update(
+        [
+          row("a", [
+            ["one", "completed"],
+            ["two", "pending"],
+          ]),
+        ],
+        1,
+      ),
+    ).toBe(1);
+    expect(
+      board.update(
+        [
+          row("a", [
+            ["one", "completed"],
+            ["two", "pending"],
+          ]),
+        ],
+        2,
+      ),
+    ).toBe(0);
+    const still = new BoardNotes();
+    still.update([row("a", [["one", "pending"]])], 0, true);
+    expect(still.update([row("a", [["one", "completed"]])], 1, true)).toBe(1);
+  });
+
   it("caps visible notes and counts the overflow", () => {
     const board = new BoardNotes();
     const items = Array.from({ length: BOARD_SLOTS + 5 }, (_, index): [string, "pending"] => [`t${index}`, "pending"]);

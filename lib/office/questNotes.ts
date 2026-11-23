@@ -100,8 +100,10 @@ export class BoardNotes {
   /**
    * Take a new full set of todo lists. `instant` (reduced motion): a completed note is removed at once, no stamp / fall.
    * A completed todo never gets a note of its own: only a note that was open can be stamped.
+   * Returns how many open notes got their wax stamp (or, `instant`, were removed as completed) in this update.
    */
-  update(rows: QuestMsgRow[], now: number, instant = false) {
+  update(rows: QuestMsgRow[], now: number, instant = false): number {
+    let stamped = 0;
     const wanted = new Map<string, { sid: string; status: QuestStatus; order: number }>();
     let order = 0;
     for (const row of rows) {
@@ -123,7 +125,10 @@ export class BoardNotes {
       } else if (wantedItem && !instant) {
         note.status = "completed";
         note.stampAt = now;
+        stamped++;
         kept.push(note);
+      } else if (wantedItem) {
+        stamped++; // reduced motion: completed, gone at once
       } else if (!wantedItem && !instant) {
         note.fallAt = now; // the list was rewritten without it: it just drops off
         kept.push(note);
@@ -151,6 +156,7 @@ export class BoardNotes {
       0,
       openTotal - kept.filter((note) => note.stampAt === null && note.fallAt === null).length,
     );
+    return stamped;
   }
 
   /** "+N" count of open quests without a note */
@@ -162,7 +168,8 @@ export class BoardNotes {
   visible(now: number): BoardNote[] {
     for (const note of this.notes)
       if (note.stampAt !== null && note.fallAt === null && now - note.stampAt >= STAMP_S) note.fallAt = now;
-    this.notes = this.notes.filter((note) => note.fallAt === null || now - note.fallAt < FALL_S);
+    if (this.notes.some((note) => note.fallAt !== null && now - note.fallAt >= FALL_S))
+      this.notes = this.notes.filter((note) => note.fallAt === null || now - note.fallAt < FALL_S); // only when one left
     return this.notes;
   }
 

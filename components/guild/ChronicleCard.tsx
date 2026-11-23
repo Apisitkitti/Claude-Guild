@@ -86,13 +86,15 @@ export const ChronicleCard = ({ officeRef, onClose }: { officeRef: OfficeRef; on
     return () => clearInterval(timer);
   }, [officeRef]);
   useEffect(() => {
+    // capture + stop: the modal owns Escape, so a quest board / dungeon card behind it does not close as well
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape") return;
       ev.preventDefault();
+      ev.stopPropagation();
       onClose();
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [onClose]);
   useEffect(() => {
     if (copy === "idle") return;

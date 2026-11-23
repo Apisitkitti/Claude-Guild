@@ -101,5 +101,7 @@ export const useSound = (officeRef: OfficeRef): Sound => {
     if (!on) sfxRef.current?.stop();
   }, [on]);
 
+  useEffect(() => () => sfxRef.current?.stop(), []); // unmount: release the AudioContext
+
   return { on, volume, toggle, setVolume };
 };

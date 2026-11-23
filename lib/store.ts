@@ -439,6 +439,7 @@ export const addEvent = (rawIn: Record<string, unknown>) => {
   if (store.events.length > MAX_EVENTS) store.events.splice(0, store.events.length - MAX_EVENTS);
   // Late events after SessionEnd must not re-claim files (checked before updateSessions touches `ended`).
   const lateAfterEnd = !!evt.session_id && store.ended.has(evt.session_id) && evt.hook_event_name !== "SessionStart";
+  let questsChanged = false;
   if (!lateAfterEnd) {
     try {
       if (store.territory.onEvent(evt, evt.receivedAt)) broadcastTerritory(store);
@@ -453,7 +454,10 @@ export const addEvent = (rawIn: Record<string, unknown>) => {
     } catch {}
     try {
       store.chronicle.ingest(raw, evt.receivedAt);
-      store.quests.ingest(raw, evt.receivedAt);
+    } catch {}
+    try {
+      // its own try: a chronicle bug must not freeze the quest board
+      if (store.quests.ingest(raw, evt.receivedAt)) questsChanged = true;
     } catch {}
   }
   updateSessions(evt);
@@ -464,7 +468,7 @@ export const addEvent = (rawIn: Record<string, unknown>) => {
     refreshAttention(store);
     refreshReceipts(store);
     refreshChronicle(store);
-    refreshQuests(store);
+    if (questsChanged) refreshQuests(store); // only TodoWrite / TaskCreate / TaskUpdate change it: skip the stringify
   } catch {}
   logEvent(evt);
   broadcastRaw(store, `data: ${JSON.stringify(evt)}\n\n`);
