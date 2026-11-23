@@ -3,7 +3,9 @@ import { m } from "@/paraglide/messages";
 
 import type { SfxCue } from "./audio";
 import { bossCenterX, BOSS_H, BOSS_W } from "./bossSprites";
+import { CRYPT_KINDS, type CryptKind } from "./cryptSprites";
 import { ToolTally, type DungeonStats } from "./dungeon";
+import { LORD_H } from "./dungeonLordSprite";
 import {
   DUNGEON_FLOORS,
   dungeonLordPoint,
@@ -11,6 +13,7 @@ import {
   dungeonSpotOf,
   dungeonStairsPoint,
 } from "./dungeonScene";
+import type { GmIconId } from "./gmIcons";
 import { HallLife } from "./hallLife";
 import {
   ALLY_GATE_MOUTH,
@@ -32,6 +35,7 @@ import {
   GUILD_MASTER_HOME,
   HEARTH,
   VIEW_W,
+  VIEW_X0,
   duelMidOfDesks,
   guildMasterStand,
   monsterSpot,
@@ -41,14 +45,54 @@ import {
   routeLeave,
   routeFromDungeon,
   routeToAllyGate,
+  routeToDungeon,
   routeChefServe,
   routeGuildMaster,
+  routeGuildMasterAnnounce,
+  routeGuildMasterDoor,
+  routeGuildMasterEscort,
+  routeGuildMasterGate,
   routeGuildMasterHome,
   routeToBreak,
   seatPoint,
   squirePoint,
   type Pt,
 } from "./layout";
+import {
+  ATTACK_BREATH,
+  ATTACK_METEOR,
+  ATTACK_SLAM,
+  ATTACK_SUMMON,
+  BREATH_NEAR_PX,
+  ENRAGE_BELOW,
+  FIRST_ATTACK_S,
+  LORD_HITSTOP_S,
+  METEORS_CALM,
+  METEORS_ENRAGED,
+  METEOR_BLAST_PX,
+  MINION_LIFE_S,
+  MINION_POOF_S,
+  MOUTH_DX,
+  MOUTH_DY,
+  TAUNTS,
+  WAVE_DX,
+  WAVE_SPEED,
+  WAVE_SQUASH,
+  addSlash,
+  beginAttack,
+  clearMinion,
+  deathLength,
+  freshLord,
+  growPool,
+  LORD_HP_BASE,
+  nextAttackGap,
+  pickAttack,
+  planMeteors,
+  raiseMinions,
+  resetFight,
+  stopAttacks,
+  type DungeonLord,
+} from "./lordFight";
 import { MON_H, MON_W } from "./monsterSprites";
 import { BOSS_KINDS, lookFor, MONSTER_KINDS, type BossKind, type Look, type MonsterKind } from "./palette";
 import { BoardNotes, sanitizeQuests, type QuestMsgRow } from "./questNotes";
@@ -289,6 +333,8 @@ const HURT_POP_DX = 4;
 const HURT_POP_LIFT = 30;
 const HURT_POP_DUR = 0.9;
 const DMG_POP_JITTER = 3;
+/** a pop above a raider's head */
+const POP_ABOVE_HEAD = 28;
 const DMG_POP_LIFT = 6;
 const HIT_SPARK_N = 8;
 const HIT_SPARK_SPEED = 34;
@@ -404,6 +450,37 @@ const GM_CLEAR_R = 34;
 const GM_MON_BAR_H = 6;
 const GM_BOSS_BAR_H = 7;
 const GM_FACE_HOME = 1;
+/** the first visit comes sooner than the later ones: after a visit he waits this long (jittered) before a calm patrol */
+const GM_CALM_MIN_S = 25;
+const GM_CALM_MAX_S = 40;
+/** a tool in flight longer than this makes its adventurer "stuck" */
+const GM_STUCK_S = 90;
+/** a stopped session waiting for a prompt longer than this is "idle" */
+const GM_IDLE_REPORT_S = 300;
+/** permission / question pending longer than this makes him ring the door bell; the ring repeats at this gap */
+const GM_BELL_AFTER_S = 120;
+/** the same wait in whole minutes, for the desktop notification text */
+export const GM_BELL_AFTER_MIN = GM_BELL_AFTER_S / SECONDS_PER_MINUTE;
+const GM_BELL_EVERY_S = 20;
+/** pause between two urgent trips, and how long before he visits the same session for the same reason again */
+const GM_URGENT_GAP_S = 6;
+const GM_REVISIT_S = 90;
+const GM_REVISIT_LOW_S = 240;
+/** how often the report is rebuilt (clock seconds) */
+const GM_SCAN_S = 0.5;
+const GM_REPORT_DETAIL_MAX = 48;
+const GM_ANNOUNCE_S = 5;
+const GM_ANNOUNCE_TEXT = "DAILY REPORT";
+const GM_EVENING_HOUR = 18;
+const GM_QUIET_S = 300;
+const GM_PRAISE_FRESH_S = 60;
+const GM_PRAISE_MAX = 4;
+/** dispatcher: he talks to a raid-ready adventurer this long; the raid never waits longer than DISPATCH_MAX_S for him */
+const GM_DISPATCH_TALK_S = 1.5;
+const GM_DISPATCH_MAX_S = 9;
+const GM_ESCORT_POINT_S = 1.5;
+const GM_RANK: Record<GmReason, number> = { permission: 0, question: 1, loop: 2, stuck: 3, idle: 4, compact: 5 };
+const GM_LAST_URGENT = 3;
 
 export interface HookEvt {
   session_id?: string;
@@ -574,7 +651,9 @@ export type EState =
   | "DUEL"
   | "TO_TAVERN_REST"
   | "AT_TAVERN_REST"
-  | "FROM_TAVERN_REST";
+  | "FROM_TAVERN_REST"
+  | "TO_RAID"
+  | "FROM_RAID";
 
 // ---- territory duels ----
 export type DuelStyle = "sword" | "magic" | "arrow";
@@ -984,6 +1063,8 @@ export interface Employee {
   noteAt: number;
   lootAt: number;
   hurtUntil: number;
+  /** clock time the raider last hopped out of the way of a Dungeon Lord attack (-99 = never) */
+  dodgeAt: number;
   /** monster at the battle spot */
   monKind: MonsterKind;
   monPos: Pt | null;
@@ -1039,11 +1120,25 @@ export interface Employee {
   evCount: number;
   /** the server listed this session in a snapshot `sessions` array (a real, tracked session) */
   known: boolean;
+  /** name of the last tool this session started (for the guild master's report) */
+  lastTool: string;
   /** PreCompact seen: the next context reading is the post-compact one (mana bar flashes when it lands) */
   compactPending: boolean;
   /** seated overflow adventurer that has arrived inside the dungeon (hidden on the field, drawn in the dungeon scene) */
   inDungeon: boolean;
-  /** the foe a raider is fighting inside (null unless inDungeon): kind = index into MONSTER_KINDS, hp 0..1, clock times of the last hit / death */
+  /** a battle-spot adventurer that walked into the dungeon after heavy work: keeps deskIdx, stands inside (state SEATED) */
+  raidIn: boolean;
+  /** dungeon spot index of a desk raider (overflow raiders use their slot; -1 = none) */
+  raidSlot: number;
+  /** tool calls since this adventurer last raided (or arrived): enough of them send it raiding */
+  raidCalls: number;
+  /** clock time the adventurer last came back from a raid (or arrived) */
+  raidSince: number;
+  /** clock time the raider went inside (desk raiders only; -1 = not raiding) */
+  raidEnteredAt: number;
+  /** clock time the Dungeon Lord fell (or was found down) while this raider stood on B3; -1 = not yet */
+  raidDoneAt: number;
+  /** the foe a raider is fighting inside (null unless inDungeon): kind = index into MONSTER_KINDS (CRYPT_KINDS on B2), hp 0..1, clock times of the last hit / death */
   raid: RaidFoe | null;
   /** dungeon floor the raider is on, 1..3 (reset to 1 whenever they leave the dungeon) */
   floor: number;
@@ -1060,23 +1155,16 @@ export interface Employee {
 
 /** a raider's current dungeon foe */
 export interface RaidFoe {
+  /** index into MONSTER_KINDS (B1) or, when `crypt` is set, into CRYPT_KINDS (B2) */
   kind: number;
   hp: number;
   hitAt: number;
   deadAt: number;
-  /** hp multiplier over the monster's base hp (1 on B1, more on B2) */
-  tough: number;
+  /** a floor 2 undead (kind indexes CRYPT_KINDS) */
+  crypt: boolean;
 }
 
-/** the Dungeon Lord at the bottom of floor 3: one hp pool shared by every raider standing there */
-export interface DungeonLord {
-  /** 0..1 */
-  hp: number;
-  hitAt: number;
-  deadAt: number;
-  /** times it has been slain since the page opened */
-  slain: number;
-}
+export type { DungeonLord } from "./lordFight";
 
 /** the guild's cook: stirs at the hearth, carries a plate to the feast table now and then */
 export interface Chef {
@@ -1091,6 +1179,22 @@ export interface Chef {
   /** feast seat the plate is for */
   target: number;
 }
+/** why the guild master wants an adventurer's attention, most urgent first */
+export type GmReason = "permission" | "question" | "loop" | "stuck" | "idle" | "compact";
+/** one line of the guild master's report */
+export interface GmReportRow {
+  id: string;
+  tag: string;
+  project: string;
+  reason: GmReason;
+  /** office clock seconds when the reason began */
+  since: number;
+  /** short, already redacted tool name or attention text */
+  detail: string;
+}
+/** Office.hit() returns this when the pointer is over the guild master on the guild scene */
+export const GM_HIT_ID = "__guild_master__";
+export type GmMission = "none" | "visit" | "praise" | "gate" | "door" | "announce" | "dispatch" | "escort";
 /** the guild master: stands at his post, walks out to an adventurer (the Lookout Bell's first), talks, walks back */
 export interface GuildMaster {
   x: number;
@@ -1098,7 +1202,15 @@ export interface GuildMaster {
   face: 1 | -1;
   /** waypoints still to walk (empty = standing still) */
   path: Pt[];
-  phase: "home" | "out" | "talk" | "back";
+  phase: "home" | "out" | "talk" | "back" | "escort";
+  /** what the current trip is for */
+  mission: GmMission;
+  /** why (null = a calm patrol) */
+  reason: GmReason | null;
+  /** what his bubble shows ("dots" = a calm "..."; null = no bubble) */
+  icon: GmIconId | "dots" | null;
+  /** pixel-font text of the announcement bubble ("" = none) */
+  text: string;
   /** session he is visiting ("" = none) */
   targetId: string;
   /** battle spot of that session when he set out (-1 = none): a reseat sends him home */
@@ -1140,12 +1252,16 @@ export interface Popup {
   born: number;
   dur: number;
   star: boolean;
+  /** bitmap-font scale of a dungeon popup (0 = by `big`: 1 or 2) */
+  scale: number;
   /** raider effect: the dungeon floor (1..3) it lives on; 0 = the field */
   dungeon: number;
 }
 export interface Banner {
   kind: "quest" | "boss";
   text: string;
+  /** drawn in the bitmap font (when it can draw the text) */
+  pixel?: boolean;
   start: number;
   dur: number;
 }
@@ -1186,19 +1302,75 @@ const BOSS_AFTER = 30;
 /** seconds a slain dungeon foe lies there before the next one steps up */
 const RAID_RESPAWN_S = 1.2;
 /** kills on a floor that send a raider down to the next one */
-export const RAID_FLOOR_KILLS = 4;
+export const RAID_FLOOR_KILLS = 3;
 /** seconds a raider spends walking to the stairs before they appear one floor down */
 export const RAID_STAIRS_S = 1.4;
 /** floor 2 foes have this many times a monster's base hp */
-export const RAID_TOUGH_B2 = 2;
+/** floor 2 undead hp (tougher than any B1 monster; the mix averages 7.5, the same effort B2 always cost) */
+const CRYPT_HP: Record<CryptKind, number> = { wraith: 6, ghoul: 8, banshee: 6, revenant: 10 };
+/** tool calls since the last raid that send a battle-spot adventurer into the dungeon */
+export const RAID_READY_CALLS = 40;
+/** sim seconds of work since the last raid that send it in even with fewer calls (~25 minutes) */
+export const RAID_READY_S = 1500;
+/** a seated adventurer must have sat this long before it can set out raiding (sim seconds) */
+const RAID_SETTLE_S = 2;
+/** the timed trigger needs at least this many tool calls (an idle session never raids on time alone) */
+const RAID_TIMED_MIN_CALLS = 10;
+/** a desk raider walks home this long after the Lord fell (or after it found him down) */
+export const RAID_LINGER_S = 4;
+/** a desk raider walks home after this long inside, whatever happened (sim seconds) */
+export const RAID_MAX_S = 900;
+/** ... or when its session sent nothing for this long (sim seconds) */
+export const RAID_IDLE_S = 75;
 /** floor 2 draws its foes from the scarier half of the bestiary */
-const RAID_B2_KINDS: MonsterKind[] = ["skeleton", "goblin", "mushroom"];
-/** damage points the Dungeon Lord takes to fall (a raider's hit is 1, a heavy tool 2, a crit doubles) */
-export const LORD_HP = 40;
+/** damage points a LONE raider needs to bring the Dungeon Lord down (+LORD_HP_PER_EXTRA for every further raider on B3; see lordFight.ts) */
+export const LORD_HP = LORD_HP_BASE;
 /** seconds the Lord stays down before it rises again */
 export const LORD_RESPAWN_S = 90;
 /** gold every raider standing on floor 3 gets when the Lord falls */
 export const LORD_GOLD = 80;
+/** seconds between the Lord's strikes back at a raider (cosmetic), and how long the ember slam lasts */
+export const LORD_STRIKE_EVERY_S = 3.2;
+export const LORD_STRIKE_S = 0.6;
+const LORD_STRIKE_HURT_S = 0.5;
+const LORD_STRIKE_SPARKS = { n: 10, speed: 70, gravity: 60, life: 0.5 };
+const LORD_HIT_SPARKS = { n: 10, speed: 65, gravity: 90, life: 0.5 };
+const LORD_HIT_POP_LIFT = 4;
+/** the hp bar eases at this rate per second */
+const LORD_BAR_EASE = 8;
+/** the Lord's floor shake fades at this rate per second; how hard each moment shakes it (0..1) */
+const LORD_SHAKE_DECAY = 2.4;
+const LORD_INTRO_SHAKE = 0.7;
+const LORD_SLAM_SHAKE = 0.6;
+const LORD_METEOR_SHAKE = 0.3;
+const LORD_CRIT_SHAKE = 0.3;
+const LORD_ENRAGE_SHAKE = 0.6;
+const LORD_DEATH_SHAKE = 0.35;
+const LORD_FINALE_SHAKE = 0.9;
+/** seconds after the enrage before his next attack at the latest */
+const ENRAGED_FIRST_S = 1.6;
+/** the breath's flame stream takes this long to run from his mouth to its target */
+const LORD_BREATH_REACH_S = 0.3;
+const LORD_SLAM_RING = { n: 16, cols: ["#ff8a2a", "#ffd070", "#ff4a2a"], speed: 70, life: 0.5 };
+const LORD_DUST = { n: 8, cols: ["#8a7a68", "#c4b8a4", "#5a4a3c"], speed: 30, gravity: 40, life: 0.5 };
+const LORD_IMPACT = { n: 14, cols: ["#ff8a2a", "#ffd070", "#ff4a2a", "#fff3a0"], speed: 80, gravity: 70, life: 0.55 };
+const LORD_BONE_BURST = { n: 8, cols: ["#efe6c8", "#c9b27a", "#ffffff"], speed: 60, gravity: 120, life: 0.5 };
+const LORD_ENRAGE_BURST = { n: 22, cols: ["#ff4a2a", "#ff8a2a", "#ffd070"], speed: 95, gravity: 40, life: 0.7 };
+const LORD_EMBERS = { n: 50, cols: ["#ff4a2a", "#ff8a2a", "#ffd070", "#fff3a0"], speed: 110, gravity: 60, life: 1.1 };
+const LORD_BONE_LIFT = 8;
+const LORD_HP_EPSILON = 1e-9;
+const LORD_CRIT_SPARKS = { n: 18, speed: 85 };
+const LORD_HIT_SPARK_DX = 8;
+const LORD_CRIT_POP_S = 1.2;
+const LORD_CRIT_POP_SCALE = 3;
+const LORD_SHOWER_COINS = 56;
+const LORD_SHOWER_HEIGHT = 70;
+const LORD_SHOWER_VY_MIN = 10;
+const LORD_SHOWER_VY_MAX = 40;
+const LORD_SHOWER_GRAVITY = 130;
+const LORD_SHOWER_LIFE = 2.4;
+/** seconds the live Lord inset stays up after the Lord fell */
+const LORD_PIP_AFTER_S = 5;
 /** kills credited to each of them */
 export const LORD_KILLS = 3;
 const LORD_POP_LIFT = 30;
@@ -1217,7 +1389,7 @@ interface Saved {
   seen: number;
 }
 const BF_COLORS = ["#ff9ad5", "#ffd94a", "#8ad0ff", "#c8a0ff", "#ff9a6a"];
-const MAX_PARTICLES = 150;
+const MAX_PARTICLES = 300;
 const MAX_POPUPS = 20;
 
 export interface LogRow {
@@ -1321,6 +1493,7 @@ export const EMPTY_DUNGEON: DungeonStats = {
   lordAlive: true,
   lordHp: 1,
   lordSlain: 0,
+  lordFight: false,
   topTools: [],
 };
 export const EMPTY_VIEW: OfficeView = {
@@ -1355,6 +1528,7 @@ const h32 = (text: string): number => {
   }
   return hash >>> 0;
 };
+const dayKey = (date: Date): string => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -1525,11 +1699,12 @@ export class Office {
     for (const emp of this.employees.values()) if (emp.inDungeon && !this.isHidden(emp)) counts[emp.floor - 1]++;
     return counts;
   }
+  private pipShown = false;
   /** the Dungeon Lord on floor 3 */
-  readonly lord: DungeonLord = { hp: 1, hitAt: -99, deadAt: -99, slain: 0 };
+  readonly lord: DungeonLord = freshLord();
   /** where a raider stands right now: their spot on their floor, or on the way to the stairs while descending */
   raiderPoint(emp: Employee): Pt {
-    const spot = dungeonSpotOf(emp.slot, emp.floor);
+    const spot = dungeonSpotOf(this.raidSpotIndex(emp), emp.floor);
     if (emp.stairsAt < 0) return spot;
     const stairs = dungeonStairsPoint(emp.floor);
     const progress = Math.min(1, Math.max(0, (this.clock - emp.stairsAt) / RAID_STAIRS_S));
@@ -1539,7 +1714,9 @@ export class Office {
   dungeonRaiders(): Employee[] {
     const out: Employee[] = [];
     for (const emp of this.employees.values()) if (emp.inDungeon) out.push(emp);
-    return out.sort((first, second) => first.slot - second.slot || first.order - second.order);
+    return out.sort(
+      (first, second) => this.raidSpotIndex(first) - this.raidSpotIndex(second) || first.order - second.order,
+    );
   }
   /** squires walking back into the ally gate */
   readonly leavers: Leaver[] = [];
@@ -1551,11 +1728,32 @@ export class Office {
     face: GM_FACE_HOME,
     path: [],
     phase: "home",
+    mission: "none",
+    reason: null,
+    icon: null,
+    text: "",
     targetId: "",
     targetDesk: -1,
     alert: false,
     until: GM_IDLE_MIN_S,
   };
+  /** true while he rings the hand bell at the guild door (reduced motion: while the bell is due) */
+  gmBellRinging = false;
+  private gmRows: GmReportRow[] = [];
+  private gmRowsAt = -Infinity;
+  private gmBellDue = false;
+  private gmNextRing = 0;
+  private gmUrgentAt = 0;
+  private readonly gmSeen = new Map<string, number>();
+  private readonly gmCool = new Map<string, number>();
+  private gmDispatch: { sid: string; deadline: number } | null = null;
+  private gmPraise: { sid: string; at: number }[] = [];
+  private gmDay = dayKey(new Date());
+  private gmActiveDay = false;
+  private gmEveningDay = "";
+  private gmAnnounceAt = -Infinity;
+  private gmAnnouncePending = false;
+  private gmDayReadAt = -Infinity;
   /** the guild hall's cat, dog and regulars (render reads these) */
   readonly hall = new HallLife();
   private readonly hallWalkers: Pt[] = [];
@@ -1979,6 +2177,8 @@ export class Office {
       if (first || Date.now() - receipt.closedAt > RECEIPT_FRESH_MS) continue;
       if (receipt.verdict === "done" || receipt.commits > 0) this.cheers();
       if (receipt.verdict === "done") this.noteDone(receipt.sid);
+      if (receipt.verdict === "done" && this.gmPraise.length < GM_PRAISE_MAX)
+        this.gmPraise.push({ sid: receipt.sid, at: this.clock });
       if (receipt.verdict === "done") this.sfx("questDone");
       const sum = receiptSummary(receipt);
       const emp = this.employees.get(receipt.sid);
@@ -2051,6 +2251,7 @@ export class Office {
   }
   private bumpAttn() {
     this.attnVer++;
+    this.gmRowsAt = -Infinity;
     this.attnRowsCache = null;
     this.loopIds.clear();
     for (const row of this.attn) if (row.kind === "loop" && !this.attnDismissed.has(row.key)) this.loopIds.add(row.sid);
@@ -2081,6 +2282,7 @@ export class Office {
     this.gateLit = lit;
   }
   select(id: string | null) {
+    if (id === GM_HIT_ID) return; // the guild master is not an adventurer; the UI opens his report
     this.selectedId = id;
     const target = id ? this.employees.get(id) : undefined;
     if (target && !this.isHidden(target)) {
@@ -2136,7 +2338,8 @@ export class Office {
     this.resetWing();
     this.scene = "guild";
     this.dungeonFloor = 1;
-    Object.assign(this.lord, { hp: 1, hitAt: -99, deadAt: -99, slain: 0 });
+    Object.assign(this.lord, freshLord());
+    this.pipShown = false;
     this.stats = { since: Date.now(), entered: 0, left: 0, monsters: 0, bosses: 0, longestBossS: 0, waitS: 0 };
     this.tools.clear();
     this.chron = null;
@@ -3092,6 +3295,7 @@ export class Office {
       lordAlive: this.lord.hp > 0,
       lordHp: this.lord.hp,
       lordSlain: this.lord.slain,
+      lordFight: this.lordPip(),
       topTools: this.tools.top(),
     };
   }
@@ -3132,6 +3336,8 @@ export class Office {
       case "TO_TAVERN_REST":
       case "AT_TAVERN_REST":
       case "FROM_TAVERN_REST":
+      case "TO_RAID":
+      case "FROM_RAID":
         return true;
       default:
         return false;
@@ -3161,7 +3367,12 @@ export class Office {
         return emp.restSpot >= 0 ? m.status_feasting() : m.status_at_tavern_rest();
       case "FROM_TAVERN_REST":
         return m.status_from_tavern_rest();
+      case "TO_RAID":
+        return m.dungeon_lord_status_to_raid();
+      case "FROM_RAID":
+        return m.dungeon_lord_status_from_raid();
     }
+    if (emp.raidIn && emp.act !== "handup") return m.dungeon_lord_status_raiding();
     if (emp.hurtUntil > this.clock) return m.status_hurt();
     if (emp.boss && emp.act !== "handup") return m.status_boss();
     if (emp.resting && emp.act !== "handup") return m.status_resting();
@@ -3203,6 +3414,17 @@ export class Office {
         bestY = pos.y;
       }
     }
+    if (!inside && this.scene === "guild") {
+      const master = this.guildMaster;
+      if (
+        lx >= master.x - CH_W / 2 &&
+        lx <= master.x + CH_W / 2 &&
+        ly >= master.y - CH_H &&
+        ly <= master.y &&
+        master.y >= bestY
+      )
+        return GM_HIT_ID;
+    }
     return best;
   }
 
@@ -3236,6 +3458,9 @@ export class Office {
     this.saveProgress();
     if (this.trauma > 0) this.trauma = Math.max(0, this.trauma - rawDt * TRAUMA_DECAY);
     if (this.flash > 0) this.flash = Math.max(0, this.flash - rawDt * 2);
+    if (this.lord.shake > 0) this.lord.shake = Math.max(0, this.lord.shake - rawDt * LORD_SHAKE_DECAY);
+    const ease = this.reducedMotion ? 1 : Math.min(1, rawDt * LORD_BAR_EASE);
+    this.lord.shown += (this.lord.hp - this.lord.shown) * ease;
     const dt = this.paused ? 0 : rawDt * this.speed;
     if (dt <= 0) return;
     this.clock += dt;
@@ -3358,13 +3583,13 @@ export class Office {
     }
   }
 
-  private pop(x: number, y: number, text: string, col: string, big = false, star = false, dur = 0.8) {
-    this.popups.push({ x, y, text, col, big, born: this.clock, dur, star, dungeon: this.fxDungeon });
+  private pop(x: number, y: number, text: string, col: string, big = false, star = false, dur = 0.8, scale = 0) {
+    this.popups.push({ x, y, text, col, big, born: this.clock, dur, star, scale, dungeon: this.fxDungeon });
     if (this.popups.length > MAX_POPUPS) this.popups.splice(0, this.popups.length - MAX_POPUPS);
   }
 
-  private addBanner(kind: Banner["kind"], text: string) {
-    this.banners.push({ kind, text, start: -1, dur: 2.5 });
+  private addBanner(kind: Banner["kind"], text: string, pixel = false) {
+    this.banners.push({ kind, text, pixel, start: -1, dur: 2.5 });
     if (this.banners.length > MAX_BANNERS) this.banners.splice(1, this.banners.length - MAX_BANNERS);
   }
 
@@ -3492,7 +3717,8 @@ export class Office {
         emp.y = target.y;
         rem -= dist;
         emp.path.shift();
-        if (emp.state === "TO_COFFEE" || emp.state === "TO_TAVERN_REST") emp.trail.push(target);
+        if (emp.state === "TO_COFFEE" || emp.state === "TO_TAVERN_REST" || emp.state === "TO_RAID")
+          emp.trail.push(target);
         if (target.wait && emp.path.length) {
           emp.holdUntil = this.clock + target.wait;
           if (emp.state === "LEAVING") emp.lootAt = this.clock;
@@ -3526,7 +3752,11 @@ export class Office {
         break;
       case "FROM_COFFEE":
       case "FROM_TAVERN_REST":
+      case "FROM_RAID":
         if (this.move(emp, dt)) this.sit(emp);
+        break;
+      case "TO_RAID":
+        if (this.move(emp, dt)) this.arriveRaid(emp);
         break;
       case "TO_TAVERN_REST":
         if (this.move(emp, dt)) {
@@ -3602,7 +3832,9 @@ export class Office {
         if (emp.act === "handup") {
           for (const key of emp.pending.keys()) emp.pending.set(key, this.clock);
         } // waiting on the user is not a boss fight
-        if (emp.pending.size > 0 && !emp.boss && emp.deskIdx >= 0 && emp.monPos) {
+        if (emp.raidIn) this.raidTick(emp);
+        else if (emp.deskIdx >= 0 && emp.slot < 0) this.raidReadyCheck(emp);
+        if (emp.pending.size > 0 && !emp.boss && emp.deskIdx >= 0 && emp.monPos && !emp.raidIn) {
           let oldest = Infinity;
           for (const t0 of emp.pending.values()) if (t0 < oldest) oldest = t0;
           if (this.clock - oldest > BOSS_AFTER) this.spawnBoss(emp);
@@ -3616,7 +3848,7 @@ export class Office {
       emp.pending.size === 0 &&
       !emp.boss &&
       this.clock - emp.lastEventAt > REST_AFTER;
-    if (emp.state !== "LEAVING" && emp.deskIdx >= 0 && emp.monDead && emp.monRespawnAt <= this.clock)
+    if (emp.state !== "LEAVING" && emp.deskIdx >= 0 && !emp.raidIn && emp.monDead && emp.monRespawnAt <= this.clock)
       this.spawnMonster(emp);
     if (emp.state !== "SEATED" && emp.tempBubble && this.clock > emp.tempBubble.until) emp.tempBubble = null;
     this.syncRaid(emp);
@@ -3635,6 +3867,14 @@ export class Office {
       }
       for (const intern of emp.interns.values()) if (intern.phase === "in") intern.phase = "snap";
       if (emp.state === "TO_TAVERN_REST" || emp.state === "AT_TAVERN_REST" || emp.state === "FROM_TAVERN_REST") {
+        emp.path = [];
+        emp.trail = [];
+        this.sit(emp);
+      }
+      if (emp.state === "TO_RAID") {
+        emp.path = [];
+        this.arriveRaid(emp);
+      } else if (emp.state === "FROM_RAID") {
         emp.path = [];
         emp.trail = [];
         this.sit(emp);
@@ -3682,6 +3922,11 @@ export class Office {
     emp.state = "SEATED";
     emp.stateSince = this.clock;
     this.syncRaid(emp);
+    this.drainQueue(emp);
+  }
+
+  /** events that arrived on the way are applied once the adventurer stands at their spot */
+  private drainQueue(emp: Employee) {
     const queue = emp.queue;
     emp.queue = [];
     for (let i = 0; i < queue.length; i++) {
@@ -3694,7 +3939,7 @@ export class Office {
     if (emp.coffeeAfter) {
       // a Stop arrived while dueling: take the break now
       emp.coffeeAfter = false;
-      if (emp.state === "SEATED") {
+      if (emp.state === "SEATED" && !emp.raidIn) {
         emp.state = "STRETCH";
         emp.stateSince = this.clock;
       }
@@ -3741,6 +3986,9 @@ export class Office {
     emp.interns.clear();
     emp.deskIdx = -1;
     emp.slot = -1;
+    emp.raidIn = false;
+    emp.raidSlot = -1;
+    emp.raidEnteredAt = -1;
     this.syncRaid(emp);
     this.dirty = true;
   }
@@ -3782,6 +4030,7 @@ export class Office {
       if (other.id === exclude) continue;
       if (other.deskIdx >= 0) used.add(other.deskIdx);
       else if (other.slot >= 0) slots.add(other.slot);
+      if (other.raidSlot >= 0) slots.add(other.raidSlot); // a battle-spot raider holds its dungeon spot index too
     }
     let desk = -1,
       slot = -1;
@@ -3820,9 +4069,111 @@ export class Office {
     this.dirty = true;
   }
 
+  /** the dungeon spot index of a raider: the overflow slot, or the spot a battle-spot raider reserved */
+  raidSpotIndex(emp: Employee): number {
+    return emp.slot >= 0 ? emp.slot : Math.max(0, emp.raidSlot);
+  }
+
+  /** a seated battle-spot adventurer that has worked hard since its last raid walks to the dungeon gate */
+  private raidReadyCheck(emp: Employee) {
+    if (emp.raidIn || !this.compactReady(emp) || emp.stateSince > this.clock - RAID_SETTLE_S) return;
+    const hard = emp.raidCalls >= RAID_READY_CALLS;
+    const long = emp.raidCalls >= RAID_TIMED_MIN_CALLS && this.clock - emp.raidSince >= RAID_READY_S;
+    if (!hard && !long) return;
+    if (this.gmHoldRaid(emp)) return;
+    this.beginRaid(emp);
+  }
+
+  private beginRaid(emp: Employee) {
+    const taken = new Set<number>();
+    for (const other of this.employees.values()) {
+      if (other.slot >= 0) taken.add(other.slot);
+      if (other.raidSlot >= 0) taken.add(other.raidSlot);
+    }
+    let slot = 0;
+    while (taken.has(slot)) slot++;
+    emp.raidSlot = slot;
+    emp.raidCalls = 0;
+    emp.raidSince = this.clock;
+    emp.raidDoneAt = -1;
+    emp.restSpot = -1;
+    emp.holdUntil = 0;
+    emp.tempBubble = null;
+    // its field fight is over: the spot stays empty until it is back (a fresh monster steps up then)
+    emp.monPos = null;
+    emp.monDead = false;
+    emp.monRespawnAt = Infinity;
+    emp.monAppearAt = -1;
+    if (this.reducedMotion) {
+      emp.x = GATE_MOUTH.x;
+      emp.y = GATE_MOUTH.y;
+      this.arriveRaid(emp);
+      return;
+    }
+    emp.state = "TO_RAID";
+    emp.stateSince = this.clock;
+    emp.trail = [{ x: emp.x, y: emp.y }];
+    emp.path = routeToDungeon(emp.deskIdx);
+    this.dirty = true;
+  }
+
+  /** the raider steps through the gate: it is inside from here on (hidden on the field, drawn in the dungeon scene) */
+  private arriveRaid(emp: Employee) {
+    emp.x = GATE_MOUTH.x;
+    emp.y = GATE_MOUTH.y;
+    emp.facing = 1;
+    emp.path = [];
+    emp.trail = [];
+    emp.raidIn = true;
+    emp.raidEnteredAt = this.clock;
+    emp.raidDoneAt = -1;
+    emp.state = "SEATED";
+    emp.stateSince = this.clock;
+    this.syncRaid(emp);
+    this.sfx("enterDungeon");
+    this.drainQueue(emp);
+  }
+
+  /** a desk raider inside: walks home when it is done, tired, idle or needs the user */
+  private raidTick(emp: Employee) {
+    if (emp.act === "handup") {
+      this.endRaid(emp);
+      return;
+    }
+    if (emp.floor >= DUNGEON_FLOORS && this.lord.hp <= 0 && emp.raidDoneAt < 0) emp.raidDoneAt = this.clock;
+    const done = emp.raidDoneAt >= 0 && this.clock - emp.raidDoneAt >= RAID_LINGER_S;
+    const tired = this.clock - emp.raidEnteredAt >= RAID_MAX_S;
+    const idle = emp.pending.size === 0 && this.clock - emp.lastEventAt > RAID_IDLE_S;
+    if (done || tired || idle) this.endRaid(emp);
+  }
+
+  /** the raider leaves the dungeon and walks back out to its battle spot */
+  private endRaid(emp: Employee) {
+    if (!emp.raidIn) return;
+    emp.raidIn = false;
+    emp.raidSlot = -1;
+    emp.raidEnteredAt = -1;
+    emp.raidDoneAt = -1;
+    emp.raidCalls = 0;
+    emp.raidSince = this.clock;
+    emp.holdUntil = 0;
+    emp.trail = [];
+    emp.state = "FROM_RAID";
+    emp.stateSince = this.clock;
+    emp.path = routeFromDungeon(emp.deskIdx);
+    this.syncRaid(emp);
+    this.sfx("door");
+    if (this.selectedId === emp.id && this.scene === "dungeon") this.setScene("guild"); // follow them out
+    if (this.reducedMotion) {
+      emp.path = [];
+      this.sit(emp);
+    }
+    this.dirty = true;
+  }
+
   /** raid state follows the seat: inDungeon only while SEATED in an overflow slot (arrived inside); the foe lives as long as that holds */
   private syncRaid(emp: Employee) {
-    const inside = emp.state === "SEATED" && emp.deskIdx < 0 && emp.slot >= 0;
+    const inside = emp.state === "SEATED" && ((emp.deskIdx < 0 && emp.slot >= 0) || emp.raidIn);
     if (inside === emp.inDungeon) return;
     emp.inDungeon = inside;
     emp.floor = 1; // every raid starts on B1 and a promotion starts the next one from scratch
@@ -3844,8 +4195,8 @@ export class Office {
       return;
     }
     const deeper = emp.floor >= 2;
-    const kind = deeper ? kinds.indexOf(RAID_B2_KINDS[pick % RAID_B2_KINDS.length]) : pick;
-    emp.raid = { kind, hp: 1, hitAt: -99, deadAt: -99, tough: deeper ? RAID_TOUGH_B2 : 1 };
+    const kind = deeper ? pick % CRYPT_KINDS.length : pick;
+    emp.raid = { kind, hp: 1, hitAt: -99, deadAt: -99, crypt: deeper };
   }
 
   /** the stair walk ends: the raider appears on the next floor with a fresh foe (or in the Lord's hall) */
@@ -3856,6 +4207,11 @@ export class Office {
     emp.stairsAt = -1;
     this.newRaidFoe(emp);
     this.sfx("enterDungeon");
+    if (emp.floor >= DUNGEON_FLOORS && this.lord.hp > 0 && !this.lordFighters(emp).length) {
+      this.addBanner("boss", m.dungeon_lord_banner_raid());
+      this.sfx("bossAppear");
+      this.startLordIntro();
+    }
     // the camera follows a selected raider down the stairs
     if (this.selectedId === emp.id && this.scene === "dungeon" && this.dungeonFloor === from)
       this.setDungeonFloor(emp.floor);
@@ -3868,53 +4224,366 @@ export class Office {
     if (emp.floorKills >= RAID_FLOOR_KILLS && emp.floor < DUNGEON_FLOORS) emp.stairsAt = this.clock;
   }
 
-  /** the Lord rises again after its rest */
+  /** the live Lord inset is up: a visible raider fights a live Lord, or it fell a moment ago */
+  lordPip(): boolean {
+    if (this.lord.hp > 0) return this.lordFighters().some((emp) => !this.isHidden(emp));
+    return this.lord.slain > 0 && this.clock - this.lord.deadAt < LORD_PIP_AFTER_S;
+  }
+
+  /** raiders standing on B3 (not on the stairs), other than `except` */
+  lordFighters(except?: Employee): Employee[] {
+    const out: Employee[] = [];
+    for (const emp of this.employees.values())
+      if (emp !== except && emp.inDungeon && emp.floor >= DUNGEON_FLOORS && emp.stairsAt < 0) out.push(emp);
+    return out;
+  }
+
+  /** the Lord's fight runs while raiders stand on B3, he rises again after his rest, and a fall plays out its sequence */
   private updateDungeon() {
-    if (this.lord.hp <= 0 && this.clock - this.lord.deadAt >= LORD_RESPAWN_S) {
-      this.lord.hp = 1;
+    const lord = this.lord;
+    let fighting = 0;
+    if (lord.hp > 0)
+      for (const emp of this.employees.values())
+        if (emp.inDungeon && emp.floor >= DUNGEON_FLOORS && emp.stairsAt < 0) fighting++;
+    if (fighting && this.clock >= lord.nextStrikeAt) this.lordStrike();
+    if (fighting && lord.engagedAt < 0) {
+      lord.engagedAt = this.clock;
+      lord.nextAttackAt = this.clock + FIRST_ATTACK_S;
+    } else if (!fighting && lord.engagedAt >= 0) {
+      lord.engagedAt = -1;
+      lord.calmAt = this.clock;
+      stopAttacks(lord);
+    }
+    if (fighting) {
+      if (growPool(lord, fighting)) this.bumpStats();
+      this.updateLordFight();
+    }
+    const pip = this.lordPip();
+    if (pip !== this.pipShown) {
+      this.pipShown = pip;
+      this.bumpStats();
+    }
+    if (lord.hp > 0) return;
+    if (lord.finaleAt < 0 && lord.deadAt >= 0 && this.clock - lord.deadAt >= deathLength(this.reducedMotion))
+      this.lordFinale();
+    if (this.clock - lord.deadAt >= LORD_RESPAWN_S) {
+      lord.hp = 1;
+      resetFight(lord);
       this.bumpStats();
     }
   }
 
+  /** shake the Lord's floor (and the inset that shows it); never under reduced motion */
+  private lordShake(amount: number) {
+    if (this.reducedMotion) return;
+    this.lord.shake = Math.min(1, this.lord.shake + amount);
+  }
+
+  /** run `emit` with its effects tagged to floor 3 */
+  private onLordFloor(emit: () => void) {
+    const prev = this.fxDungeon;
+    this.fxDungeon = DUNGEON_FLOORS;
+    try {
+      emit();
+    } finally {
+      this.fxDungeon = prev;
+    }
+  }
+
+  /** the raider standing on B3 in position `index` (arrival order), or null */
+  private lordFighterAt(index: number): Employee | null {
+    let at = 0;
+    for (const emp of this.employees.values())
+      if (emp.inDungeon && emp.floor >= DUNGEON_FLOORS && emp.stairsAt < 0 && at++ === index) return emp;
+    return null;
+  }
+
+  /** the Lord's intro: the first raider of a fight steps into his hall */
+  private startLordIntro() {
+    const lord = this.lord;
+    lord.introAt = this.clock;
+    lord.taunt = (lord.slain + lord.intros) % TAUNTS.length;
+    lord.intros++;
+    this.lordShake(LORD_INTRO_SHAKE);
+  }
+
+  /** the special attacks, the minions and the enrage tick (while raiders stand on B3 and he is up) */
+  private updateLordFight() {
+    const lord = this.lord,
+      atk = lord.atk,
+      clock = this.clock;
+    for (const minion of lord.minions) {
+      if (!minion.on) continue;
+      if (minion.clearedAt < 0) {
+        if (clock - minion.bornAt > MINION_LIFE_S) minion.clearedAt = clock; // crumbles
+      } else if (clock - minion.clearedAt > MINION_POOF_S) minion.on = false;
+    }
+    if (atk.kind < 0) {
+      if (lord.engagedAt >= 0 && clock >= lord.nextAttackAt) this.startLordAttack();
+      return;
+    }
+    if (!atk.landed && clock >= atk.hitAt) {
+      atk.landed = true;
+      this.landLordAttack();
+    }
+    if (atk.landed) this.tickLordAttack();
+    if (clock >= atk.endAt) {
+      atk.kind = -1;
+      atk.landed = false;
+      for (const meteor of lord.meteors) meteor.on = false;
+      lord.nextAttackAt = clock + nextAttackGap(lord.enragedAt >= 0, Math.random());
+    }
+  }
+
+  /** pick a special attack and its target and start the red telegraph */
+  private startLordAttack() {
+    const lord = this.lord;
+    let fighters = 0;
+    for (const emp of this.employees.values())
+      if (emp.inDungeon && emp.floor >= DUNGEON_FLOORS && emp.stairsAt < 0) fighters++;
+    if (!fighters) return;
+    const kind = pickAttack(lord.atk.prev, Math.random());
+    const victim = this.lordFighterAt(Math.floor(Math.random() * fighters) % fighters);
+    if (!victim) return;
+    const at = this.raiderPoint(victim);
+    beginAttack(lord, this.clock, kind, at.x, at.y, victim.id);
+    if (kind === ATTACK_METEOR)
+      planMeteors(lord, lord.atk.hitAt, lord.enragedAt >= 0 ? METEORS_ENRAGED : METEORS_CALM, (x, y, radius) => {
+        for (const emp of this.employees.values()) {
+          if (!emp.inDungeon || emp.floor < DUNGEON_FLOORS) continue;
+          const spot = this.raiderPoint(emp);
+          if (Math.abs(spot.x - x) < radius && Math.abs(spot.y - y) < radius) return true;
+        }
+        return false;
+      });
+  }
+
+  /** the telegraph ran out: the attack lands */
+  private landLordAttack() {
+    const lord = this.lord,
+      feet = dungeonLordPoint();
+    switch (lord.atk.kind) {
+      case ATTACK_SLAM:
+        this.sfx("lordSlam");
+        this.lordShake(LORD_SLAM_SHAKE);
+        this.onLordFloor(() =>
+          this.ring(
+            feet.x + WAVE_DX,
+            feet.y,
+            LORD_SLAM_RING.n,
+            LORD_SLAM_RING.cols,
+            LORD_SLAM_RING.speed,
+            LORD_SLAM_RING.life,
+            true,
+          ),
+        );
+        break;
+      case ATTACK_BREATH:
+        this.sfx("lordFlame");
+        break;
+      case ATTACK_SUMMON:
+        this.sfx("lordSummon");
+        raiseMinions(lord, this.clock, feet.x, feet.y);
+        this.onLordFloor(() => {
+          for (const minion of lord.minions)
+            if (minion.on && minion.bornAt === this.clock)
+              this.burst(
+                minion.x,
+                minion.y - 2,
+                LORD_DUST.n,
+                LORD_DUST.cols,
+                LORD_DUST.speed,
+                LORD_DUST.gravity,
+                LORD_DUST.life,
+                1,
+                true,
+              );
+        });
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** a raider hops out of the way (and the one the attack was aimed at flinches) */
+  private lordDodge(emp: Employee, victim: boolean) {
+    emp.dodgeAt = this.clock;
+    if (!victim) return;
+    emp.hurtUntil = this.clock + LORD_STRIKE_HURT_S;
+    const at = this.raiderPoint(emp);
+    this.fxFor(emp, () => {
+      this.pop(at.x, at.y - POP_ABOVE_HEAD, "!", "#ff6a3a", false, false);
+      this.burst(
+        at.x,
+        at.y - LORD_HIT_POP_LIFT * 2,
+        LORD_STRIKE_SPARKS.n,
+        ["#ff8a2a", "#ffd070", "#ff4a2a"],
+        LORD_STRIKE_SPARKS.speed,
+        LORD_STRIKE_SPARKS.gravity,
+        LORD_STRIKE_SPARKS.life,
+      );
+    });
+  }
+
+  /** while an attack is up: raiders it reaches hop; meteors land one by one */
+  private tickLordAttack() {
+    const lord = this.lord,
+      atk = lord.atk,
+      clock = this.clock,
+      feet = dungeonLordPoint();
+    if (atk.kind === ATTACK_METEOR) {
+      for (const meteor of lord.meteors) {
+        if (!meteor.on || meteor.landed || clock < meteor.at) continue;
+        meteor.landed = true;
+        this.sfx("lordSlam");
+        this.lordShake(LORD_METEOR_SHAKE);
+        this.onLordFloor(() =>
+          this.burst(
+            meteor.x,
+            meteor.y - 2,
+            LORD_IMPACT.n,
+            LORD_IMPACT.cols,
+            LORD_IMPACT.speed,
+            LORD_IMPACT.gravity,
+            LORD_IMPACT.life,
+          ),
+        );
+        for (const emp of this.employees.values()) {
+          if (!emp.inDungeon || emp.floor < DUNGEON_FLOORS || emp.stairsAt >= 0) continue;
+          const spot = this.raiderPoint(emp);
+          if (Math.hypot(spot.x - meteor.x, (spot.y - meteor.y) / WAVE_SQUASH / 2) < METEOR_BLAST_PX)
+            this.lordDodge(emp, emp.id === atk.targetId && emp.dodgeAt < atk.hitAt);
+        }
+      }
+      return;
+    }
+    if (atk.kind !== ATTACK_SLAM && atk.kind !== ATTACK_BREATH) return;
+    const mouthX = feet.x + MOUTH_DX,
+      mouthY = feet.y + MOUTH_DY;
+    for (const emp of this.employees.values()) {
+      if (!emp.inDungeon || emp.floor < DUNGEON_FLOORS || emp.stairsAt >= 0 || emp.dodgeAt >= atk.hitAt) continue;
+      const spot = this.raiderPoint(emp);
+      let arrive: number;
+      if (atk.kind === ATTACK_SLAM) {
+        const ox = feet.x + WAVE_DX;
+        arrive = atk.hitAt + Math.hypot(ox - spot.x, (feet.y - spot.y) / WAVE_SQUASH) / WAVE_SPEED;
+      } else {
+        // the breath reaches whoever stands on the stream from his mouth to the raider it was aimed at
+        const dx = atk.tx - mouthX,
+          dy = atk.ty - mouthY;
+        const along = Math.min(
+          1,
+          Math.max(0, ((spot.x - mouthX) * dx + (spot.y - mouthY) * dy) / (dx * dx + dy * dy || 1)),
+        );
+        const near = Math.hypot(spot.x - (mouthX + dx * along), spot.y - (mouthY + dy * along));
+        if (near > BREATH_NEAR_PX && emp.id !== atk.targetId) continue;
+        arrive = atk.hitAt + LORD_BREATH_REACH_S * along;
+      }
+      if (clock >= arrive) this.lordDodge(emp, emp.id === atk.targetId);
+    }
+  }
+
+  /** the Lord slams a raider (cosmetic: nobody loses anything): an ember burst and a small hurt pop on them */
+  private lordStrike() {
+    const fighters = this.lordFighters();
+    if (!fighters.length) return;
+    this.lord.nextStrikeAt = this.clock + LORD_STRIKE_EVERY_S;
+    if (this.lord.atk.kind >= 0) return; // a special attack is busy
+    if (this.clock - this.lord.engagedAt < LORD_STRIKE_EVERY_S / 2 && this.lord.engagedAt >= 0) return;
+    const victim = fighters[Math.floor(this.clock / LORD_STRIKE_EVERY_S) % fighters.length];
+    this.lord.strikeAt = this.clock;
+    this.lord.strikeId = victim.id;
+    victim.hurtUntil = this.clock + LORD_STRIKE_HURT_S;
+    const at = this.raiderPoint(victim);
+    this.fxFor(victim, () => {
+      this.pop(at.x, at.y - POP_ABOVE_HEAD, "!", "#ff6a3a", false, false);
+      this.burst(
+        at.x,
+        at.y - LORD_HIT_POP_LIFT * 2,
+        LORD_STRIKE_SPARKS.n,
+        ["#ff8a2a", "#ffd070", "#ff4a2a"],
+        LORD_STRIKE_SPARKS.speed,
+        LORD_STRIKE_SPARKS.gravity,
+        LORD_STRIKE_SPARKS.life,
+      );
+    });
+  }
+
   /** every raider on floor 3 hits the one Lord: the damage pools into a single hp bar; the kill rewards them all */
-  private lordHit(emp: Employee, dmg: number) {
+  private lordHit(emp: Employee, dmg: number, crit: boolean) {
     const lord = this.lord;
     if (lord.hp <= 0) return;
-    lord.hp = Math.max(0, lord.hp - dmg / LORD_HP);
+    let standing = 0;
+    for (const other of this.employees.values())
+      if (other.inDungeon && other.floor >= DUNGEON_FLOORS && other.stairsAt < 0) standing++;
+    if (growPool(lord, standing)) this.bumpStats();
+    lord.hp = Math.max(0, lord.hp - dmg / lord.maxHp);
+    if (lord.hp < LORD_HP_EPSILON) lord.hp = 0; // float residue of many small hits
     lord.hitAt = this.clock;
+    if (!this.reducedMotion) {
+      lord.hsAt = this.clock; // hit-stop: his animation clock freezes for a beat
+      lord.hsUntil = this.clock + LORD_HITSTOP_S;
+    }
+    if (crit) lord.critAt = this.clock;
+    addSlash(lord, this.clock, crit);
     this.sfx("hit");
-    if (lord.hp > 0) return;
+    const body = dungeonLordPoint();
+    const cleared = clearMinion(lord, this.clock);
+    this.fxFor(emp, () => {
+      this.pop(
+        body.x + rand(-DMG_POP_JITTER, DMG_POP_JITTER),
+        body.y - LORD_H - LORD_HIT_POP_LIFT,
+        `-${dmg}`,
+        crit ? "#ffe14a" : "#ffffff",
+        crit,
+        crit,
+        crit ? LORD_CRIT_POP_S : undefined,
+        crit ? LORD_CRIT_POP_SCALE : 0,
+      );
+      const sparks = crit ? LORD_CRIT_SPARKS : LORD_HIT_SPARKS;
+      this.burst(
+        body.x - LORD_HIT_SPARK_DX,
+        body.y - LORD_H / 2,
+        sparks.n,
+        crit ? ["#ffffff", "#ffe14a", "#ff9a3a"] : ["#ffffff", "#f2c14e", "#ffb870"],
+        sparks.speed,
+        LORD_HIT_SPARKS.gravity,
+        LORD_HIT_SPARKS.life,
+      );
+      if (cleared)
+        this.burst(
+          cleared.x,
+          cleared.y - LORD_BONE_LIFT,
+          LORD_BONE_BURST.n,
+          LORD_BONE_BURST.cols,
+          LORD_BONE_BURST.speed,
+          LORD_BONE_BURST.gravity,
+          LORD_BONE_BURST.life,
+        );
+    });
+    if (crit) this.lordShake(LORD_CRIT_SHAKE);
+    if (lord.hp > 0) {
+      if (lord.enragedAt < 0 && lord.hp < ENRAGE_BELOW) this.enrageLord();
+      return;
+    }
     lord.deadAt = this.clock;
+    lord.finaleAt = -1;
     lord.slain++;
     this.stats.bosses++;
-    this.sfx("bossDown");
-    const at = dungeonLordPoint();
-    let first: Employee | null = null;
+    stopAttacks(lord);
+    this.sfx("lordDeath");
+    this.lordShake(LORD_DEATH_SHAKE);
+    const finale = deathLength(this.reducedMotion);
     for (const raider of this.dungeonRaiders()) {
       if (raider.floor !== DUNGEON_FLOORS) continue;
-      first ??= raider;
       raider.kills += LORD_KILLS;
       raider.qKills += LORD_KILLS;
       raider.gold += LORD_GOLD;
       raider.qGold += LORD_GOLD;
       this.treasury += LORD_GOLD;
+      raider.raidDoneAt = this.clock + finale; // they linger after the burst, not before it
     }
-    this.fxFor(emp, () => {
-      this.pop(at.x, at.y - LORD_POP_LIFT, `+${LORD_GOLD}g`, "#f2c14e", true, true, LOOT_POP_DUR);
-      for (let k = 0; k < LORD_COIN_COUNT; k++)
-        this.emitP(
-          at.x + rand(-LORD_COIN_SPREAD, LORD_COIN_SPREAD),
-          at.y - LORD_POP_LIFT,
-          rand(-COIN_VX, COIN_VX),
-          rand(-COIN_VY_MAX, -COIN_VY_MIN),
-          COIN_GRAVITY,
-          COIN_LIFE,
-          "#f2c14e",
-          1,
-          "coin",
-        );
-    });
-    const slayer = first ?? emp;
+    const slayer = this.dungeonRaiders().find((raider) => raider.floor === DUNGEON_FLOORS) ?? emp;
     this.log.unshift({
       id: this.logSeq++,
       sid: slayer.id,
@@ -3933,6 +4602,77 @@ export class Office {
     this.bumpStats();
   }
 
+  /** below half hp: flame aura, bigger flames, a surge of lava, faster attacks, a banner and a roar */
+  private enrageLord() {
+    const lord = this.lord;
+    lord.enragedAt = this.clock;
+    this.addBanner("boss", "ENRAGED!", true);
+    this.sfx("lordEnrage");
+    this.lordShake(LORD_ENRAGE_SHAKE);
+    if (lord.atk.kind < 0) lord.nextAttackAt = Math.min(lord.nextAttackAt, this.clock + ENRAGED_FIRST_S);
+    const at = dungeonLordPoint();
+    this.onLordFloor(() =>
+      this.burst(
+        at.x,
+        at.y - LORD_H / 2,
+        LORD_ENRAGE_BURST.n,
+        LORD_ENRAGE_BURST.cols,
+        LORD_ENRAGE_BURST.speed,
+        LORD_ENRAGE_BURST.gravity,
+        LORD_ENRAGE_BURST.life,
+      ),
+    );
+  }
+
+  /** the death sequence ends: he bursts into embers, a coin shower falls, the party is cheered, the throne goes dark */
+  private lordFinale() {
+    const lord = this.lord;
+    lord.finaleAt = this.clock;
+    const at = dungeonLordPoint();
+    this.sfx("bossDown");
+    this.sfx("fanfare");
+    this.addBanner("boss", m.dungeon_lord_banner_slain());
+    this.cheers(); // the hall patrons raise a mug
+    this.lordShake(LORD_FINALE_SHAKE);
+    this.onLordFloor(() => {
+      this.pop(at.x, at.y - LORD_POP_LIFT, `+${LORD_GOLD}g`, "#f2c14e", true, true, LOOT_POP_DUR);
+      this.burst(
+        at.x,
+        at.y - LORD_H / 2,
+        LORD_EMBERS.n,
+        LORD_EMBERS.cols,
+        LORD_EMBERS.speed,
+        LORD_EMBERS.gravity,
+        LORD_EMBERS.life,
+      );
+      for (let k = 0; k < LORD_COIN_COUNT; k++)
+        this.emitP(
+          at.x + rand(-LORD_COIN_SPREAD, LORD_COIN_SPREAD),
+          at.y - LORD_POP_LIFT,
+          rand(-COIN_VX, COIN_VX),
+          rand(-COIN_VY_MAX, -COIN_VY_MIN),
+          COIN_GRAVITY,
+          COIN_LIFE,
+          "#f2c14e",
+          1,
+          "coin",
+        );
+      // the shower: coins fall across the whole hall from above the ceiling line
+      for (let k = 0; k < LORD_SHOWER_COINS; k++)
+        this.emitP(
+          VIEW_X0 + ((k + rand(0, 1)) / LORD_SHOWER_COINS) * VIEW_W,
+          -rand(0, LORD_SHOWER_HEIGHT),
+          rand(-COIN_VX, COIN_VX),
+          rand(LORD_SHOWER_VY_MIN, LORD_SHOWER_VY_MAX),
+          LORD_SHOWER_GRAVITY,
+          LORD_SHOWER_LIFE,
+          "#f2c14e",
+          1,
+          "coin",
+        );
+    });
+  }
+
   /** a dead foe is replaced by a new kind after a short beat */
   private respawnRaid(emp: Employee) {
     if (emp.stairsAt >= 0) {
@@ -3947,14 +4687,21 @@ export class Office {
   private raidHit(emp: Employee, tool: string) {
     if (emp.stairsAt >= 0) return; // on the stairs: no fighting
     let dmg = HEAVY_TOOLS.has(tool) ? 2 : 1;
-    if (Math.random() < CRIT_CHANCE) dmg *= 2;
+    const crit = Math.random() < CRIT_CHANCE;
+    if (crit) dmg *= 2;
+    emp.lungeUntil = this.clock + LUNGE_S;
+    emp.hsUntil = this.clock + HITSTOP_S;
+    emp.hsAt = this.clock;
     if (emp.floor >= DUNGEON_FLOORS) {
-      this.lordHit(emp, dmg);
+      this.lordHit(emp, dmg, crit);
       return;
     }
     const foe = emp.raid;
     if (!foe || foe.hp <= 0) return;
-    foe.hp = Math.max(0, foe.hp - dmg / (MON_HP[MONSTER_KINDS[foe.kind]] * foe.tough));
+    foe.hp = Math.max(
+      0,
+      foe.hp - dmg / (foe.crypt ? CRYPT_HP[CRYPT_KINDS[foe.kind]] : MON_HP[MONSTER_KINDS[foe.kind]]),
+    );
     foe.hitAt = this.clock;
     this.sfx("hit");
     if (foe.hp > 0) return;
@@ -3968,7 +4715,7 @@ export class Office {
     this.treasury += gold;
     this.stats.monsters++;
     this.bumpStats();
-    const foePos = dungeonMonsterPoint(dungeonSpotOf(emp.slot, emp.floor));
+    const foePos = dungeonMonsterPoint(dungeonSpotOf(this.raidSpotIndex(emp), emp.floor));
     this.floorKill(emp);
     this.fxFor(emp, () => {
       this.pop(foePos.x, foePos.y - GOLD_POP_LIFT, `+${gold}g`, "#f2c14e", false, false, LOOT_POP_DUR);
@@ -4075,6 +4822,7 @@ export class Office {
       hsUntil: 0,
       hsAt: 0,
       lungeUntil: 0,
+      dodgeAt: -99,
       flashUntil: 0,
       monLungeUntil: 0,
       monKnockUntil: 0,
@@ -4089,7 +4837,14 @@ export class Office {
       evCount: 0,
       known: false,
       compactPending: false,
+      lastTool: "",
       inDungeon: false,
+      raidIn: false,
+      raidSlot: -1,
+      raidCalls: 0,
+      raidSince: this.clock,
+      raidEnteredAt: -1,
+      raidDoneAt: -1,
       raid: null,
       floor: 1,
       floorKills: 0,
@@ -4354,8 +5109,13 @@ export class Office {
       case "AT_TAVERN_REST":
         emp.state = "FROM_TAVERN_REST";
         break;
+      case "TO_RAID":
+        emp.state = "FROM_RAID";
+        emp.raidSlot = -1; // the raid never began: free its dungeon spot for camp arrivals
+        break;
       case "FROM_COFFEE":
       case "FROM_TAVERN_REST":
+      case "FROM_RAID":
         return true;
       default:
         return false;
@@ -4385,6 +5145,7 @@ export class Office {
   }
 
   private applyEvent(emp: Employee, evt: HookEvt, coffee = true) {
+    this.gmRowsAt = -Infinity;
     const name = str(evt.hook_event_name);
     const clock = this.clock;
     switch (name) {
@@ -4402,6 +5163,7 @@ export class Office {
       case "PreToolUse": {
         const tool = str(evt.tool_name);
         this.tools.add(tool);
+        emp.lastTool = tool.slice(0, GM_REPORT_DETAIL_MAX);
         this.bumpStats();
         if (!AGENT_TOOLS.has(tool) && !USER_WAIT_TOOLS.has(tool)) {
           const id = str(evt.tool_use_id) || `#${this.pendSeq++}`;
@@ -4427,6 +5189,7 @@ export class Office {
         emp.nextThought = clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
         this.donePending(emp, evt);
         emp.toolCalls++;
+        emp.raidCalls++;
         this.onHit(emp, str(evt.tool_name));
         break;
       }
@@ -4435,6 +5198,7 @@ export class Office {
         emp.nextThought = clock + rand(THOUGHT_MIN_S, THOUGHT_MAX_S);
         this.donePending(emp, evt);
         emp.toolCalls++;
+        emp.raidCalls++;
         this.onFail(emp);
         break;
       case "PermissionRequest":
@@ -4479,7 +5243,7 @@ export class Office {
               "heart",
             );
         }
-        if (coffee) {
+        if (coffee && !emp.raidIn) {
           emp.state = "STRETCH";
           emp.stateSince = clock;
         }
@@ -4517,7 +5281,7 @@ export class Office {
     const mp = emp.monPos;
     const xp = 1 + Math.floor(Math.random() * XP_ROLL_MAX);
     if (emp.inDungeon) this.raidHit(emp, tool);
-    if (mp && emp.deskIdx >= 0 && !emp.monDead && clock - emp.monAppearAt > MON_HITTABLE_AFTER_S) {
+    if (mp && emp.deskIdx >= 0 && !emp.raidIn && !emp.monDead && clock - emp.monAppearAt > MON_HITTABLE_AFTER_S) {
       const crit = Math.random() < CRIT_CHANCE;
       let dmg = HEAVY_TOOLS.has(tool) ? 2 : 1;
       if (crit) dmg *= 2;
@@ -4750,6 +5514,7 @@ export class Office {
     return (
       emp.state === "SEATED" &&
       (emp.deskIdx >= 0 || emp.slot >= 0) &&
+      !emp.raidIn &&
       !emp.duel &&
       !emp.boss &&
       emp.pending.size === 0 &&
@@ -5081,17 +5846,282 @@ export class Office {
     master.face = GM_FACE_HOME;
     master.path = [];
     master.phase = "home";
+    master.mission = "none";
+    master.reason = null;
+    master.icon = null;
+    master.text = "";
     master.targetId = "";
     master.targetDesk = -1;
     master.alert = false;
     master.until = this.clock + rand(GM_IDLE_MIN_S, GM_IDLE_MAX_S);
+    this.gmDispatch = null;
+    this.gmBellRinging = false;
+    this.gmUrgentAt = 0;
+    this.gmCool.clear();
+    this.gmPraise = [];
+    this.gmRowsAt = -Infinity;
+  }
+  /** the triage report: who needs him and why, most urgent first (then oldest first). Rebuilt at most every 0.5 s. */
+  guildMasterReport(): GmReportRow[] {
+    this.gmScan();
+    return this.gmRows;
+  }
+  /** the session he is heading to / talking to for a reason (null = none) */
+  gmTarget(): string | null {
+    this.gmScan();
+    const master = this.guildMaster;
+    if (this.reducedMotion) {
+      const top = this.gmRows[0];
+      return top && GM_RANK[top.reason] <= GM_LAST_URGENT ? top.id : null;
+    }
+    const going = master.phase === "out" || master.phase === "talk";
+    const mission = master.mission;
+    return going && master.reason && master.targetId && (mission === "visit" || mission === "gate")
+      ? master.targetId
+      : null;
+  }
+  private gmScan() {
+    if (this.clock >= this.gmRowsAt && this.clock - this.gmRowsAt < GM_SCAN_S) return;
+    this.gmRowsAt = this.clock;
+    const rows: GmReportRow[] = [];
+    const live = new Set<string>();
+    const add = (emp: Employee, reason: GmReason, natural: number | null, detail: string) => {
+      const key = `${emp.id}|${reason}`;
+      if (live.has(key)) return;
+      live.add(key);
+      let since = natural ?? this.gmSeen.get(key);
+      if (since === undefined) since = this.clock;
+      this.gmSeen.set(key, since);
+      rows.push({
+        id: emp.id,
+        tag: emp.tag,
+        project: emp.project,
+        reason,
+        since,
+        detail: detail.slice(0, GM_REPORT_DETAIL_MAX),
+      });
+    };
+    // a queue row's `since` is wall-clock ms: turn it into office-clock seconds (never before the page opened)
+    const wallNow = Date.now();
+    const fromWall = (sinceMs: number) =>
+      sinceMs > 0 ? this.clock - Math.min(this.clock, Math.max(0, (wallNow - sinceMs) / MS_PER_SECOND)) : null;
+    const asked = new Set<string>();
+    for (const row of this.attentionRows()) {
+      const emp = this.employees.get(row.sid);
+      if (!emp || emp.state === "LEAVING") continue;
+      const began = fromWall(row.since);
+      if (row.kind === "permission") add(emp, "permission", began, emp.lastTool);
+      else if (row.kind === "asked") {
+        asked.add(row.sid);
+        add(emp, "question", began, row.tail ?? "");
+      } else if (row.kind === "loop") add(emp, "loop", began, `${row.tool ?? ""} ${row.target ?? ""}`.trim());
+    }
+    for (const emp of this.employees.values()) {
+      if (emp.state === "LEAVING") continue;
+      // a raised hand began at realTime `handAt`; the office clock may run at another speed, so count back real seconds
+      const handBegan = emp.act === "handup" ? this.clock - Math.min(this.clock, this.realTime - emp.handAt) : null;
+      if (this.isWaiting(emp) && !asked.has(emp.id)) add(emp, "permission", handBegan, emp.lastTool);
+      if (emp.act !== "handup" && emp.pending.size > 0) {
+        let oldest = Infinity;
+        for (const t0 of emp.pending.values()) if (t0 < oldest) oldest = t0;
+        if (this.clock - oldest > GM_STUCK_S) add(emp, "stuck", oldest, emp.lastTool);
+      }
+      if (
+        emp.pending.size === 0 &&
+        emp.act === "thinking" &&
+        !emp.raidIn &&
+        !emp.compactPending &&
+        emp.state === "SEATED" &&
+        this.clock - emp.lastEventAt > GM_IDLE_REPORT_S
+      )
+        add(emp, "idle", emp.lastEventAt, "");
+      if (emp.compactPending && emp.state.endsWith("TAVERN_REST")) add(emp, "compact", null, "");
+    }
+    for (const key of this.gmSeen.keys()) if (!live.has(key)) this.gmSeen.delete(key);
+    for (const [key, at] of this.gmCool) if (this.clock - at >= GM_REVISIT_LOW_S) this.gmCool.delete(key);
+    rows.sort((rowA, rowB) => GM_RANK[rowA.reason] - GM_RANK[rowB.reason] || rowA.since - rowB.since);
+    this.gmRows = rows;
+    let due = false;
+    for (const row of rows)
+      if ((row.reason === "permission" || row.reason === "question") && this.clock - row.since > GM_BELL_AFTER_S)
+        due = true;
+    this.gmBellDue = due;
+  }
+  private gmIconOf(reason: GmReason | null, mission: GmMission): GmIconId | "dots" {
+    if (mission === "door") return "bell";
+    if (mission === "announce") return "scroll";
+    if (mission === "praise") return "thumb";
+    if (mission === "dispatch" || mission === "escort") return "sword";
+    return reason ?? "dots";
+  }
+  /** once a second: new local day, the quiet evening */
+  private gmDayTick() {
+    if (this.realTime - this.gmDayReadAt < 1 && this.realTime >= this.gmDayReadAt) return;
+    this.gmDayReadAt = this.realTime;
+    const now = new Date();
+    const key = dayKey(now);
+    const busy = this.employees.size > 0;
+    if (key !== this.gmDay) {
+      if (!busy) return;
+      this.gmDay = key;
+      this.gmActiveDay = true;
+      this.gmEveningDay = "";
+      this.gmAnnouncePending = true;
+      this.gmAnnounceAt = this.clock;
+      return;
+    }
+    if (busy) this.gmActiveDay = true;
+    if (now.getHours() < GM_EVENING_HOUR || !this.gmActiveDay || this.gmEveningDay === key) return;
+    for (const emp of this.employees.values())
+      if (emp.pending.size > 0 || this.clock - emp.lastEventAt <= GM_QUIET_S) return;
+    this.gmEveningDay = key;
+    this.gmAnnouncePending = true;
+    this.gmAnnounceAt = this.clock;
+  }
+  private gmPlanVisit(emp: Employee, mission: GmMission, reason: GmReason | null) {
+    return { mission, emp, reason };
+  }
+  /** what he does next, or null to stay home */
+  private gmPlan(): { mission: GmMission; emp: Employee | null; reason: GmReason | null } | null {
+    const master = this.guildMaster;
+    if (this.gmBellDue) return { mission: "door", emp: null, reason: "permission" };
+    for (const row of this.gmRows) {
+      const urgent = GM_RANK[row.reason] <= GM_LAST_URGENT;
+      if (this.clock < (urgent ? this.gmUrgentAt : master.until)) continue;
+      const cooled = this.gmCool.get(`${row.id}|${row.reason}`);
+      if (cooled !== undefined && this.clock - cooled < (urgent ? GM_REVISIT_S : GM_REVISIT_LOW_S)) continue;
+      const emp = this.employees.get(row.id);
+      if (!emp) continue;
+      if (emp.raidIn || emp.inDungeon || emp.deskIdx < 0) {
+        if (urgent) return this.gmPlanVisit(emp, "gate", row.reason);
+        continue;
+      }
+      if (this.canVisit(emp)) return this.gmPlanVisit(emp, "visit", row.reason);
+    }
+    if (this.clock < master.until) return null;
+    if (this.gmAnnouncePending) return { mission: "announce", emp: null, reason: null };
+    while (this.gmPraise.length) {
+      const praise = this.gmPraise[0];
+      const emp = this.employees.get(praise.sid);
+      if (!emp || this.clock - praise.at > GM_PRAISE_FRESH_S) {
+        this.gmPraise.shift();
+        continue;
+      }
+      if (this.canVisit(emp)) {
+        this.gmPraise.shift();
+        return this.gmPlanVisit(emp, "praise", null);
+      }
+      break;
+    }
+    const calm: Employee[] = [];
+    for (const emp of this.employees.values()) if (this.canVisit(emp)) calm.push(emp);
+    if (!calm.length) return null;
+    return this.gmPlanVisit(calm[Math.floor(Math.random() * calm.length)], "visit", null);
+  }
+  private gmStart(plan: { mission: GmMission; emp: Employee | null; reason: GmReason | null }) {
+    const master = this.guildMaster;
+    master.mission = plan.mission;
+    master.reason = plan.reason;
+    master.icon = null;
+    master.text = "";
+    master.phase = "out";
+    master.alert = plan.reason !== null && GM_RANK[plan.reason] <= GM_LAST_URGENT;
+    master.targetId = plan.emp ? plan.emp.id : "";
+    master.targetDesk = plan.mission === "visit" || plan.mission === "praise" ? plan.emp!.deskIdx : -1;
+    if (plan.emp && plan.reason) this.gmCool.set(`${plan.emp.id}|${plan.reason}`, this.clock);
+    if (plan.mission === "door") master.path = routeGuildMasterDoor();
+    else if (plan.mission === "gate") master.path = routeGuildMasterGate();
+    else if (plan.mission === "announce") {
+      this.gmAnnouncePending = false;
+      master.path = routeGuildMasterAnnounce();
+    } else master.path = routeGuildMaster(plan.emp!.deskIdx);
+  }
+  /** the straight-line walk time of a route from (x, y) */
+  private gmWalkS(x: number, y: number, path: Pt[]): number {
+    let len = 0,
+      px = x,
+      py = y;
+    for (const pt of path) {
+      len += Math.hypot(pt.x - px, pt.y - py);
+      px = pt.x;
+      py = pt.y;
+    }
+    return len / SPEED;
+  }
+  /**
+   * Dispatcher: a raid-ready adventurer is first visited by the guild master, who then escorts it to the gate.
+   * true = hold the raid for now (he is on his way; it never waits longer than GM_DISPATCH_MAX_S).
+   */
+  private gmHoldRaid(emp: Employee): boolean {
+    const master = this.guildMaster;
+    const held = this.gmDispatch;
+    if (held) {
+      if (held.sid === emp.id && this.clock <= held.deadline) return true;
+      if (held.sid === emp.id)
+        this.guildMasterGoesHome(); // too slow: the raid goes without him
+      else return false;
+      return false;
+    }
+    if (this.reducedMotion || master.phase !== "home" || master.mission !== "none" || this.gmBellDue) return false;
+    this.gmScan();
+    for (const row of this.gmRows) if (GM_RANK[row.reason] <= GM_LAST_URGENT) return false;
+    if (!this.canVisit(emp)) return false;
+    const route = routeGuildMaster(emp.deskIdx);
+    if (this.gmWalkS(master.x, master.y, route) + GM_DISPATCH_TALK_S > GM_DISPATCH_MAX_S) return false;
+    this.gmDispatch = { sid: emp.id, deadline: this.clock + GM_DISPATCH_MAX_S };
+    this.gmStart({ mission: "dispatch", emp, reason: null });
+    master.targetDesk = emp.deskIdx;
+    return true;
+  }
+  /** reduced motion: no walking; his bubble shows the top reason above his post and the bell stays still */
+  private gmReduced() {
+    const master = this.guildMaster;
+    if (master.phase !== "home") this.resetGuildMaster();
+    this.gmScan();
+    const top = this.gmRows[0];
+    master.reason = top ? top.reason : null;
+    master.alert = !!top && GM_RANK[top.reason] <= GM_LAST_URGENT;
+    master.mission = "none";
+    master.text = "";
+    if (this.gmBellDue) master.icon = "bell";
+    else if (top) master.icon = top.reason;
+    else if (this.gmAnnouncePending && this.clock - this.gmAnnounceAt < GM_ANNOUNCE_S) {
+      master.icon = "scroll";
+      master.text = GM_ANNOUNCE_TEXT;
+    } else {
+      master.icon = null;
+      this.gmAnnouncePending = false;
+    }
+    this.gmRing(this.gmBellDue);
+  }
+  private gmRing(ringing: boolean) {
+    if (!ringing) {
+      this.gmBellRinging = false;
+      return;
+    }
+    if (!this.gmBellRinging) {
+      this.gmBellRinging = true;
+      this.gmNextRing = this.clock + GM_BELL_EVERY_S;
+      this.sfx("bell");
+    } else if (this.clock >= this.gmNextRing) {
+      this.gmNextRing += GM_BELL_EVERY_S;
+      this.sfx("bell");
+    }
   }
   /**
    * a battle-spot adventurer he can walk up to: seated, working, on screen, not in a duel or boss fight, no boss still
    * walking out (its lane and road cross his route) and no duel fighter / meeting point / boss near his stand point
    */
   private canVisit(emp: Employee): boolean {
-    if (emp.state !== "SEATED" || emp.deskIdx < 0 || emp.duel || emp.boss || emp.resting || this.isHidden(emp))
+    if (
+      emp.state !== "SEATED" ||
+      emp.deskIdx < 0 ||
+      emp.raidIn ||
+      emp.duel ||
+      emp.boss ||
+      emp.resting ||
+      this.isHidden(emp)
+    )
       return false;
     const stand = guildMasterStand(emp.deskIdx, this.gmStandPt);
     for (const other of this.employees.values()) {
@@ -5119,50 +6149,54 @@ export class Office {
   private nearStand(stand: Pt, x: number, y: number): boolean {
     return Math.hypot(x - stand.x, y - stand.y) < GM_CLEAR_R;
   }
-  /** first someone the Lookout Bell is ringing for (or with a hand up), else any seated working adventurer; null = stay home */
-  private pickVisit(): { emp: Employee; alert: boolean } | null {
-    const needy: Employee[] = [];
-    const calm: Employee[] = [];
-    const bellSids = new Set<string>();
-    for (const row of this.attentionRows()) if (bellCount([row]) > 0) bellSids.add(row.sid);
-    for (const emp of this.employees.values()) {
-      if (!this.canVisit(emp)) continue;
-      if (bellSids.has(emp.id) || this.isWaiting(emp)) needy.push(emp);
-      else calm.push(emp);
-    }
-    const pool = needy.length ? needy : calm;
-    if (!pool.length) return null;
-    return { emp: pool[Math.floor(Math.random() * pool.length)], alert: needy.length > 0 };
-  }
   private updateGuildMaster(dt: number) {
     const master = this.guildMaster;
+    this.gmScan();
+    this.gmDayTick();
     if (this.reducedMotion) {
-      // no walking: he stays at his post
-      if (master.phase !== "home") this.resetGuildMaster();
+      this.gmReduced();
       return;
     }
     if (master.phase === "home") {
-      if (this.clock < master.until) return;
-      const visit = this.pickVisit();
-      if (!visit) {
-        master.until = this.clock + GM_RETRY_S;
+      this.gmRing(false);
+      const plan = this.gmPlan();
+      if (!plan) {
+        if (this.clock >= master.until) master.until = this.clock + GM_RETRY_S;
         return;
       }
-      master.targetId = visit.emp.id;
-      master.targetDesk = visit.emp.deskIdx;
-      master.alert = visit.alert;
-      master.phase = "out";
-      master.path = routeGuildMaster(visit.emp.deskIdx);
+      this.gmStart(plan);
       return;
     }
+    const mission = master.mission;
     if (master.phase === "out" || master.phase === "talk") {
-      const target = this.employees.get(master.targetId);
-      if (!target || target.deskIdx !== master.targetDesk || !this.canVisit(target)) {
+      if (mission === "door") {
+        if (!this.gmBellDue) {
+          this.guildMasterGoesHome();
+          return;
+        }
+      } else if (mission !== "announce" && mission !== "escort") {
+        const target = this.employees.get(master.targetId);
+        const seated = mission === "visit" || mission === "praise" || mission === "dispatch";
+        const gone = !target || (seated && (target.deskIdx !== master.targetDesk || !this.canVisit(target)));
+        const solved =
+          !!master.reason &&
+          (mission === "visit" || mission === "gate") &&
+          !this.gmRows.some((row) => row.id === master.targetId && row.reason === master.reason);
+        if (gone || solved) {
+          this.guildMasterGoesHome();
+          return;
+        }
+      }
+      // a door bell that became due outranks calm errands
+      const calmErrand =
+        mission === "announce" || mission === "praise" || (mission === "visit" && (!master.reason || !master.alert));
+      if (this.gmBellDue && calmErrand) {
         this.guildMasterGoesHome();
         return;
       }
       if (master.phase === "talk") {
-        if (this.clock >= master.until) this.guildMasterGoesHome();
+        if (mission === "door") this.gmRing(true);
+        else if (this.clock >= master.until) this.gmTalkDone();
         return;
       }
     }
@@ -5170,21 +6204,62 @@ export class Office {
     if (master.path.length) return;
     if (master.phase === "out") {
       master.phase = "talk";
-      master.face = 1;
-      master.until = this.clock + GM_TALK_S;
+      master.face = mission === "door" || mission === "gate" ? -1 : 1;
+      master.icon = this.gmIconOf(master.reason, mission);
+      if (mission === "announce") master.text = GM_ANNOUNCE_TEXT;
+      master.until =
+        this.clock + (mission === "announce" ? GM_ANNOUNCE_S : mission === "dispatch" ? GM_DISPATCH_TALK_S : GM_TALK_S);
+      if (mission === "door") this.gmRing(true);
+    } else if (master.phase === "escort") {
+      master.phase = "talk";
+      master.face = -1;
+      master.icon = "sword";
+      master.until = this.clock + GM_ESCORT_POINT_S;
     } else {
       master.phase = "home";
+      master.mission = "none";
+      master.reason = null;
+      master.icon = null;
+      master.text = "";
+      master.alert = false;
       master.face = GM_FACE_HOME;
       master.targetId = "";
       master.targetDesk = -1;
-      master.until = this.clock + rand(GM_IDLE_MIN_S, GM_IDLE_MAX_S);
+      master.until = this.clock + rand(GM_CALM_MIN_S, GM_CALM_MAX_S);
+      this.gmUrgentAt = this.clock + GM_URGENT_GAP_S;
     }
+  }
+  /** his talk is over: a dispatch sends the raider off and he escorts it; anything else walks him home */
+  private gmTalkDone() {
+    const master = this.guildMaster;
+    if (master.mission === "dispatch") {
+      const target = this.employees.get(master.targetId);
+      this.gmDispatch = null;
+      // re-check: a hand may have gone up or a tool started during his talk
+      if (target && this.compactReady(target) && target.deskIdx >= 0) {
+        const desk = target.deskIdx;
+        this.beginRaid(target);
+        master.phase = "escort";
+        master.mission = "escort";
+        master.icon = null;
+        master.targetId = "";
+        master.targetDesk = -1;
+        master.path = routeGuildMasterEscort(desk);
+        return;
+      }
+    }
+    this.guildMasterGoesHome();
   }
   private guildMasterGoesHome() {
     const master = this.guildMaster;
     master.phase = "back";
+    master.icon = null;
+    master.text = "";
     master.targetId = "";
     master.targetDesk = -1;
+    master.alert = false;
+    this.gmDispatch = null;
+    this.gmRing(false);
     master.path = routeGuildMasterHome(master.x, master.y);
   }
   private walkGuildMaster(dt: number) {

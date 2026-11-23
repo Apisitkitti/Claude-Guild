@@ -3,7 +3,7 @@
 # Payloads are derived from lib/store.ts, lib/attention.ts, lib/receipts.ts, lib/territory.ts, lib/office/engine.ts.
 # Only bash + curl + node (node just to parse the snapshot in `status`). Never kills anything.
 #
-# Scenarios: spawn boss boss-kill loop receipt duel compact squire cheers feast status cleanup help
+# Scenarios: spawn boss boss-kill loop receipt duel compact squire cheers feast lord status cleanup help
 # Session ids: 9401-<scenario>[-<suffix>][-a|-b|-c]   cwd: /Users/demo/<name> (fictional)
 # Created ids are recorded in $TMPDIR/guild-sim/ids so `cleanup` removes every one of them.
 set -u
@@ -183,6 +183,28 @@ cheers)
   tool "$B" Edit '{"file_path":"/Users/demo/quest-hero/src/quest.ts","old_string":"a","new_string":"b"}'
   stop "$B" "Quest complete."
   note "B closed a done receipt while A is at the table: mugs up + 'Cheers!' pill (~2.6s). If A already left the table, rerun with CHEERS_DELAY=4 or 8."
+  ;;
+
+lord)
+  # engine.ts raid rules: RAID_READY_CALLS (40) tool calls send a battle-spot adventurer into the dungeon; it descends B1 -> B3
+  # (RAID_FLOOR_KILLS 3 kills per floor) and fights the shared Dungeon Lord (LORD_HP 40). One session is enough.
+  # LORD_CALLS = total tool calls (default 130), LORD_PACE = seconds between calls after the walk-in (default 0.5).
+  need_server
+  A="$(sid a)"
+  start "$A" lord-raider
+  prompt "$A"
+  note "waiting 4s to sit..."; sleep 4
+  n=0
+  while [ "$n" -lt 40 ]; do
+    tool "$A" Read '{"file_path":"/Users/demo/lord-raider/src/a.ts"}'; n=$((n + 1))
+  done
+  note "40 calls sent: the adventurer leaves its battle spot for the dungeon gate; waiting 14s for the walk..."; sleep 14
+  total="${LORD_CALLS:-130}"
+  while [ "$n" -lt "$total" ]; do
+    tool "$A" Bash '{"command":"npm test"}'; n=$((n + 1))
+    sleep "${LORD_PACE:-0.5}"
+  done
+  note "sent $n calls. Watch: B1 -> B3, banner 'Raid on the Dungeon Lord', the live inset on the guild scene, the Lord rising from the throne, then 'Dungeon Lord has fallen' and the walk home. Stop sending events and it walks home after ~75 s."
   ;;
 
 feast)

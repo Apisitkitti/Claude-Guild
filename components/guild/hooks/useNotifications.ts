@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { MS_PER_SECOND } from "@/lib/constants";
-import type { ConflictRow, OfficeView, WaitingRow } from "@/lib/office/engine";
+import { GM_BELL_AFTER_MIN, type ConflictRow, type OfficeView, type WaitingRow } from "@/lib/office/engine";
 import { m } from "@/paraglide/messages";
 
 import type { Mode, OfficeRef } from "../types";
 
 const CLASH_PREFIX = "clash|";
 const NOTIFY_COOLDOWN_SECONDS = 30;
+const GM_NOTIFY_TAG = "guild-master-bell";
 
 export type Notify = { perm: NotificationPermission | "unsupported"; on: boolean; toggle: () => void };
 
@@ -35,6 +36,8 @@ export const useNotifications = ({
   const onRef = useRef(false);
   const prevWaiting = useRef<Set<string>>(new Set());
   const lastNotified = useRef<Map<string, number>>(new Map());
+  /** whether the Guild Master's bell was ringing at the last snapshot: one notification per ringing episode */
+  const gmWasRinging = useRef(false);
 
   const saveNotify = (enabled: boolean) => {
     try {
@@ -138,6 +141,21 @@ export const useNotifications = ({
       } catch {}
     }
   }, [waiting, view.roster, view.hiddenIds, revealSelect]);
+
+  useEffect(() => {
+    const ringing = officeRef.current?.gmBellRinging ?? false;
+    const started = ringing && !gmWasRinging.current;
+    gmWasRinging.current = ringing;
+    if (!started || mode !== "live" || !onRef.current || typeof Notification === "undefined") return;
+    if (!document.hidden && document.hasFocus()) return;
+    try {
+      const notification = new Notification(m.gm_report_notify({ minutes: GM_BELL_AFTER_MIN }), { tag: GM_NOTIFY_TAG });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+    } catch {}
+  }, [view, officeRef, mode]);
 
   return { perm, on, toggle };
 };

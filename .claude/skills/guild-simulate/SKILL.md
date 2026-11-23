@@ -30,6 +30,7 @@ Drives `http://localhost:5050` (the `office-dev` server, already running) by POS
 | `squire` | Task PreToolUse + SubagentStart (+ a subagent Read) | Squire steps out of the ally gate and walks to its master | ~8 s |
 | `cheers` | A: PreCompact (sits at the feast table); B: edit + Stop (done receipt) | Mugs up and "Cheers!" pill (~2.6 s). Timing-sensitive: tune `CHEERS_DELAY` (default 6 s) | ~20 s |
 | `feast` | 3 sessions; two done receipts within 60 s (cooldown 90 s) | Feast banner ~16 s: confetti, bard, plates | ~15 s |
+| `lord` | One session: 40 Reads (raid-ready), then ~90 Bash calls paced `LORD_PACE` (0.5 s); `LORD_CALLS` = total (default 130) | Leaves its spot for the dungeon gate, descends B1 to B3, "Raid on the Dungeon Lord" banner + live inset on the guild scene, Lord rises from the throne, hits flash him, he falls (fanfare, hall toast), the raider walks home | ~80 s |
 | `status` | none | Health plus which sim/real session ids are on the server | instant |
 | `cleanup` | PostToolUse for every pending tool (subagent ones keep their `agent_id`), SubagentStop for every squire, then SessionEnd for every recorded id (only `9401-` ids) | All simulated adventurers leave | ~1 s, adventurers walk out |
 

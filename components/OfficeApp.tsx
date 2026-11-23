@@ -4,6 +4,7 @@ import { useRef } from "react";
 
 import type { OfficeView } from "@/lib/office/engine";
 
+import { GuildMasterCard } from "./guild/GuildMasterCard";
 import { Header } from "./guild/Header";
 import { useCanvasScale } from "./guild/hooks/useCanvasScale";
 import { useDataSource } from "./guild/hooks/useDataSource";
@@ -15,6 +16,7 @@ import { useNotifications } from "./guild/hooks/useNotifications";
 import { useNow } from "./guild/hooks/useNow";
 import { useOfficeEngine } from "./guild/hooks/useOfficeEngine";
 import { useFullscreen, usePanelCollapsed } from "./guild/hooks/usePanelState";
+import { useReportDialog } from "./guild/hooks/useReportDialog";
 import { useRevealSelect } from "./guild/hooks/useRevealSelect";
 import { useSessionFilter } from "./guild/hooks/useSessionFilter";
 import { useSound } from "./guild/hooks/useSound";
@@ -34,8 +36,17 @@ const OfficeApp = () => {
   const { waiting, hiddenSet, conflicts, clashes, attention, receipts, bellN } = useDerivedView(view, source.mode);
   const filter = useSessionFilter(officeRef, mounted);
   const revealSelect = useRevealSelect(officeRef, filter.setFilterQuery);
-  const jumpTo = useKeyboardNav(attention, view.selectedId, revealSelect);
-  const notify = useNotifications({ officeRef, mode: source.mode, view, waiting, clashes, prevClashRef, revealSelect });
+  const report = useReportDialog();
+  const jumpTo = useKeyboardNav(attention, view.selectedId, revealSelect, report.openReport);
+  const notify = useNotifications({
+    officeRef,
+    mode: source.mode,
+    view,
+    waiting,
+    clashes,
+    prevClashRef,
+    revealSelect,
+  });
   const sound = useSound(officeRef);
   useDocumentTitle({ waitingN: waiting.length, clashN: clashes.length, bellN });
   const nowMs = useNow();
@@ -75,6 +86,7 @@ const OfficeApp = () => {
           quests={view.quests ?? []}
           viewScene={view.scene}
           viewFloor={view.dungeonFloor}
+          onOpenReport={report.openReport}
         />
         <SidePanel
           view={view}
@@ -89,6 +101,9 @@ const OfficeApp = () => {
           officeRef={officeRef}
         />
       </div>
+      {report.open && (
+        <GuildMasterCard officeRef={officeRef} roster={view.roster} onGo={revealSelect} onClose={report.closeReport} />
+      )}
     </div>
   );
 };

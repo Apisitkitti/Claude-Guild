@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { CRYPT_KINDS } from "@/lib/office/cryptSprites";
 import { dungeonSpotOf, dungeonStairsPoint, LORD_SPOTS } from "@/lib/office/dungeonScene";
 import {
   KIND_LORD,
@@ -9,10 +10,10 @@ import {
   LORD_RESPAWN_S,
   RAID_FLOOR_KILLS,
   RAID_STAIRS_S,
-  RAID_TOUGH_B2,
   type Employee,
 } from "@/lib/office/engine";
 import { DESK_COUNT } from "@/lib/office/layout";
+import { LORD_DEATH_S, lordMaxHp } from "@/lib/office/lordFight";
 import { MONSTER_KINDS } from "@/lib/office/palette";
 
 import { emp, ev, fixedRandom, newOffice, sid, stubStorage, tick } from "./helpers";
@@ -75,7 +76,7 @@ describe("dungeon floors: descending", () => {
     expect(raider.floor).toBe(1);
     expect(raider.floorKills).toBe(0);
     expect(raider.stairsAt).toBe(-1);
-    expect(raider.raid?.tough).toBe(1);
+    expect(raider.raid?.crypt).toBe(false);
   });
 
   it("goes down the stairs after RAID_FLOOR_KILLS kills on a floor", () => {
@@ -113,35 +114,41 @@ describe("dungeon floors: descending", () => {
     expect(raider.stairsAt).toBe(-1);
     expect(raider.floorKills).toBe(0);
     expect(raider.raid?.hp).toBe(1);
-    expect(raider.raid?.tough).toBe(RAID_TOUGH_B2);
-    expect(["skeleton", "goblin", "mushroom"]).toContain(MONSTER_KINDS[raider.raid!.kind]);
+    expect(raider.raid?.crypt).toBe(true);
+    expect(raider.raid!.kind).toBeGreaterThanOrEqual(0);
+    expect(raider.raid!.kind).toBeLessThan(CRYPT_KINDS.length);
     expect(office.raiderPoint(raider)).toEqual(dungeonSpotOf(raider.slot, 2));
   });
 
-  it("a floor 2 foe takes more hits to kill than a floor 1 foe of the same kind", () => {
+  it("every undead on floor 2 takes more hits than any B1 monster, in about the same total effort", () => {
     const { office, raiderIds } = withRaiders(1);
     const raider = emp(office, raiderIds[0]);
-    const count = () => {
+    const count = (kind: number, crypt: boolean) => {
+      raider.raid = { kind, hp: 1, hitAt: -99, deadAt: -99, crypt };
       let hits = 0;
       while (raider.raid!.hp > 0 && hits < 100) {
         strike(office, raiderIds[0], "Read");
         hits++;
       }
+      tick(office, 2);
+      raider.floorKills = 0;
+      raider.stairsAt = -1;
       return hits;
     };
-    raider.raid!.kind = MONSTER_KINDS.indexOf("skeleton");
-    const onB1 = count();
-    tick(office, 2);
-    raider.floor = 2;
-    raider.raid = { kind: MONSTER_KINDS.indexOf("skeleton"), hp: 1, hitAt: -99, deadAt: -99, tough: RAID_TOUGH_B2 };
-    expect(count()).toBeGreaterThanOrEqual(onB1 * RAID_TOUGH_B2 - 2); // float rounding may cost an extra hit on either floor
+    const b1 = MONSTER_KINDS.map((_, kind) => count(kind, false));
+    const b2 = CRYPT_KINDS.map((_, kind) => count(kind, true));
+    for (const hits of b2) expect(hits).toBeGreaterThan(Math.min(...b1));
+    expect(Math.min(...b2)).toBeGreaterThanOrEqual(5);
+    const avg = (list: number[]) => list.reduce((sum, num) => sum + num, 0) / list.length;
+    expect(avg(b2)).toBeGreaterThan(6.5);
+    expect(avg(b2)).toBeLessThan(8.5);
   });
 
   it("B2 leads to B3: no foe of its own down there", () => {
     const { office, raiderIds } = withRaiders(1);
     const raider = emp(office, raiderIds[0]);
     raider.floor = 2;
-    raider.raid = { kind: 0, hp: 1, hitAt: -99, deadAt: -99, tough: RAID_TOUGH_B2 };
+    raider.raid = { kind: 0, hp: 1, hitAt: -99, deadAt: -99, crypt: true };
     killFloor(office, raider);
     tick(office, RAID_STAIRS_S + 0.2);
     expect(raider.floor).toBe(3);
@@ -227,9 +234,9 @@ describe("the Dungeon Lord", () => {
     sendToLord(second);
     expect(office.lord.hp).toBe(1);
     strike(office, first.id); // Bash: heavy, 2 damage
-    expect(office.lord.hp).toBeCloseTo(1 - 2 / LORD_HP, 6);
+    expect(office.lord.hp).toBeCloseTo(1 - 2 / lordMaxHp(2), 6);
     strike(office, second.id, "Read"); // 1 damage
-    expect(office.lord.hp).toBeCloseTo(1 - 3 / LORD_HP, 6);
+    expect(office.lord.hp).toBeCloseTo(1 - 3 / lordMaxHp(2), 6);
     expect(office.lord.hitAt).toBe(office.clock);
     expect(first.kills).toBe(0); // raiders get kills only when the Lord falls
   });
@@ -242,7 +249,7 @@ describe("the Dungeon Lord", () => {
     const goldBefore = [first.gold, second.gold, third.gold];
     const treasury = office.treasury;
     const bosses = office.dungeonStats().bosses;
-    for (let i = 0; i < LORD_HP && office.lord.hp > 0; i++) strike(office, i % 2 ? first.id : second.id, "Read");
+    for (let i = 0; i < lordMaxHp(2) && office.lord.hp > 0; i++) strike(office, i % 2 ? first.id : second.id, "Read");
     expect(office.lord.hp).toBe(0);
     expect(office.lord.slain).toBe(1);
     expect(first.gold).toBe(goldBefore[0] + LORD_GOLD);
@@ -259,7 +266,8 @@ describe("the Dungeon Lord", () => {
     expect(entry).toBeDefined();
     expect(entry!.text).toContain("Dungeon Lord");
     expect(ids).toContain(entry!.sid);
-    // loot popups fly inside the dungeon scene
+    // the loot pops up when the death sequence ends, inside the dungeon scene
+    tick(office, LORD_DEATH_S + 0.1);
     expect(office.popups.some((popup) => popup.dungeon && popup.text === `+${LORD_GOLD}g`)).toBe(true);
   });
 
@@ -379,6 +387,9 @@ describe("the floor on screen", () => {
     office.sfxQueue.length = 0;
     for (let i = 0; i < 60 && office.lord.hp > 0; i++) strike(office, raider.id);
     expect(office.lord.hp).toBe(0);
+    expect(office.sfxQueue).not.toContain("bossDown");
+    office.sfxQueue.length = 0; // the sound hook drains it between frames
+    tick(office, LORD_DEATH_S + 0.1);
     expect(office.sfxQueue).toContain("bossDown");
   });
 

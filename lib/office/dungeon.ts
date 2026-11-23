@@ -24,6 +24,8 @@ export interface DungeonStats {
   lordAlive: boolean;
   lordHp: number;
   lordSlain: number;
+  /** raiders are fighting a live Dungeon Lord on B3 (or it just fell): the guild scene shows the live inset */
+  lordFight: boolean;
   topTools: { tool: string; count: number }[];
 }
 

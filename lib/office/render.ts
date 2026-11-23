@@ -1,14 +1,24 @@
-import { m } from "@/paraglide/messages";
-
 import { bossCenterX, bossSprite } from "./bossSprites";
-import { LORD_ATTACK_FROM, lordSprite } from "./dungeonLordSprite";
+import { CRYPT_KINDS, cryptSprite, type CryptKind } from "./cryptSprites";
+import {
+  LORD_ATTACK_FROM,
+  LORD_RISE_H,
+  LORD_RISE_W,
+  LORD_SEATED_H,
+  LORD_SEATED_W,
+  lordRiseSprite,
+  lordSeatedSprite,
+  lordSprite,
+} from "./dungeonLordSprite";
 import {
   DUNGEON_IDLERS,
   DUNGEON_LAST_SPOT,
   drawDungeonBack,
   drawDungeonFront,
+  setLordMood,
   dungeonLordPoint,
   dungeonMonsterPoint,
+  dungeonThronePoint,
   dungeonSpotIndex,
   dungeonSpotOf,
   DUNGEON_FLOORS,
@@ -24,12 +34,15 @@ import {
   duelContact,
   duelScript,
   LORD_RESPAWN_S,
+  LORD_STRIKE_S,
   MAX_HEARTS,
   type Duel,
   type DuelScript,
   type Employee,
   type Office,
 } from "./engine";
+import { drawGateAuraGround, drawGateAuraSky, drawGateAuraTop } from "./gateAura";
+import { drawGmIcon } from "./gmIcons";
 import { drawHallLifeDecor, drawHallLifeLights, hallEntities } from "./hallRender";
 import {
   ALLY_BRIDGE_X,
@@ -54,6 +67,7 @@ import {
   DESK_COUNT,
   DUNGEON,
   DUNGEON_HIT,
+  LORD_PIP,
   GATE_OPEN,
   WORLD_H,
   HALL_W,
@@ -70,9 +84,26 @@ import {
   MON_DX,
   type Pt,
 } from "./layout";
+import { INTRO_EYES_S, dodgeLift, introLight, lavaSurge, lordClock, throneDarkness } from "./lordFight";
+import {
+  attackFrame,
+  critActive,
+  drawCritOutline,
+  drawEyeFlare,
+  drawLordAura,
+  drawLordBlaze,
+  drawLordDeath,
+  drawLordFloorFx,
+  drawMeteor,
+  drawMinion,
+  drawSlashes,
+  drawTaunt,
+  eyePoints,
+} from "./lordFx";
 import { monsterSprite } from "./monsterSprites";
 import { bardSprite, chefSprite, guildMasterSprite, innkeeperSprite } from "./npcSprites";
 import { MONSTER_KINDS } from "./palette";
+import { GLYPH_H, drawPixelText, measurePixelText } from "./pixelFont";
 import { drawQuestBoard } from "./questBoardDraw";
 import { butterflySprite, charSprite, internSprite, prop, type Pose } from "./sprites";
 
@@ -84,6 +115,7 @@ const rect = (ctx: Ctx, color: string, x: number, y: number, width: number, heig
 const EMOJI_FONT = '7px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
 const TAG_FONT = '500 5.5px ui-sans-serif, system-ui, "Sukhumvit Set", "Noto Sans Thai", sans-serif';
 const INK = "#1a1c2c";
+const GM_BELL_SHAKE_HZ = 16;
 const CREAM = "#fff6e0";
 const GOLD = "#f2c14e";
 
@@ -1252,27 +1284,37 @@ const drawGuildMaster = (ctx: Ctx, office: Office, time: number) => {
 };
 
 /**
- * opaque speech bubble over the talking guild master: a red "!" when the adventurer needs the user, else three dots.
- * He stands up-left behind the adventurer, so the bubble (shifted a little further left) sits above his head, clear of
- * the adventurer's own bubble / status icon, its HP bars and the level-up text.
+ * opaque speech bubble over the guild master: a pixel icon for why he came (padlock, "?", loop, hourglass, "Zz", box,
+ * sword, thumbs-up, bell, scroll), three dots on a calm patrol, or the pixel-font announcement. On a visit he stands
+ * up-left behind the adventurer, so the bubble is shifted a little further left, clear of the adventurer's own bubble.
  */
-const drawGuildMasterBubble = (ctx: Ctx, office: Office) => {
+const drawGuildMasterBubble = (ctx: Ctx, office: Office, time: number) => {
   const master = office.guildMaster;
-  if (master.phase !== "talk") return;
-  const bx = Math.round(master.x - 14),
-    by = Math.round(master.y - CH_H - 12);
-  rect(ctx, "#2a1810", bx, by, 13, 11);
-  rect(ctx, "#fffaf0", bx + 1, by + 1, 11, 9);
-  rect(ctx, "#2a1810", bx + 11, by + 11, 3, 1); // tail, over his head
-  rect(ctx, "#fffaf0", bx + 12, by + 10, 1, 1);
-  if (master.alert) {
-    rect(ctx, "#d11a2a", bx + 6, by + 2, 1, 4);
-    rect(ctx, "#d11a2a", bx + 6, by + 7, 1, 1);
-  } else {
-    rect(ctx, "#2a1810", bx + 3, by + 6, 1, 1);
-    rect(ctx, "#2a1810", bx + 6, by + 6, 1, 1);
-    rect(ctx, "#2a1810", bx + 9, by + 6, 1, 1);
+  const icon = master.icon;
+  if (!icon || (master.phase !== "talk" && !office.reducedMotion)) return;
+  const visiting = master.mission === "visit" || master.mission === "praise" || master.mission === "dispatch";
+  const shift = visiting ? 14 : 7;
+  const label = master.text;
+  const textW = label ? measurePixelText(label) + 3 : 0;
+  const width = 13 + textW;
+  const bx = Math.round(master.x - shift),
+    by = Math.round(master.y - CH_H - 15);
+  rect(ctx, "#2a1810", bx, by, width, 13);
+  rect(ctx, "#fffaf0", bx + 1, by + 1, width - 2, 11);
+  rect(ctx, "#2a1810", bx + shift - 1, by + 13, 3, 1); // tail, over his head
+  rect(ctx, "#fffaf0", bx + shift, by + 12, 1, 1);
+  if (icon === "dots") {
+    for (const dx of [3, 6, 9]) rect(ctx, "#2a1810", bx + dx, by + 7, 1, 1);
+    return;
   }
+  const shake =
+    icon === "bell" && !office.reducedMotion && master.phase === "talk" && office.gmBellRinging
+      ? Math.floor(time * GM_BELL_SHAKE_HZ) % 2 === 0
+        ? -1
+        : 1
+      : 0;
+  drawGmIcon(ctx, icon, bx + 2 + shake, by + 2);
+  if (label) drawPixelText(ctx, label, bx + 13, by + 4, "#2a1810");
 };
 
 const drawBard = (ctx: Ctx, office: Office, time: number) => {
@@ -1538,8 +1580,21 @@ const drawPopups = (ctx: Ctx, office: Office, dungeon = 0) => {
       ? "800 9px ui-sans-serif, system-ui, sans-serif"
       : "700 6.5px ui-sans-serif, system-ui, sans-serif";
     const x = Math.round(popup.x);
-    outlined(ctx, popup.text, x, Math.round(y), popup.col);
-    if (popup.star) blitC(ctx, "crit", x - Math.ceil(ctx.measureText(popup.text).width / 2) - 4, y);
+    // dungeon numbers ("+80g", "-3") use the bitmap font so the whole floor stays pixel art
+    const bitmap = dungeon > 0 && measurePixelText(popup.text) > 0;
+    const scale = popup.scale > 0 ? popup.scale : popup.big ? 2 : 1;
+    const half = bitmap
+      ? Math.ceil(measurePixelText(popup.text, scale) / 2)
+      : Math.ceil(ctx.measureText(popup.text).width / 2);
+    if (bitmap)
+      drawPixelText(ctx, popup.text, x, Math.round(y) - Math.floor((GLYPH_H * scale) / 2), popup.col, {
+        scale,
+        shadow: INK,
+        outline: true,
+        align: "center",
+      });
+    else outlined(ctx, popup.text, x, Math.round(y), popup.col);
+    if (popup.star) blitC(ctx, "crit", x - half - 4, y);
   }
   ctx.globalAlpha = 1;
 };
@@ -2163,6 +2218,8 @@ const drawLinkIcons = (ctx: Ctx, linkCount: number, time: number, office: Office
   }
 };
 
+/** pixel-font banners are drawn at this integer scale */
+const BANNER_PIXEL_SCALE = 2;
 const drawBannerQ = (ctx: Ctx, office: Office) => {
   const banner = office.banners[0];
   if (!banner) return;
@@ -2171,16 +2228,36 @@ const drawBannerQ = (ctx: Ctx, office: Office) => {
   const slide = Math.min(1, elapsed / 0.25, Math.max(0, (banner.dur - elapsed) / 0.25));
   const boss = banner.kind === "boss";
   ctx.font = boss ? "800 8px ui-sans-serif, system-ui, sans-serif" : WORLD_FONT;
-  const width = Math.ceil(ctx.measureText(banner.text).width) + 22,
+  const bitmap = !!banner.pixel && measurePixelText(banner.text, BANNER_PIXEL_SCALE) > 0;
+  const width =
+      (bitmap ? measurePixelText(banner.text, BANNER_PIXEL_SCALE) : Math.ceil(ctx.measureText(banner.text).width)) + 22,
     height = 15;
   const x = Math.round((VIEW_W - width) / 2),
-    y = Math.round(-height - 2 + (height + 8) * eob(Math.max(0, slide)));
+    y = Math.max(
+      2,
+      Math.round(-height - 2 + (height + (office.scene === "dungeon" ? 22 : 8)) * eob(Math.max(0, slide))),
+    );
   rect(ctx, "rgba(0,0,0,0.3)", x + 1, y + 2, width, height);
   rect(ctx, INK, x - 3, y - 1, width + 6, height + 2);
   rect(ctx, boss ? "#5a1a22" : "#ecd9a2", x, y, width, height);
   rect(ctx, boss ? "#8a2a34" : "#f6e8bf", x, y, width, 2);
   rect(ctx, boss ? "#3a0f16" : "#c9a45e", x - 2, y, 3, height);
   rect(ctx, boss ? "#3a0f16" : "#c9a45e", x + width - 1, y, 3, height);
+  if (bitmap) {
+    drawPixelText(
+      ctx,
+      banner.text,
+      VIEW_W / 2,
+      y + Math.floor((height - GLYPH_H * BANNER_PIXEL_SCALE) / 2),
+      "#ffdede",
+      {
+        scale: BANNER_PIXEL_SCALE,
+        align: "center",
+        shadow: "#3a0f16",
+      },
+    );
+    return;
+  }
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = boss ? "#ffdede" : "#3b2418";
@@ -2497,7 +2574,7 @@ const manaBar = (ctx: Ctx, emp: Employee, time: number, office: Office) => {
   if (frac > 0) rect(ctx, color, x, y, Math.max(1, Math.round(width * frac)), 2);
 };
 
-const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office, raidFoe = false) => {
+const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office, raidFoe = false, target?: Pt) => {
   // quest note popping up (board pause or new prompt)
   if (emp.state === "ENTERING" && emp.holdUntil > time) {
     const progress = Math.min(1, (time - emp.noteAt) / 0.3);
@@ -2542,8 +2619,16 @@ const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office, raidFoe =
     hitFx(ctx, emp, emp.boss ? bossCenterX(emp.monPos.x) : emp.monPos.x, emp.monPos.y, time, 20, 1);
 
   const monster = emp.monPos && !emp.monDead && !emp.bossPath.length ? emp.monPos : null;
-  const mx = raidFoe ? emp.x + MON_DX : monster ? (emp.boss ? bossCenterX(monster.x) : monster.x) : emp.x + 22;
-  const my = emp.y;
+  const mx = target
+    ? target.x
+    : raidFoe
+      ? emp.x + MON_DX
+      : monster
+        ? emp.boss
+          ? bossCenterX(monster.x)
+          : monster.x
+        : emp.x + 22;
+  const my = target ? target.y : emp.y;
   const fight = raidFoe || (!!monster && time - emp.monAppearAt > 0.3);
   switch (emp.act) {
     case "typing":
@@ -2898,40 +2983,86 @@ const atSpot = (emp: Employee, spot: Pt, fn: () => void) => {
   }
 };
 
-/** the raider's foe: a monster facing left, white flash on a hit, poof and a coin when it falls, small HP bar */
+/** how long after a hit a crypt foe snarls back with its attack frames */
+const CRYPT_ATTACK_S = 0.9;
+const CRYPT_HOVER = new Set<CryptKind>(["wraith", "banshee"]);
+/** opaque pixel wisps / bones a crypt foe leaves when it falls */
+const CRYPT_WISP: Record<CryptKind, [string, string]> = {
+  wraith: ["#7ff8ff", "#cfeff0"],
+  banshee: ["#ffffff", "#9fc8f0"],
+  ghoul: ["#7d8f6a", "#e6dcb8"],
+  revenant: ["#4dffd0", "#7ac4f0"],
+};
+const drawCryptDeath = (ctx: Ctx, kind: CryptKind, dage: number, pos: Pt) => {
+  const bonePile = kind === "ghoul" || kind === "revenant";
+  if (bonePile) {
+    // collapse: the body drops into a heap of bones (skull, ribs, long bones, a rusty helm for the revenant)
+    const settle = Math.min(1, dage / 0.35);
+    const px = Math.round(pos.x),
+      py = Math.round(pos.y);
+    rect(ctx, INK, px - 8, py - 6, 17, 7);
+    rect(ctx, "#b4aa88", px - 7, py - 3, 15, 3);
+    rect(ctx, "#e6dcb8", px - 6, py - 4, 6, 1);
+    rect(ctx, "#e6dcb8", px + 1, py - 4, 6, 1);
+    rect(ctx, "#7a7258", px - 7, py - 1, 15, 1);
+    rect(ctx, "#e6dcb8", px - 3, py - 6 + Math.round((1 - settle) * -3), 4, 3);
+    rect(ctx, INK, px - 2, py - 5 + Math.round((1 - settle) * -3), 1, 1);
+    rect(ctx, INK, px, py - 5 + Math.round((1 - settle) * -3), 1, 1);
+    if (kind === "revenant") rect(ctx, "#8a5a3c", px + 3, py - 6, 4, 3);
+    if (kind === "ghoul") rect(ctx, CRYPT_WISP.ghoul[0], px - 7, py - 2, 3, 1);
+    return;
+  }
+  // dissipate: the sprite's last frame breaks into rising, drifting pixel wisps that thin out
+  const [colorA, colorB] = CRYPT_WISP[kind];
+  const total = 22;
+  const alive = Math.ceil(total * (1 - dage / 1.1));
+  for (let i = 0; i < alive; i++) {
+    const spread = ((i * 7) % 15) - 7;
+    const wx = pos.x + spread * (1 + dage * 0.8) + Math.sin(dage * 5 + i) * 2;
+    const wy = pos.y - 6 - ((i * 5) % 18) - dage * 22;
+    rect(ctx, i % 3 ? colorA : colorB, Math.round(wx), Math.round(wy), i % 4 === 0 ? 2 : 1, 1);
+  }
+};
+
+/** the raider's foe: a monster (B1) or an undead (B2) facing left, flash on a hit, a death effect and a coin when it falls, small HP bar */
 const drawRaidFoe = (ctx: Ctx, emp: Employee, time: number, still: boolean, pos: Pt) => {
   const foe = emp.raid;
   if (!foe) return;
+  const kind = foe.crypt ? CRYPT_KINDS[foe.kind % CRYPT_KINDS.length] : null;
+  // the 24px undead stand 2px further right so their left edge matches a B1 monster's
+  const at: Pt = kind ? { x: pos.x + 2, y: pos.y } : pos;
   if (foe.hp > 0) {
     const sinceHit = time - foe.hitAt;
     const hit = sinceHit >= 0 && sinceHit < 0.25;
-    const kind = MONSTER_KINDS[foe.kind % MONSTER_KINDS.length];
-    const sprite = monsterSprite(kind, still ? 0 : Math.floor(time * 3 + emp.order) % 4, hit);
-    const bob = still || Math.floor(time * 2 + emp.order) % 2 === 0 ? 0 : -1;
-    const sx = Math.round(pos.x - sprite.width / 2 + (hit ? 1 : 0)),
-      sy = Math.round(pos.y - sprite.height + bob);
-    shadow(ctx, pos.x, pos.y, 14);
-    ctx.drawImage(sprite, sx, sy);
-    if (sinceHit >= 0 && sinceHit < 0.12) ctx.drawImage(tinted(sprite, "#ffffff"), sx, sy);
-    hpBar(ctx, Math.round(pos.x), Math.round(pos.y - sprite.height) - 5, 12, 2, foe.hp);
-    // a deeper-floor foe carries a bone-white skull pip beside its hp bar
-    if (foe.tough > 1) {
-      const bx = Math.round(pos.x) + 9,
-        by = Math.round(pos.y - sprite.height) - 7;
-      rect(ctx, INK, bx - 1, by - 1, 6, 6);
-      rect(ctx, "#efe6c8", bx, by, 4, 3);
-      rect(ctx, "#efe6c8", bx + 1, by + 3, 2, 1);
-      rect(ctx, INK, bx, by + 1, 1, 1);
-      rect(ctx, INK, bx + 3, by + 1, 1, 1);
+    let sprite: HTMLCanvasElement;
+    let lift = 0;
+    if (kind) {
+      const snarl = sinceHit >= 0.25 && sinceHit < CRYPT_ATTACK_S;
+      const beat = still ? 0 : Math.floor(time * 3 + emp.order) % 2;
+      sprite = cryptSprite(kind, (snarl ? 2 : 0) + beat, hit);
+      if (CRYPT_HOVER.has(kind)) lift = 3 + (still ? 0 : Math.round(Math.sin(time * 2.4 + emp.order)));
+    } else {
+      sprite = monsterSprite(
+        MONSTER_KINDS[foe.kind % MONSTER_KINDS.length],
+        still ? 0 : Math.floor(time * 3 + emp.order) % 4,
+        hit,
+      );
     }
+    const bob = still || kind || Math.floor(time * 2 + emp.order) % 2 === 0 ? 0 : -1;
+    const sx = Math.round(at.x - sprite.width / 2 + (hit ? 1 : 0)),
+      sy = Math.round(at.y - sprite.height + bob - lift);
+    shadow(ctx, at.x, at.y, lift ? 10 : kind ? 16 : 14);
+    ctx.drawImage(sprite, sx, sy);
+    hpBar(ctx, Math.round(at.x), Math.round(at.y - sprite.height - lift) - 5, kind ? 14 : 12, 2, foe.hp);
     return;
   }
   const dage = time - foe.deadAt;
   if (dage < 0 || dage > 1.3) return;
-  if (dage < 0.5) blitC(ctx, "poof" + (Math.floor(dage * 8) % 2), pos.x, pos.y - 8);
+  if (kind) drawCryptDeath(ctx, kind, dage, at);
+  else if (dage < 0.5) blitC(ctx, "poof" + (Math.floor(dage * 8) % 2), pos.x, pos.y - 8);
   const progress = dage / 1.3;
   ctx.globalAlpha = progress < 0.75 ? 1 : (1 - progress) * 4;
-  blitC(ctx, "coin", pos.x - 2, pos.y - 8 - Math.sin(Math.min(1, progress * 1.3) * Math.PI * 0.6) * 14);
+  blitC(ctx, "coin", at.x - 2, at.y - 8 - Math.sin(Math.min(1, progress * 1.3) * Math.PI * 0.6) * 14);
   ctx.globalAlpha = 1;
 };
 
@@ -2945,81 +3076,280 @@ const drawSleepers = (ctx: Ctx, time: number, still: boolean) => {
   });
 };
 
-const LORD_BAR = { w: 176, h: 8, y: 40 };
-const LORD_DOWN_FADE_S = 1.2;
-const LORD_HURT_S = 0.25;
-const LORD_ATTACK_BEAT = 2.4;
+const LORD_HURT_S = 0.18;
+const LORD_SHAKE_PX = 2;
+const LORD_SLAM_EMBERS = 5;
+/** where the raiders' effects land on the Lord: his body, a little left of his feet column and up from his feet */
+const LORD_AIM_DX = 6;
+const LORD_AIM_DY = 18;
+const LORD_SHAKE_HZ = 40;
 
-/** the Dungeon Lord on B3: idle breathing, attack frames while raiders stand before it, the hurt flash on a hit */
-const drawLord = (ctx: Ctx, office: Office, time: number, still: boolean, hasRaiders: boolean) => {
+/** the Lord's floor shakes only above this much shake, by up to this many px at full shake */
+const LORD_SHAKE_MIN = 0.05;
+const LORD_SHAKE_AMP = 3;
+/** the taunt bubble's bottom-right corner relative to the Lord's feet (or throne seat) */
+const LORD_TAUNT_DX = 24;
+const LORD_TAUNT_DY = 56;
+
+const LORD_RISE_S = 0.7;
+const LORD_STEP_S = 0.9;
+const LORD_SEATED_BEAT = 1.2;
+
+/** where the live Lord is and which way he is posed: sitting, rising, stepping down / back up, or fighting */
+type LordPose = { mode: "seated" | "rising" | "walking" | "fighting"; x: number; y: number; frame: number };
+const lordPose = (office: Office, time: number, still: boolean): LordPose => {
   const lord = office.lord;
-  const at = dungeonLordPoint();
+  const feet = dungeonLordPoint(),
+    seat = dungeonThronePoint();
+  const seatedFrame = still ? 0 : Math.floor(time * LORD_SEATED_BEAT) % 2;
+  if (lord.engagedAt >= 0) {
+    if (still) return { mode: "fighting", x: feet.x, y: feet.y, frame: 0 };
+    const age = time - lord.engagedAt;
+    if (age < LORD_RISE_S) return { mode: "rising", x: seat.x, y: seat.y, frame: age < LORD_RISE_S / 2 ? 0 : 1 };
+    const walk = Math.min(1, (age - LORD_RISE_S) / LORD_STEP_S);
+    if (walk < 1)
+      return { mode: "walking", x: seat.x + (feet.x - seat.x) * walk, y: seat.y + (feet.y - seat.y) * walk, frame: 0 };
+    return { mode: "fighting", x: feet.x, y: feet.y, frame: 0 };
+  }
+  const back = still ? 1 : (time - lord.calmAt) / LORD_STEP_S;
+  if (back < 1) {
+    const walk = Math.max(0, back); // walking back up to the throne
+    return { mode: "walking", x: feet.x + (seat.x - feet.x) * walk, y: feet.y + (seat.y - feet.y) * walk, frame: 0 };
+  }
+  return { mode: "seated", x: seat.x, y: seat.y, frame: seatedFrame };
+};
+
+/** the Dungeon Lord on B3: sits on the throne, rises when raiders come, fights in front of it; hurt flash on a hit */
+const drawLord = (ctx: Ctx, office: Office, time: number, still: boolean, pose: LordPose) => {
+  const lord = office.lord;
   if (lord.hp > 0) {
-    const hurt = time - lord.hitAt >= 0 && time - lord.hitAt < LORD_HURT_S;
-    const attacking = hasRaiders && !still;
+    const introAge = time - lord.introAt;
+    if (pose.mode === "seated" || pose.mode === "rising") {
+      const rising = pose.mode === "rising";
+      const sprite = rising ? lordRiseSprite(pose.frame) : lordSeatedSprite(pose.frame);
+      const width = rising ? LORD_RISE_W : LORD_SEATED_W,
+        height = rising ? LORD_RISE_H : LORD_SEATED_H;
+      ctx.drawImage(sprite, Math.round(pose.x - width / 2), Math.round(pose.y - height));
+      if (introAge >= 0 && introAge < INTRO_EYES_S) {
+        const [lx, ly, rx, ry] = eyePoints(pose.mode, pose.x, pose.y, pose.frame);
+        drawEyeFlare(ctx, lx, ly, rx, ry, time, still);
+      }
+      return;
+    }
+    const hitAge = time - lord.hitAt;
+    const hurt = hitAge >= 0 && hitAge < LORD_HURT_S;
+    // a hit knocks him back (away from the raiders, to the right) with a little shake
+    const knock = hurt && !still ? Math.round(LORD_SHAKE_PX * (1 - hitAge / LORD_HURT_S)) : 0;
+    const shake = hurt && !still ? (Math.floor(hitAge * LORD_SHAKE_HZ) % 2 ? 1 : -1) : 0;
+    const strikeAge = time - lord.strikeAt;
+    const striking = !still && pose.mode === "fighting" && strikeAge >= 0 && strikeAge < LORD_STRIKE_S;
+    const special = !still && pose.mode === "fighting" ? attackFrame(lord, time) : -1;
+    const animTime = lordClock(lord, time); // hit-stop: the animation holds still for a beat on every hit
     const frame = still
       ? 0
-      : attacking
-        ? LORD_ATTACK_FROM + (Math.floor(time * LORD_ATTACK_BEAT) % 2)
-        : Math.floor(time * 1.5) % 2;
+      : striking
+        ? LORD_ATTACK_FROM + (strikeAge < LORD_STRIKE_S / 2 ? 0 : 1)
+        : special >= 0
+          ? special
+          : Math.floor(animTime * 1.5) % 2;
     const sprite = lordSprite(frame, hurt);
-    shadow(ctx, at.x, at.y, 34);
-    ctx.drawImage(sprite, Math.round(at.x - sprite.width / 2 + (hurt ? 1 : 0)), Math.round(at.y - sprite.height + 2));
+    const sx = Math.round(pose.x - sprite.width / 2 + knock + shake),
+      sy = Math.round(pose.y - sprite.height + 2);
+    const enraged = lord.enragedAt >= 0;
+    shadow(ctx, pose.x, pose.y, 34);
+    if (enraged) drawLordAura(ctx, pose.x + knock + shake, pose.y, animTime, still);
+    if (!still && critActive(lord, time)) drawCritOutline(ctx, sprite, sx, sy);
+    ctx.drawImage(sprite, sx, sy);
+    if (enraged) drawLordBlaze(ctx, pose.x + knock + shake, pose.y, animTime, still);
+    if (introAge >= 0 && introAge < INTRO_EYES_S) {
+      const [lx, ly, rx, ry] = eyePoints(pose.mode, pose.x, pose.y, pose.frame);
+      drawEyeFlare(ctx, lx, ly, rx, ry, time, still);
+    }
+    if (striking) {
+      const victim = office.employees.get(lord.strikeId);
+      if (victim && victim.inDungeon && victim.floor === DUNGEON_FLOORS) {
+        // the ember slam travels from the Lord to the raider it struck
+        const to = office.raiderPoint(victim);
+        const reach = Math.min(1, strikeAge / (LORD_STRIKE_S / 2));
+        for (let k = 0; k < LORD_SLAM_EMBERS; k++) {
+          const along = Math.min(1, reach * (1 - k * 0.12));
+          const ex = pose.x - 20 + (to.x - (pose.x - 20)) * along,
+            ey = pose.y - 24 + (to.y - 12 - (pose.y - 24)) * along;
+          rect(
+            ctx,
+            k % 2 ? "#ffd070" : "#ff6a3a",
+            Math.round(ex),
+            Math.round(ey - Math.sin(along * Math.PI) * 6),
+            2,
+            2,
+          );
+        }
+      }
+    }
     return;
   }
-  const dage = time - lord.deadAt;
-  if (dage < 0 || dage > LORD_DOWN_FADE_S) return;
-  blitC(ctx, "poof" + (Math.floor(dage * 8) % 2), at.x, at.y - 24);
-  blitC(ctx, "coin", at.x - 2, at.y - 30 - dage * 12);
+  // down: the death sequence (kneel, cracks of light, white flash); after the burst nothing is left to draw
+  const feet = dungeonLordPoint();
+  drawLordDeath(ctx, office, time, still, feet.x, feet.y);
 };
 
-/** the Lord's hp bar across the top of B3 (opaque panel, readable label), or its rest timer while it is down */
-const drawLordBar = (ctx: Ctx, office: Office, time: number) => {
-  const lord = office.lord;
-  const cx = Math.round(VIEW_X0 + VIEW_W / 2),
-    { w, h, y } = LORD_BAR;
-  const label = `${m.dungeon_floor_lord()} — ${
-    lord.hp > 0 ? m.dungeon_floor_lord_alive({ hp: Math.ceil(lord.hp * 100) }) : m.dungeon_floor_lord_down()
-  }`;
-  rect(ctx, INK, cx - w / 2 - 3, y - 12, w + 6, h + 17);
-  rect(ctx, "#2a1a24", cx - w / 2 - 2, y - 11, w + 4, h + 15);
-  ctx.font = '700 7px ui-sans-serif, system-ui, "Sukhumvit Set", "Noto Sans Thai", sans-serif';
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText(label, cx, y - 6);
-  rect(ctx, INK, cx - w / 2 - 1, y - 1, w + 2, h + 2);
-  rect(ctx, "#5a1f2a", cx - w / 2, y, w, h);
-  if (lord.hp > 0) {
-    rect(ctx, "#d9481f", cx - w / 2, y, Math.max(1, Math.round(w * lord.hp)), h);
-    rect(ctx, "#ff8a2a", cx - w / 2, y, Math.max(1, Math.round(w * lord.hp)), 2);
-  } else {
-    const rest = Math.min(1, Math.max(0, (time - lord.deadAt) / LORD_RESPAWN_S));
-    rect(ctx, "#8d93a0", cx - w / 2, y, Math.round(w * rest), h);
+/** the horned skull icon of the boss bar (9x6): H horn, B bone, E red eye */
+const LORD_SKULL = ["H.......H", "HH.BBB.HH", ".HBBBBBH.", "..BEBEB..", "..BBBBB..", "...BBB..."];
+const LORD_SKULL_COLORS: Record<string, string> = { H: "#c9b27a", B: "#efe6c8", E: "#ff4a4a" };
+const drawLordSkull = (ctx: Ctx, x: number, y: number) => {
+  LORD_SKULL.forEach((row, ry) =>
+    [...row].forEach((ch, rx) => {
+      if (ch !== ".") rect(ctx, LORD_SKULL_COLORS[ch], x + rx, y + ry, 1, 1);
+    }),
+  );
+};
+
+/** a chunky segmented bar: SEG px blocks with a 1px gap, lit top row and dark bottom row per block */
+const LORD_SEG = 5;
+const segmentedBar = (
+  ctx: Ctx,
+  x: number,
+  y: number,
+  segs: number,
+  height: number,
+  fill: number,
+  trail: number,
+  colors: { on: string; hi: string; lo: string },
+) => {
+  for (let i = 0; i < segs; i++) {
+    const sx = x + i * LORD_SEG;
+    const lit = (i + 1) / segs <= fill + 1e-6 || (i / segs < fill && fill > 0 && i === Math.floor(fill * segs));
+    const draining = !lit && i / segs < trail;
+    const base = lit ? colors.on : draining ? "#ffe14a" : "#3a1a22";
+    rect(ctx, base, sx, y, LORD_SEG - 1, height);
+    if (lit || draining) {
+      rect(ctx, lit ? colors.hi : "#fff4a0", sx, y, LORD_SEG - 1, 1);
+      rect(ctx, lit ? colors.lo : "#b8962a", sx, y + height - 1, LORD_SEG - 1, 1);
+    }
   }
 };
 
-const drawDungeonScene = (ctx: Ctx, office: Office, time: number) => {
+/** the Lord's hp bar across the top of B3 in pixel art (iron frame, skull, bitmap label, segmented bar), or its rest timer */
+const drawLordBar = (ctx: Ctx, office: Office, time: number) => {
+  const lord = office.lord;
+  const segs = 28;
+  const barW = segs * LORD_SEG - 1;
+  const panelW = barW + 22,
+    panelH = 21;
+  const panelX = Math.round(VIEW_X0 + VIEW_W / 2 - panelW / 2),
+    panelY = WORLD_H - panelH - 4; // the bottom of the cavern: clear of the caption, floor tabs and back button over the top
+  rect(ctx, INK, panelX - 1, panelY - 1, panelW + 2, panelH + 2);
+  rect(ctx, "#5c667a", panelX, panelY, panelW, panelH);
+  rect(ctx, "#8d99ad", panelX, panelY, panelW, 1);
+  rect(ctx, "#2a1a24", panelX + 2, panelY + 2, panelW - 4, panelH - 4);
+  for (const [cx, cy] of [
+    [panelX + 1, panelY + 1],
+    [panelX + panelW - 2, panelY + 1],
+    [panelX + 1, panelY + panelH - 2],
+    [panelX + panelW - 2, panelY + panelH - 2],
+  ])
+    rect(ctx, "#efe6c8", cx, cy, 1, 1);
+  drawLordSkull(ctx, panelX + 4, panelY + 3);
+  const alive = lord.hp > 0;
+  const textX = panelX + 15;
+  drawPixelText(ctx, "DUNGEON LORD", textX, panelY + 3, alive ? "#ffffff" : "#c4c9d4", { shadow: INK });
+  drawPixelText(
+    ctx,
+    alive ? `${Math.ceil(lord.hp * 100)}%` : "SLAIN",
+    panelX + panelW - 5,
+    panelY + 3,
+    alive ? "#ffd070" : "#8d93a0",
+    {
+      shadow: INK,
+      align: "right",
+    },
+  );
+  const barX = panelX + 11,
+    barY = panelY + 11;
+  rect(ctx, INK, barX - 1, barY - 1, barW + 2, 8);
+  if (alive || lord.shown > 0.002) {
+    const fill = alive ? Math.max(0.01, lord.hp) : 0;
+    const enraged = lord.enragedAt >= 0;
+    const hot = enraged && !office.reducedMotion && Math.floor(time * 6) % 2 === 0;
+    segmentedBar(
+      ctx,
+      barX,
+      barY,
+      segs,
+      6,
+      fill,
+      lord.shown,
+      enraged
+        ? { on: hot ? "#ff5a2a" : "#ff3b2a", hi: "#ffd070", lo: "#a8200f" }
+        : { on: "#d9481f", hi: "#ff8a2a", lo: "#8a2410" },
+    );
+  } else {
+    const rest = Math.min(1, Math.max(0, (time - lord.deadAt) / LORD_RESPAWN_S));
+    segmentedBar(ctx, barX, barY, segs, 6, rest, 0, { on: "#8d93a0", hi: "#c4c9d4", lo: "#5c667a" });
+  }
+};
+
+const drawDungeonScene = (ctx: Ctx, office: Office, time: number) =>
+  drawDungeonFloor(ctx, office, time, office.dungeonFloor, false);
+
+/** one dungeon floor; `mini` (the picture-in-picture on the guild scene) leaves out the tags, hover and the Lord's bar */
+const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number, mini: boolean) => {
   const still = office.reducedMotion;
-  const floor = office.dungeonFloor;
   const onLordFloor = floor >= DUNGEON_FLOORS;
+  const lord = office.lord;
+  let shaken = false;
+  if (onLordFloor) {
+    // the fight's mood: braziers snuffed in the intro, lava surging when enraged, the empty throne dark
+    const surge = still ? (lord.enragedAt >= 0 ? 1 : 0) : lavaSurge(lord, time);
+    setLordMood(still ? 0 : 1 - introLight(time - lord.introAt), surge, throneDarkness(lord, time));
+    if (!still && lord.shake > LORD_SHAKE_MIN) {
+      const amp = LORD_SHAKE_AMP * lord.shake * lord.shake;
+      ctx.save();
+      ctx.translate(Math.round((Math.random() * 2 - 1) * amp), Math.round((Math.random() * 2 - 1) * amp));
+      shaken = true;
+    }
+  }
   drawDungeonBack(ctx, time, still, floor);
+  if (onLordFloor) drawLordFloorFx(ctx, office, time, still); // warnings and floor attacks: under every character
   const raiders = office.dungeonRaiders().filter((emp) => !office.isHidden(emp) && emp.floor === floor);
   const ents: { y: number; fn: () => void }[] = [];
   if (raiders.length === 0 && floor === 1) ents.push({ y: 0, fn: () => drawSleepers(ctx, time, still) });
-  if (onLordFloor)
-    ents.push({ y: dungeonLordPoint().y, fn: () => drawLord(ctx, office, time, still, raiders.length > 0) });
+  const lordAt = lordPose(office, time, still);
+  if (onLordFloor) {
+    ents.push({ y: lordAt.y, fn: () => drawLord(ctx, office, time, still, lordAt) });
+    lord.minions.forEach((minion, index) => {
+      if (minion.on) ents.push({ y: minion.y, fn: () => drawMinion(ctx, minion, time, still, index) });
+    });
+    for (const meteor of lord.meteors)
+      if (meteor.on && !meteor.landed) ents.push({ y: meteor.y, fn: () => drawMeteor(ctx, meteor, time, still) });
+  }
   let stackedOnLast = 0;
   raiders.forEach((emp) => {
     const spot = office.raiderPoint(emp); // keyed by the overflow slot: nobody jumps when another raider leaves
-    const home = dungeonSpotOf(emp.slot, floor);
-    if (dungeonSpotIndex(emp.slot) === DUNGEON_LAST_SPOT) stackedOnLast++;
+    const spotIndex = office.raidSpotIndex(emp);
+    const home = dungeonSpotOf(spotIndex, floor);
+    if (dungeonSpotIndex(spotIndex) === DUNGEON_LAST_SPOT) stackedOnLast++;
     const foePos = dungeonMonsterPoint(home);
     const fighting = emp.stairsAt < 0 && (onLordFloor ? office.lord.hp > 0 : !!emp.raid && emp.raid.hp > 0);
     const heldTime = frozenTime(emp, time);
-    ents.push({ y: spot.y, fn: () => atSpot(emp, spot, () => drawAdventurer(ctx, emp, heldTime, fighting)) });
+    ents.push({
+      y: spot.y,
+      fn: () =>
+        atSpot(emp, spot, () => {
+          // a raider hops clear when a Lord attack reaches them
+          const prevDy = duelDyNow;
+          duelDyNow = onLordFloor ? -dodgeLift(time, emp.dodgeAt, still) : prevDy;
+          drawAdventurer(ctx, emp, heldTime, fighting);
+          duelDyNow = prevDy;
+        }),
+    });
     if (!onLordFloor) ents.push({ y: home.y, fn: () => drawRaidFoe(ctx, emp, time, still, foePos) });
-    ents.push({ y: spot.y + 0.4, fn: () => atSpot(emp, spot, () => drawFx(ctx, emp, heldTime, office, fighting)) });
+    // on floor 3 the class effect (arrow, spell bolt, slash arc) flies to the Lord's body, not to a foe spot beside the raider
+    const aim = onLordFloor ? { x: lordAt.x - LORD_AIM_DX, y: lordAt.y - LORD_AIM_DY } : undefined;
+    ents.push({
+      y: spot.y + 0.4,
+      fn: () => atSpot(emp, spot, () => drawFx(ctx, emp, heldTime, office, fighting, aim)),
+    });
   });
   const stacked = stackedOnLast - 1;
   if (stacked > 0) {
@@ -3029,9 +3359,15 @@ const drawDungeonScene = (ctx: Ctx, office: Office, time: number) => {
   ents.sort((entA, entB) => entA.y - entB.y);
   drawParticles(ctx, office, true, floor);
   for (const entity of ents) entity.fn();
-  drawDungeonFront(ctx, time, still);
+  drawDungeonFront(ctx, time, still, floor);
   drawParticles(ctx, office, false, floor);
+  if (onLordFloor) {
+    if (!still) drawSlashes(ctx, lord, time, lordAt.x, lordAt.y);
+    drawTaunt(ctx, lord, time, lordAt.x - LORD_TAUNT_DX, lordAt.y - LORD_TAUNT_DY, mini ? 2 : 1);
+  }
   drawPopups(ctx, office, floor);
+  if (shaken) ctx.restore();
+  if (mini) return;
   if (onLordFloor) drawLordBar(ctx, office, time);
   raiders.forEach((emp) => {
     atSpot(emp, office.raiderPoint(emp), () => {
@@ -3039,6 +3375,78 @@ const drawDungeonScene = (ctx: Ctx, office: Office, time: number) => {
       if (office.hoverId === emp.id) drawHover(ctx, office, emp, time);
     });
   });
+};
+
+// ---- the live Dungeon Lord inset on the guild scene ----------------------------------------------------------------
+const PIP_TITLE_H = 10;
+const PIP_BAR_H = 6;
+const PIP_PAD = 2;
+/** the part of floor 3 the inset shows: the Lord and the ring of raiders in front of it (source px) */
+const PIP_SRC_W = 255;
+const PIP_SRC_H = 106;
+const PIP_SRC_X = 129;
+const PIP_SRC_TOP_GAP = 4;
+let pipLayer: { cv: HTMLCanvasElement; c: Ctx } | null = null;
+
+/** floor 3 drawn small in a corner of the guild scene: opaque frame, title, the floor scene scaled down, the Lord's hp bar */
+const drawLordPip = (ctx: Ctx, office: Office, time: number) => {
+  if (typeof document === "undefined") return;
+  pipLayer ??= mk();
+  const layer = pipLayer;
+  layer.c.save();
+  layer.c.setTransform(1, 0, 0, 1, WING_W, 0);
+  layer.c.fillStyle = "#0d0b16";
+  layer.c.fillRect(VIEW_X0, 0, VIEW_W, WORLD_H);
+  drawDungeonFloor(layer.c, office, time, DUNGEON_FLOORS, true);
+  layer.c.restore();
+  const { x, y, w, h } = LORD_PIP;
+  const lord = office.lord;
+  const live = lord.hp > 0;
+  const frame = live ? "#d9481f" : "#f2c14e";
+  rect(ctx, INK, x - 2, y - 2, w + 4, h + 4);
+  rect(ctx, frame, x - 1, y - 1, w + 2, h + 2);
+  rect(ctx, "#2a1a24", x, y, w, h);
+  // title strip (pixel font; characters it lacks, like the sword glyph, are skipped)
+  drawPixelText(ctx, PIP_TITLE, x + 4, y + 3, "#ffffff", { shadow: INK });
+  if (live && !office.reducedMotion && Math.sin(time * 6) > 0) rect(ctx, "#ff3b2a", x + w - 8, y + 3, 4, 4);
+  else rect(ctx, live ? "#a8200f" : "#8d93a0", x + w - 8, y + 3, 4, 4);
+  // the floor
+  const picW = w - PIP_PAD * 2,
+    picH = h - PIP_TITLE_H - PIP_BAR_H - PIP_PAD;
+  const srcY = Math.max(0, dungeonThronePoint().y - LORD_RISE_H - PIP_SRC_TOP_GAP);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(layer.cv, PIP_SRC_X - VIEW_X0, srcY, PIP_SRC_W, PIP_SRC_H, x + PIP_PAD, y + PIP_TITLE_H, picW, picH);
+  ctx.imageSmoothingEnabled = false; // the rest of the frame stays crisp pixel art
+  // hp bar
+  const barY = y + h - PIP_BAR_H;
+  const barW = w - PIP_PAD * 2;
+  rect(ctx, "#5a1f2a", x + PIP_PAD, barY, barW, PIP_BAR_H - PIP_PAD);
+  if (live) {
+    rect(ctx, "#d9481f", x + PIP_PAD, barY, Math.max(1, Math.round(barW * lord.hp)), PIP_BAR_H - PIP_PAD);
+    rect(ctx, "#ff8a2a", x + PIP_PAD, barY, Math.max(1, Math.round(barW * lord.hp)), 1);
+  } else rect(ctx, "#8d93a0", x + PIP_PAD, barY, barW, PIP_BAR_H - PIP_PAD);
+};
+
+/** pixel-font labels (the 3x5 font has Latin capitals only, so these stay English in every locale) */
+const PIP_TITLE = "DUNGEON LORD B3";
+const RAID_FLAG_TEXT = "RAID";
+
+/** the flag standing at an empty battle spot while its adventurer raids the dungeon */
+const drawRaidingFlag = (ctx: Ctx, x: number, y: number, time: number, still: boolean) => {
+  const wave = still ? 0 : Math.round(Math.sin(time * 3));
+  rect(ctx, INK, x - 1, y - 20, 3, 21);
+  rect(ctx, "#8d93a0", x, y - 19, 1, 19);
+  rect(ctx, INK, x, y - 20 + wave, 17, 10);
+  rect(ctx, "#a24853", x + 1, y - 19 + wave, 15, 8);
+  rect(ctx, "#d95763", x + 1, y - 19 + wave, 15, 1);
+  rect(ctx, "#fff6e0", x + 8, y - 18 + wave, 1, 5);
+  rect(ctx, "#fff6e0", x + 6, y - 16 + wave, 5, 1);
+  rect(ctx, GOLD, x + 8, y - 13 + wave, 1, 2);
+  const text = RAID_FLAG_TEXT;
+  const width = measurePixelText(text) + 6;
+  rect(ctx, INK, x + 8 - Math.floor(width / 2) - 1, y + 3, width + 2, 9);
+  rect(ctx, "#2a1a24", x + 8 - Math.floor(width / 2), y + 4, width, 7);
+  drawPixelText(ctx, text, x + 8, y + 6, "#ffffff", { align: "center" });
 };
 
 /** opaque count badge over the dungeon gate while adventurers are raiding inside */
@@ -3096,6 +3504,9 @@ export const drawScene = (ctx: Ctx, office: Office) => {
     return;
   }
   drawSky(ctx, time, hour);
+  const lordPipUp = office.lordPip();
+  const auraHeat = office.bossAlive > 0 || lordPipUp ? 1 : 0.25;
+  drawGateAuraSky(ctx, time, office.reducedMotion, auraHeat, night);
   if (office.bird && night < 0.6 && office.rain < 0.5) {
     const bird = office.bird;
     const sprite = prop("bird" + (Math.floor(bird.ph * 7) % 2));
@@ -3119,6 +3530,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   drawEnvAnim(ctx, time);
   drawQuestBoard(ctx, office, time);
   drawGate(ctx, office, time);
+  drawGateAuraGround(ctx, time, office.reducedMotion, auraHeat);
   drawAllyGate(ctx, office.allyDoorsUntil > time, time, office.reducedMotion);
   // Lighting tints only the environment; characters, monsters and emissive things stay solid and full-colour.
   ctx.drawImage(overlay!, VIEW_X0, 0);
@@ -3168,6 +3580,11 @@ export const drawScene = (ctx: Ctx, office: Office) => {
     if (emp.inDungeon) {
       raidersInside++;
       raidersByFloor[emp.floor - 1]++; // the badge counts only the raiders the session filter lets through (as the dungeon scene does)
+      if (emp.deskIdx >= 0) {
+        // a battle-spot adventurer out raiding: its empty spot keeps a small flag
+        const spot = spotOf(emp.deskIdx);
+        ents.push({ y: spot.y, fn: () => drawRaidingFlag(ctx, spot.x, spot.y, time, office.reducedMotion) });
+      }
       continue;
     }
     const heldTime = frozenTime(emp, time);
@@ -3207,13 +3624,15 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   ents.push({ y: NEAR_SETTINGS_Y, fn: () => drawSettings(ctx, office, time, false) });
   ents.sort((entA, entB) => entA.y - entB.y);
   for (const entity of ents) entity.fn();
+  drawGateAuraTop(ctx, time, office.reducedMotion, auraHeat);
   drawDuels(ctx, office, time);
-  drawGuildMasterBubble(ctx, office);
+  drawGuildMasterBubble(ctx, office, time);
   drawLinkIcons(ctx, nLinks, time, office); // after entities: the opaque badge is never hidden
   drawParticles(ctx, office, false);
   drawPopups(ctx, office);
   drawCheers(ctx, office, time);
   if (raidersInside > 0) drawRaidBadge(ctx, raidersByFloor, office.lord.hp > 0);
+  if (lordPipUp) drawLordPip(ctx, office, time);
 
   // bubbles, highlights, tags
   for (const emp of office.employees.values()) {

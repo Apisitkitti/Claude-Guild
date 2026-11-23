@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { bossCenterX, BOSS_H, BOSS_W } from "@/lib/office/bossSprites";
-import type { AttentionMsgRow, Employee } from "@/lib/office/engine";
+import { GM_HIT_ID, RAID_READY_CALLS, type AttentionMsgRow, type Employee } from "@/lib/office/engine";
 import {
   CH_H,
   CH_W,
@@ -32,14 +32,14 @@ afterEach(() => {
 
 const IDLE_WAIT_S = 22;
 const TALK_WAIT_S = 3.5;
-const TRIP_LIMIT_S = 40;
+const TRIP_LIMIT_S = 90;
 const NEAR = 0.5;
 
 const bell = (sessionId: string): AttentionMsgRow => ({
   key: `${sessionId}|loop|x`,
   sid: sessionId,
   kind: "loop",
-  since: 1,
+  since: Date.now(),
 });
 /** tick until the guild master reaches `phase` (or the limit runs out) */
 const until = (office: ReturnType<typeof newOffice>, phase: string, limit = TRIP_LIMIT_S) => {
@@ -197,5 +197,171 @@ describe("guild master", () => {
       }
       for (const solid of solids) expect(hits(master, solid)).toBe(false);
     }
+  });
+});
+
+/** let any calm patrol finish and keep him home until something urgent happens */
+const calmDown = (office: ReturnType<typeof newOffice>) => {
+  until(office, "home");
+  office.guildMaster.until = office.clock + 1000;
+};
+const permission = (id: string) => ev(id, "Notification", { notification_type: "permission_prompt" } as never);
+const asked = (sessionId: string): AttentionMsgRow => ({
+  key: `${sessionId}|asked|x`,
+  sid: sessionId,
+  kind: "asked",
+  since: Date.now(),
+  tail: "which branch?",
+});
+const bells = (office: ReturnType<typeof newOffice>) => office.sfxQueue.filter((cue) => cue === "bell").length;
+
+describe("guild master triage", () => {
+  it("orders the report permission > question > loop > stuck > idle, oldest first", () => {
+    const office = newOffice();
+    const [perm, loop, ask, stuck, idle] = [sid(), sid(), sid(), sid(), sid()];
+    seat(office, idle);
+    tick(office, 310);
+    for (const id of [perm, loop, ask, stuck]) seat(office, id);
+    office.event(ev(stuck, "PreToolUse", { tool_name: "Bash", tool_use_id: "t1" } as never));
+    tick(office, 95);
+    office.event(permission(perm));
+    office.setAttention([bell(loop), asked(ask)]);
+    const rows = office.guildMasterReport();
+    expect(rows.map((row) => row.reason)).toEqual(["permission", "question", "loop", "stuck", "idle"]);
+    expect(rows.map((row) => row.id)).toEqual([perm, ask, loop, stuck, idle]);
+    expect(rows[1].detail).toBe("which branch?");
+    expect(rows[3].detail).toBe("Bash");
+    expect(rows[3].since).toBeLessThan(office.clock);
+  });
+
+  it("sorts rows of one reason oldest first", () => {
+    const office = newOffice();
+    const [first, second] = [sid(), sid()];
+    seat(office, first);
+    seat(office, second);
+    office.event(permission(second));
+    tick(office, 3);
+    office.event(permission(first));
+    const rows = office.guildMasterReport();
+    expect(rows.map((row) => row.id)).toEqual([second, first]);
+  });
+
+  it("dates a queue row from when it appeared, not from when he first read it", () => {
+    const office = newOffice();
+    const loopId = sid();
+    seat(office, loopId);
+    tick(office, 30);
+    office.setAttention([{ ...bell(loopId), since: Date.now() - 15_000 }]);
+    const [row] = office.guildMasterReport();
+    expect(office.clock - row.since).toBeCloseTo(15, 0);
+  });
+
+  it("walks to the most urgent session first and shows its reason", () => {
+    const office = newOffice();
+    const [loopId, permId] = [sid(), sid()];
+    seat(office, loopId);
+    seat(office, permId);
+    calmDown(office);
+    office.setAttention([bell(loopId)]);
+    office.event(permission(permId));
+    until(office, "out");
+    expect(office.guildMaster.targetId).toBe(permId);
+    expect(office.gmTarget()).toBe(permId);
+    until(office, "talk");
+    expect(office.guildMaster.icon).toBe("permission");
+    expect(office.guildMaster.reason).toBe("permission");
+  });
+
+  it("points at the dungeon gate for a raider instead of visiting", () => {
+    const office = newOffice();
+    const raider = seat(office, sid());
+    calmDown(office);
+    raider.raidIn = true;
+    office.setAttention([bell(raider.id)]);
+    until(office, "out");
+    expect(office.guildMaster.mission).toBe("gate");
+    until(office, "talk");
+    expect(office.guildMaster.x).toBeGreaterThan(300);
+  });
+
+  it("hit() returns the guild master id on the guild scene and select ignores it", () => {
+    const office = newOffice();
+    const master = office.guildMaster;
+    expect(office.hit(master.x, master.y - 5)).toBe(GM_HIT_ID);
+    office.select(GM_HIT_ID);
+    expect(office.selectedId).toBeNull();
+    office.setScene("dungeon");
+    expect(office.hit(master.x, master.y - 5)).not.toBe(GM_HIT_ID);
+  });
+
+  it("dispatcher: talks to a raid-ready adventurer, then escorts it to the gate", () => {
+    const office = newOffice();
+    const hero = seat(office, sid());
+    calmDown(office);
+    tick(office, 3);
+    hero.raidCalls = RAID_READY_CALLS;
+    tick(office, 0.1);
+    expect(office.guildMaster.mission).toBe("dispatch");
+    expect(hero.state).toBe("SEATED");
+    until(office, "talk");
+    expect(office.guildMaster.icon).toBe("sword");
+    for (let i = 0; i < 400 && office.guildMaster.phase !== "escort"; i++) tick(office, 0.05);
+    expect(office.guildMaster.phase).toBe("escort");
+    expect(hero.state).toBe("TO_RAID");
+    until(office, "home");
+    expect(office.guildMaster.phase).toBe("home");
+    expect(office.guildMaster.mission).toBe("none");
+  });
+
+  it("dispatcher: raid proceeds without escort when he is busy", () => {
+    const office = newOffice();
+    const hero = seat(office, sid());
+    const other = seat(office, sid());
+    calmDown(office);
+    office.event(permission(other.id));
+    tick(office, 3);
+    hero.raidCalls = RAID_READY_CALLS;
+    tick(office, 0.1);
+    expect(hero.state).toBe("TO_RAID");
+  });
+
+  it("rings the door bell after 120 s of waiting, repeats every 20 s and stops when resolved", () => {
+    const office = newOffice();
+    const waiting = seat(office, sid());
+    office.event(permission(waiting.id));
+    tick(office, 100);
+    expect(office.gmBellRinging).toBe(false);
+    tick(office, 25);
+    until(office, "talk", 60);
+    for (let i = 0; i < 400 && !office.gmBellRinging; i++) tick(office, 0.05);
+    expect(office.gmBellRinging).toBe(true);
+    expect(office.guildMaster.mission).toBe("door");
+    expect(office.guildMaster.icon).toBe("bell");
+    const before = bells(office);
+    tick(office, 41);
+    expect(bells(office)).toBeGreaterThanOrEqual(before + 2);
+    office.event(ev(waiting.id, "UserPromptSubmit"));
+    tick(office, 1);
+    expect(office.gmBellRinging).toBe(false);
+    until(office, "home");
+    expect(office.guildMaster.phase).toBe("home");
+  });
+
+  it("reduced motion: icon bubble above his post, static bell, no walking", () => {
+    const office = newOffice();
+    office.reducedMotion = true;
+    const waiting = seat(office, sid());
+    office.event(permission(waiting.id));
+    tick(office, 1);
+    expect(office.guildMaster.icon).toBe("permission");
+    expect(office.guildMaster.phase).toBe("home");
+    tick(office, 125);
+    expect(office.guildMaster.icon).toBe("bell");
+    expect(office.gmBellRinging).toBe(true);
+    expect(office.guildMaster).toMatchObject({ x: GUILD_MASTER_HOME.x, y: GUILD_MASTER_HOME.y });
+    office.event(ev(waiting.id, "UserPromptSubmit"));
+    tick(office, 1);
+    expect(office.gmBellRinging).toBe(false);
+    expect(office.guildMaster.icon).toBeNull();
   });
 });

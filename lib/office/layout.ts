@@ -29,8 +29,9 @@ const DOOR_INSET = 6;
 export const DOOR: Pt = { x: VIEW_X0 + DOOR_INSET, y: 176 };
 export const DOOR_IN: Pt = { x: 30, y: 176 };
 export const BOARD: Pt = { x: 30, y: 68 };
-/** Click / hover area of the quest board on the back wall (frame + posts), logical px. */
-export const BOARD_HIT: Rect = { x: 5, y: 5, w: 34, h: 47 };
+/** Click / hover area of the quest board on the back wall (the board itself), logical px. Ends above the heads of
+ * adventurers standing at BOARD (sprite top ~44) so they stay clickable. */
+export const BOARD_HIT: Rect = { x: 5, y: 5, w: 34, h: 36 };
 export const COUNTER: Pt = { x: 98, y: 80 };
 export const GATE_Y = 124;
 export const GATE_IN: Pt = { x: 112, y: GATE_Y };
@@ -168,6 +169,10 @@ export const routeFromDungeon = (desk: number): Pt[] => {
   return dedupe(pts).slice(1);
 };
 
+/** battle spot -> dungeon gate mouth: the way home reversed (excludes the start spot, ends at GATE_MOUTH). */
+export const routeToDungeon = (desk: number): Pt[] =>
+  [{ ...GATE_MOUTH }, ...routeFromDungeon(desk).map((pt) => ({ ...pt }))].reverse().slice(1);
+
 /** when every feast seat is taken: stand by the quest counter, just off the aisle */
 const OVERFLOW_DY = 16;
 export const TAVERN_OVERFLOW: Pt = { x: COUNTER.x, y: COUNTER.y + OVERFLOW_DY };
@@ -234,10 +239,65 @@ export const routeGuildMaster = (desk: number): Pt[] => {
     stand,
   ]).slice(1);
 };
+/** small spot in the hall where he reads out the daily report (next to his post) */
+export const GUILD_MASTER_ANNOUNCE: Pt = { x: 84, y: 112 };
+/** where he rings the hand bell: just inside the guild door */
+const GM_DOOR_DX = 14;
+export const GUILD_MASTER_DOOR_STAND: Pt = { x: DOOR.x + GM_DOOR_DX, y: DOOR.y };
+export const routeGuildMasterAnnounce = (): Pt[] => [{ ...GUILD_MASTER_ANNOUNCE }];
+/** home -> aisle row -> gate -> along the river bank to the gate stand (excludes the start) */
+export const routeGuildMasterGate = (): Pt[] =>
+  dedupe([
+    { ...GUILD_MASTER_HOME },
+    { x: GUILD_MASTER_HOME.x, y: GATE_Y },
+    { ...GATE_IN },
+    { ...GATE_OUT },
+    { x: GATE_OUT.x, y: RAID_BANK_Y },
+    { ...GUILD_MASTER_GATE_STAND },
+  ]).slice(1);
+/** home -> aisle row -> board column -> the entrance path -> the door stand (excludes the start) */
+export const routeGuildMasterDoor = (): Pt[] =>
+  dedupe([
+    { ...GUILD_MASTER_HOME },
+    { x: GUILD_MASTER_HOME.x, y: GATE_Y },
+    { x: BOARD.x, y: GATE_Y },
+    { ...DOOR_IN },
+    { ...GUILD_MASTER_DOOR_STAND },
+  ]).slice(1);
+/** stand point beside battle spot `desk` -> the gate stand along the raiders' own route (he walks ahead of the raider) */
+export const routeGuildMasterEscort = (desk: number): Pt[] => {
+  const spot = spotOf(desk);
+  const pts: Pt[] = [{ x: spot.x, y: ROAD_Y }];
+  if (desk < GRID_COLS) pts.push({ x: spot.x, y: RAID_BANK_Y });
+  else pts.push({ x: GATE_OUT.x, y: ROAD_Y }, { x: GATE_OUT.x, y: RAID_BANK_Y });
+  pts.push({ ...GUILD_MASTER_GATE_STAND });
+  return dedupe(pts);
+};
 /** from wherever he stands (hall or wilderness, on his routes) back home (excludes the start) */
 export const routeGuildMasterHome = (x: number, y: number): Pt[] => {
   // still on the first leg (straight down from home to the aisle row): walk straight back up
   if (x === GUILD_MASTER_HOME.x && y <= GATE_Y) return dedupe([{ x, y }, { ...GUILD_MASTER_HOME }]).slice(1);
+  // upper hall (announce spot): straight back
+  if (x >= 0 && x <= GATE_IN.x && y < GATE_Y) return dedupe([{ x, y }, { ...GUILD_MASTER_HOME }]).slice(1);
+  // the entrance path (door side): back along it, then up the board column to the aisle row
+  if (y > GATE_Y && x <= HALL_W)
+    return dedupe([
+      { x, y },
+      { x: DOOR_IN.x, y },
+      { x: BOARD.x, y: GATE_Y },
+      { x: GUILD_MASTER_HOME.x, y: GATE_Y },
+      { ...GUILD_MASTER_HOME },
+    ]).slice(1);
+  // the river bank (gate stand / escort): back west along the bank, down the branch road to the gate
+  if (y <= RAID_BANK_Y && x > GATE_OUT.x)
+    return dedupe([
+      { x, y },
+      { x: GATE_OUT.x, y: RAID_BANK_Y },
+      { ...GATE_OUT },
+      { ...GATE_IN },
+      { x: GUILD_MASTER_HOME.x, y: GATE_Y },
+      { ...GUILD_MASTER_HOME },
+    ]).slice(1);
   const pts: Pt[] = [{ x, y }];
   if (x > HALL_W) pts.push({ x, y: ROAD_Y }, { ...GATE_OUT });
   if (x > GATE_IN.x) pts.push({ ...GATE_IN });
@@ -300,12 +360,17 @@ export const BRIDGE_X = 340;
 // ---- the two gates ----
 /** Click / hover area of the dungeon gate (the stone arch + torches), logical px. */
 export const DUNGEON_HIT: Rect = { x: 318, y: 18, w: 48, h: 36 };
+/** The live picture-in-picture of the Dungeon Lord fight (guild scene, over the wilderness north of the battle rows); also its click area. */
+export const LORD_PIP: Rect = { x: 194, y: 16, w: 110, h: 62 };
 /** Where a boss steps out of the dungeon (just inside the arch). */
 export const GATE_MOUTH: Pt = { x: DUNGEON.x, y: DUNGEON.y - 1 };
 const BRIDGE_TOP_Y = 53;
 const BRIDGE_END_Y = 74;
 /** raiders walk the river bank on this row (the same one bosses use) */
 const RAID_BANK_Y = 75;
+/** where he stands to point at the dungeon gate: on the river bank, east of the bridge (raiders turn up at the bridge) */
+const GM_GATE_DX = 16;
+export const GUILD_MASTER_GATE_STAND: Pt = { x: BRIDGE_X + GM_GATE_DX, y: RAID_BANK_Y };
 /** Boss feet walk this row just south of the river: above every adventurer box (they start at y 78, their HP bars at 76). */
 const BOSS_WALK_Y = 75;
 /** Lower-row bosses use the road between the battle rows, a box-height below the upper row's feet. */

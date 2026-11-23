@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 
 import type { DungeonStats } from "@/lib/office/dungeon";
 import { DUNGEON_FLOORS } from "@/lib/office/dungeonScene";
-import type { QuestView } from "@/lib/office/engine";
-import { BOARD_HIT, DUNGEON_HIT, VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
+import { GM_HIT_ID, type QuestView } from "@/lib/office/engine";
+import { BOARD_HIT, DUNGEON_HIT, LORD_PIP, VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
 import { m } from "@/paraglide/messages";
 
 import { DungeonCard } from "./DungeonCard";
@@ -15,6 +15,8 @@ const CANVAS_BORDER = 3;
 const CARD_GAP = 4;
 const FLOORS = Array.from({ length: DUNGEON_FLOORS }, (_, i) => i + 1);
 const FLOOR_NAMES = [m.dungeon_floor_name_1, m.dungeon_floor_name_2, m.dungeon_floor_name_3];
+/** caption of a floor while nobody raids anywhere in the dungeon */
+const FLOOR_QUIET = [m.dungeon_floor_quiet_1, m.dungeon_floor_quiet_2, m.dungeon_floor_quiet_3];
 
 export const Stage = ({
   canvasRef,
@@ -25,6 +27,7 @@ export const Stage = ({
   quests,
   viewScene,
   viewFloor,
+  onOpenReport,
 }: {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   stageRef: RefObject<HTMLDivElement | null>;
@@ -37,10 +40,14 @@ export const Stage = ({
   viewScene: "guild" | "dungeon";
   /** the dungeon floor on screen (1..3), mirrored from the engine */
   viewFloor: number;
+  /** the Guild Master was clicked on the canvas: open his report */
+  onOpenReport: () => void;
 }) => {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState(false);
   const [boardOpen, setBoardOpen] = useState(false);
+  /** pointer position (box-relative px) while hovering the Guild Master, else null */
+  const [gmTip, setGmTip] = useState<{ x: number; y: number } | null>(null);
   /** screen-reader text, set once when the dungeon scene is entered (the visible caption is not a live region) */
   const [entered, setEntered] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
@@ -60,7 +67,7 @@ export const Stage = ({
       ? m.dungeon_floor_caption({ floor: viewFloor, name: floorName, count: floorCount })
       : dungeon.raidersShown > 0
         ? m.dungeon_floor_caption_empty({ floor: viewFloor, name: floorName })
-        : m.dungeon_scene_empty();
+        : (FLOOR_QUIET[viewFloor - 1] ?? m.dungeon_floor_quiet_1)({ floor: viewFloor, name: floorName });
   const toLogical = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = ev.currentTarget;
     const rect = canvas.getBoundingClientRect();
@@ -79,6 +86,12 @@ export const Stage = ({
   };
   const enterDungeon = () => {
     officeRef.current?.setScene("dungeon");
+    setOpen(false);
+    setHover(false);
+  };
+  const watchLord = () => {
+    officeRef.current?.setScene("dungeon");
+    officeRef.current?.setDungeonFloor(DUNGEON_FLOORS);
     setOpen(false);
     setHover(false);
   };
@@ -143,13 +156,35 @@ export const Stage = ({
             ref={canvasRef}
             role="img"
             aria-label={m.stage_label()}
-            style={{ width: VIEW_W * scale, height: WORLD_H * scale }}
+            style={{ width: VIEW_W * scale, height: WORLD_H * scale, cursor: gmTip ? "pointer" : undefined }}
             onMouseMove={(ev) => {
               const point = toLogical(ev);
-              officeRef.current?.setHover(officeRef.current.hit(point.x, point.y));
+              const hitId = officeRef.current?.hit(point.x, point.y) ?? null;
+              if (hitId === GM_HIT_ID) {
+                const box = boxRef.current?.getBoundingClientRect();
+                officeRef.current?.setHover(null);
+                setGmTip({ x: ev.clientX - (box?.left ?? 0), y: ev.clientY - (box?.top ?? 0) });
+                return;
+              }
+              setGmTip(null);
+              officeRef.current?.setHover(hitId);
             }}
-            onMouseLeave={() => officeRef.current?.setHover(null)}
+            onMouseLeave={() => {
+              setGmTip(null);
+              officeRef.current?.setHover(null);
+            }}
+            onClick={(ev) => {
+              const point = toLogical(ev);
+              if (officeRef.current?.hit(point.x, point.y) !== GM_HIT_ID) return;
+              setGmTip(null);
+              onOpenReport();
+            }}
           />
+          {gmTip && (
+            <div className="gm-tip" role="tooltip" style={{ left: gmTip.x, top: gmTip.y }}>
+              {m.gm_report_hover()}
+            </div>
+          )}
           {inDungeon && (
             <>
               <button type="button" ref={backRef} className="dungeonback" onClick={backToGuild}>
@@ -202,6 +237,21 @@ export const Stage = ({
               onMouseLeave={() => setHover(false)}
               onFocus={() => setHover(true)}
               onBlur={() => setHover(false)}
+            />
+          )}
+          {!inDungeon && dungeon.lordFight && (
+            <button
+              type="button"
+              className="gatehit"
+              aria-label={m.dungeon_lord_pip_label()}
+              title={m.dungeon_lord_pip_label()}
+              style={{
+                left: (LORD_PIP.x - VIEW_X0) * scale + CANVAS_BORDER,
+                top: LORD_PIP.y * scale + CANVAS_BORDER,
+                width: LORD_PIP.w * scale,
+                height: LORD_PIP.h * scale,
+              }}
+              onClick={watchLord}
             />
           )}
           {!inDungeon && (

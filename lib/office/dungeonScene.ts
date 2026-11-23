@@ -1,12 +1,27 @@
+import {
+  BRAZIER_POS,
+  LANTERN_POS,
+  TORCH_POS,
+  buildFloorDecor,
+  buildForeground,
+  buildFrontDecor,
+  buildWallDecor,
+  drawAmbienceBack,
+  drawAmbienceFront,
+  drawBrazierDim,
+  floorTone,
+  wallTone,
+} from "./dungeonAmbience";
+import { THRONE_SEAT_DX, THRONE_SEAT_DY, throneSprite } from "./dungeonLordSprite";
 import { MON_DX, VIEW_W, VIEW_X0, WORLD_H, type Pt } from "./layout";
-import { COZY, type MonsterKind } from "./palette";
+import type { MonsterKind } from "./palette";
 
 /**
  * The dungeon interior: the scene the canvas switches to when the user looks inside the dark castle. It lives in the
  * same world coordinates as the field (x from VIEW_X0 to VIEW_X0 + VIEW_W, y 0..WORLD_H), so the camera and the
  * characters' drawing helpers work unchanged. Three chambers (guard hall with cells, slime vault, lava lair) side by
  * side behind one wide flagstone floor, an entrance stairway on the far left (the way back up to the guild gate).
- * Everything here is opaque pixel art except the soft light pools on the floor, which sit UNDER the characters.
+ * Everything here is opaque pixel art: lighting is baked into the palette (see dungeonAmbience.ts), nothing translucent.
  */
 type Ctx = CanvasRenderingContext2D;
 
@@ -29,8 +44,12 @@ export const dungeonSpotIndex = (slot: number): number => Math.min(Math.max(0, s
 /** the dungeon has three floors: B1 stone halls, B2 flooded catacombs, B3 the Dungeon Lord's throne cavern */
 export const DUNGEON_FLOORS = 3;
 /** where the Dungeon Lord stands on B3 (its feet; the 48x48 sprite is centred on x) */
-const LORD_FEET: Pt = { x: 268, y: 134 };
+const LORD_FEET: Pt = { x: 262, y: 120 };
 export const dungeonLordPoint = (): Pt => LORD_FEET;
+/** the throne's seat on the dais: the seated Lord's bottom-centre (boot soles); he steps down to LORD_FEET to fight */
+const THRONE_SEAT_Y = 86;
+const THRONE_CX = 336;
+export const dungeonThronePoint = (): Pt => ({ x: THRONE_CX, y: THRONE_SEAT_Y });
 /** floor 3: raiders ring the Lord on its left, three rings deep (the first eight slots take the inner ring) */
 const LORD_RING_R = [48, 76, 104];
 const LORD_RING_ANGLES = [3, 4, 2, 5, 1, 6, 0, 7];
@@ -86,14 +105,7 @@ const WALL_BASE_Y = 64;
 const PILLAR_A_X = 90;
 const PILLAR_B_X = 238;
 const STAIR_X = VIEW_X0 + 2;
-const TORCHES: Pt[] = [
-  { x: -52, y: 42 },
-  { x: 66, y: 42 },
-  { x: 112, y: 42 },
-  { x: 200, y: 42 },
-  { x: 258, y: 42 },
-  { x: 326, y: 42 },
-];
+const TORCHES: Pt[] = TORCH_POS;
 const X_END = VIEW_X0 + VIEW_W;
 const SLIME = { x0: 100, x1: 236, y: 62, h: 9 };
 const LAVA = { x0: 248, x1: 334, y: 62, h: 9 };
@@ -101,6 +113,20 @@ const LAVA = { x0: 248, x1: 334, y: 62, h: 9 };
 const rect = (ctx: Ctx, color: string, x: number, y: number, width: number, height: number) => {
   ctx.fillStyle = color;
   ctx.fillRect(Math.round(x), Math.round(y), width, height);
+};
+/** a rect painted in 3x3 blocks, each toned by the floor's or the wall's light (palette only, dithered, opaque) */
+const litRect = (
+  ctx: Ctx,
+  tone: (x: number, y: number, base: string) => string,
+  color: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) => {
+  for (let by = 0; by < height; by += 3)
+    for (let bx = 0; bx < width; bx += 3)
+      rect(ctx, tone(x + bx + 1, y + by + 1, color), x + bx, y + by, Math.min(3, width - bx), Math.min(3, height - by));
 };
 const hash = (first: number, second: number): number => {
   let mixed = Math.imul(first + 0x9e37, 0x85ebca6b) ^ Math.imul(second + 0x7f4a, 0xc2b2ae35);
@@ -116,8 +142,8 @@ const drawWall = (ctx: Ctx) => {
   rect(ctx, MORTAR, VIEW_X0, 0, VIEW_W, WALL_BASE_Y);
   for (let row = 0, y = 0; y < WALL_BASE_Y; y += 7, row++) {
     for (let x = VIEW_X0 - (row % 2) * 9; x < X_END; x += 18) {
-      rect(ctx, pick(WALL, x, y), x + 1, y + 1, 17, 6);
-      rect(ctx, WALL_HI, x + 1, y + 1, 17, 1);
+      litRect(ctx, (px, py, base) => wallTone(1, px, py, base), pick(WALL, x, y), x + 1, y + 1, 17, 6);
+      litRect(ctx, (px, py, base) => wallTone(1, px, py, base), WALL_HI, x + 1, y + 1, 17, 1);
       if (hash(x, y) % 9 === 0) rect(ctx, MORTAR, x + 3 + (hash(y, x) % 10), y + 2, 1, 4); // crack
     }
   }
@@ -132,8 +158,9 @@ const drawFloor = (ctx: Ctx) => {
   for (let row = 0, y = WALL_BASE_Y; y < WORLD_H; y += 12, row++) {
     for (let x = VIEW_X0 - (row % 2) * 10; x < X_END; x += 20) {
       const tones = FLOORS[chamberOf(x + 10)];
-      rect(ctx, pick(tones, x, y), x + 1, y + 1, 19, 11);
-      rect(ctx, tones[3], x + 1, y + 1, 19, 1);
+      const tone = (px: number, py: number, base: string) => floorTone(1, px, py, base);
+      litRect(ctx, tone, pick(tones, x, y), x + 1, y + 1, 19, 11);
+      litRect(ctx, tone, tones[3], x + 1, y + 1, 19, 1);
       if (hash(x, y) % 7 === 0) rect(ctx, MORTAR, x + 4 + (hash(y, x) % 10), y + 4, 5, 1); // crack
       if (hash(x + 1, y) % 11 === 0) rect(ctx, tones[2], x + 12, y + 7, 3, 2); // chipped corner
     }
@@ -403,7 +430,9 @@ const cobwebs = (ctx: Ctx) => {
 
 const buildBackB1 = (ctx: Ctx) => {
   drawWall(ctx);
+  buildWallDecor(ctx, 1);
   drawFloor(ctx);
+  buildFloorDecor(ctx, 1);
   stairway(ctx);
   cells(ctx);
   manacles(ctx);
@@ -419,6 +448,7 @@ const buildBackB1 = (ctx: Ctx) => {
   bones(ctx);
   cobwebs(ctx);
   stairsDown(ctx);
+  buildForeground(ctx, 1);
 };
 
 /** the ceiling beams, arches and hanging chains: top and side edges only (never over a character's body) */
@@ -470,6 +500,7 @@ const buildFront = (ctx: Ctx) => {
   // bottom lip
   rect(ctx, MORTAR, VIEW_X0, WORLD_H - 3, VIEW_W, 3);
   rect(ctx, "#2b2d3d", VIEW_X0, WORLD_H - 2, VIEW_W, 1);
+  buildFrontDecor(ctx, 1);
 };
 
 // ---- the stairs between floors ----------------------------------------------------------------------------------
@@ -536,14 +567,7 @@ const GHOST = "#9ff5ee",
   GHOST_LO = "#3fb7b0";
 const COFFIN = ["#5a3d2b", "#7a553b", "#3b271b"];
 const WATER_B2 = { x0: VIEW_X0 + 46, x1: X_END, y: 62, h: 9 };
-const GHOST_LANTERNS: Pt[] = [
-  { x: -44, y: 26 },
-  { x: 48, y: 30 },
-  { x: 128, y: 26 },
-  { x: 212, y: 30 },
-  { x: 296, y: 26 },
-  { x: 362, y: 30 },
-];
+const GHOST_LANTERNS: Pt[] = LANTERN_POS;
 
 const coffin = (ctx: Ctx, x: number, y: number, open: boolean) => {
   rect(ctx, CMORTAR, x - 1, y + 3, 18, 36);
@@ -571,8 +595,8 @@ const drawWallB2 = (ctx: Ctx) => {
   rect(ctx, CMORTAR, VIEW_X0, 0, VIEW_W, WALL_BASE_Y);
   for (let row = 0, y = 0; y < WALL_BASE_Y; y += 7, row++) {
     for (let x = VIEW_X0 - (row % 2) * 9; x < X_END; x += 18) {
-      rect(ctx, pick(CWALL, x, y), x + 1, y + 1, 17, 6);
-      rect(ctx, CWALL_HI, x + 1, y + 1, 17, 1);
+      litRect(ctx, (px, py, base) => wallTone(2, px, py, base), pick(CWALL, x, y), x + 1, y + 1, 17, 6);
+      litRect(ctx, (px, py, base) => wallTone(2, px, py, base), CWALL_HI, x + 1, y + 1, 17, 1);
       if (hash(x, y) % 8 === 0) rect(ctx, CMORTAR, x + 3 + (hash(y, x) % 10), y + 2, 1, 4);
     }
   }
@@ -594,26 +618,20 @@ const drawFloorB2 = (ctx: Ctx) => {
   rect(ctx, CMORTAR, VIEW_X0, WALL_BASE_Y, VIEW_W, WORLD_H - WALL_BASE_Y);
   for (let row = 0, y = WALL_BASE_Y; y < WORLD_H; y += 12, row++) {
     for (let x = VIEW_X0 - (row % 2) * 10; x < X_END; x += 20) {
-      rect(ctx, pick(CFLOOR, x, y), x + 1, y + 1, 19, 11);
-      rect(ctx, CFLOOR[3], x + 1, y + 1, 19, 1);
+      const tone = (px: number, py: number, base: string) => floorTone(2, px, py, base);
+      litRect(ctx, tone, pick(CFLOOR, x, y), x + 1, y + 1, 19, 11);
+      litRect(ctx, tone, CFLOOR[3], x + 1, y + 1, 19, 1);
       if (hash(x, y) % 7 === 0) rect(ctx, CMORTAR, x + 4 + (hash(y, x) % 10), y + 4, 5, 1);
     }
-  }
-  // standing puddles of the flood, opaque, under everything that walks here
-  for (let i = 0; i < 16; i++) {
-    const px = VIEW_X0 + 16 + (hash(i, 31) % (VIEW_W - 40)),
-      py = 84 + (hash(i, 17) % 110);
-    const wide = 10 + (hash(i, 3) % 12);
-    rect(ctx, WATER_TONES[0], px, py, wide, 4);
-    rect(ctx, WATER_TONES[1], px + 1, py, wide - 2, 1);
-    rect(ctx, WATER_TONES[2], px + 3, py + 2, 3, 1);
   }
   rect(ctx, "#14202a", VIEW_X0, WALL_BASE_Y, VIEW_W, 3);
 };
 
 const buildBackB2 = (ctx: Ctx) => {
   drawWallB2(ctx);
+  buildWallDecor(ctx, 2);
   drawFloorB2(ctx);
+  buildFloorDecor(ctx, 2);
   stairsUp(ctx, GHOST_LO, GHOST, "#3a5560", "#4c6670");
   coffin(ctx, -8, 28, true);
   coffin(ctx, 20, 30, false);
@@ -627,23 +645,16 @@ const buildBackB2 = (ctx: Ctx) => {
   channelRim(ctx, WATER_B2);
   bones(ctx);
   stairsDown(ctx);
+  buildForeground(ctx, 2);
 };
 
 const animatedB2 = (ctx: Ctx, time: number, still: boolean) => {
-  lightFloorByChannel(ctx, WATER_B2, "#5fd0c0");
+  drawAmbienceBack(ctx, time, still, 2);
   channel(ctx, WATER_B2, WATER_TONES, time, still, 11);
   GHOST_LANTERNS.forEach((lantern, i) => {
     const bob = still ? 0 : Math.round(Math.sin(time * 1.4 + i * 1.7) * 1.5);
     const { x } = lantern,
       y = lantern.y + bob;
-    // a soft cold glow on the wall (drawn before any character, never over one)
-    ctx.fillStyle = GHOST_LO;
-    for (let k = 0; k < 3; k++) {
-      ctx.globalAlpha = 0.05;
-      const half = 10 + k * 8;
-      ctx.fillRect(x - half, y - half * 0.6, half * 2, half + 10);
-    }
-    ctx.globalAlpha = 1;
     rect(ctx, IRON_DARK, x, 0, 1, y - 4); // the chain from the ceiling
     rect(ctx, IRON_DARK, x - 3, y - 4, 7, 2);
     rect(ctx, IRON, x - 3, y - 2, 7, 8);
@@ -671,21 +682,15 @@ const RWALL_HI = "#52303a";
 const RFLOOR = ["#1c1620", "#211a26", "#17121b", "#281f2e"];
 const LAVA_TONES: [string, string, string, string] = ["#a8200f", "#ff5a2a", "#ffb040", "#ffe14a"];
 const OBSIDIAN = ["#3f3560", "#5a4e86", "#241c40", "#8a7cc0"];
-const THRONE_X = 266;
+const THRONE_X = THRONE_CX;
 const LAVA_POOLS = [
   { x0: VIEW_X0 + 4, x1: -34, y: 62, h: 9 },
   { x0: 132, x1: 176, y: 62, h: 9 },
-  { x0: 330, x1: X_END - 4, y: 62, h: 9 },
+  { x0: 228, x1: 272, y: 62, h: 9 },
 ];
-const LAVA_FALLS = [-52, 148, 346];
-const CHAIN_X = [-34, 40, 108, 200, 326];
-const BRAZIERS: Pt[] = [
-  { x: -18, y: 42 },
-  { x: 70, y: 42 },
-  { x: 190, y: 42 },
-  { x: 222, y: 42 },
-  { x: 312, y: 42 },
-];
+const LAVA_FALLS = [-52, 148, 250];
+const CHAIN_X = [-34, 40, 100, 270];
+const BRAZIERS: Pt[] = BRAZIER_POS;
 
 const drawWallB3 = (ctx: Ctx) => {
   rect(ctx, RMORTAR, VIEW_X0, 0, VIEW_W, WALL_BASE_Y);
@@ -693,8 +698,8 @@ const drawWallB3 = (ctx: Ctx) => {
   for (let y = 0; y < WALL_BASE_Y; y += 9) {
     for (let x = VIEW_X0 - (hash(y, 1) % 14); x < X_END;) {
       const wide = 12 + (hash(x, y) % 18);
-      rect(ctx, pick(RWALL, x, y), x + 1, y + 1, wide - 1, 8);
-      rect(ctx, RWALL_HI, x + 1, y + 1, wide - 1, 1);
+      litRect(ctx, (px, py, base) => wallTone(3, px, py, base), pick(RWALL, x, y), x + 1, y + 1, wide - 1, 8);
+      litRect(ctx, (px, py, base) => wallTone(3, px, py, base), RWALL_HI, x + 1, y + 1, wide - 1, 1);
       if (hash(x, y) % 8 === 0) rect(ctx, RMORTAR, x + 3, y + 3, 1, 5);
       x += wide;
     }
@@ -708,8 +713,9 @@ const drawFloorB3 = (ctx: Ctx) => {
   rect(ctx, RMORTAR, VIEW_X0, WALL_BASE_Y, VIEW_W, WORLD_H - WALL_BASE_Y);
   for (let row = 0, y = WALL_BASE_Y; y < WORLD_H; y += 12, row++) {
     for (let x = VIEW_X0 - (row % 2) * 10; x < X_END; x += 20) {
-      rect(ctx, pick(RFLOOR, x, y), x + 1, y + 1, 19, 11);
-      rect(ctx, RFLOOR[3], x + 1, y + 1, 19, 1);
+      const tone = (px: number, py: number, base: string) => floorTone(3, px, py, base);
+      litRect(ctx, tone, pick(RFLOOR, x, y), x + 1, y + 1, 19, 11);
+      litRect(ctx, tone, RFLOOR[3], x + 1, y + 1, 19, 1);
       if (hash(x, y) % 6 === 0) rect(ctx, LAVA_TONES[0], x + 3 + (hash(y, x) % 9), y + 5, 6, 1); // an ember crack
       if (hash(x, y) % 14 === 0) rect(ctx, LAVA_TONES[1], x + 5 + (hash(y, x) % 6), y + 5, 2, 1);
     }
@@ -743,36 +749,16 @@ const throne = (ctx: Ctx) => {
   const cx = THRONE_X;
   // dais steps in front of the wall
   for (let step = 0; step < 3; step++) {
-    const half = 34 + step * 10;
+    const half = 30 + step * 8;
     const y = 66 + step * 9;
     rect(ctx, RMORTAR, cx - half - 1, y - 1, half * 2 + 2, 11);
     rect(ctx, OBSIDIAN[0], cx - half, y, half * 2, 9);
     rect(ctx, OBSIDIAN[3], cx - half, y, half * 2, 1);
     rect(ctx, GOLD_DIM, cx - half, y + 8, half * 2, 1);
   }
-  // the tall spiked backrest
-  rect(ctx, RMORTAR, cx - 23, 6, 46, 62);
-  rect(ctx, OBSIDIAN[0], cx - 22, 10, 44, 56);
-  rect(ctx, OBSIDIAN[1], cx - 22, 10, 6, 56);
-  rect(ctx, OBSIDIAN[2], cx + 14, 10, 8, 56);
-  for (const dx of [-22, -12, -2, 8, 18]) {
-    const height = dx === -2 ? 16 : 10;
-    rect(ctx, RMORTAR, cx + dx - 1, 10 - height - 1, 7, height + 2);
-    rect(ctx, OBSIDIAN[3], cx + dx, 10 - height, 5, height);
-    rect(ctx, OBSIDIAN[0], cx + dx + 2, 10 - height + 2, 3, height - 2);
-  }
-  // a giant skull crowns the backrest, ruby eyes
-  skull(ctx, cx - 3, 12);
-  rect(ctx, BONE, cx - 4, 11, 8, 6);
-  rect(ctx, "#ff3b2a", cx - 3, 13, 2, 2);
-  rect(ctx, "#ff3b2a", cx + 1, 13, 2, 2);
-  // seat and arms
-  rect(ctx, OBSIDIAN[1], cx - 28, 44, 56, 8);
-  rect(ctx, OBSIDIAN[3], cx - 28, 44, 56, 1);
-  rect(ctx, OBSIDIAN[0], cx - 30, 52, 10, 14);
-  rect(ctx, OBSIDIAN[0], cx + 20, 52, 10, 14);
-  rect(ctx, "#ff3b2a", cx - 26, 56, 2, 2);
-  rect(ctx, "#ff3b2a", cx + 24, 56, 2, 2);
+  // the throne itself (far right against the wall; the Lord sits on it as a character, drawn over this layer)
+  if (typeof document !== "undefined")
+    ctx.drawImage(throneSprite(), cx - THRONE_SEAT_DX, THRONE_SEAT_Y - THRONE_SEAT_DY);
   // bones heaped at the foot
   skull(ctx, cx - 44, 100);
   skull(ctx, cx + 38, 102);
@@ -782,35 +768,86 @@ const throne = (ctx: Ctx) => {
 
 const buildBackB3 = (ctx: Ctx) => {
   drawWallB3(ctx);
+  buildWallDecor(ctx, 3);
   drawFloorB3(ctx);
+  buildFloorDecor(ctx, 3);
   stairsUp(ctx, LAVA_TONES[1], LAVA_TONES[3], "#4a3040", "#6a4a58");
   for (const pool of LAVA_POOLS) channelRim(ctx, pool);
   for (const x of CHAIN_X) chain(ctx, x, 34 + (hash(x, 4) % 22));
   throne(ctx);
+  buildForeground(ctx, 3);
 };
 
-const lavaFall = (ctx: Ctx, x: number, time: number, still: boolean) => {
-  rect(ctx, RMORTAR, x - 1, 0, 14, WALL_BASE_Y);
-  rect(ctx, LAVA_TONES[0], x, 0, 12, WALL_BASE_Y);
-  rect(ctx, LAVA_TONES[1], x + 2, 0, 8, WALL_BASE_Y);
-  const shift = still ? 0 : Math.floor(time * 20);
-  for (let i = 0; i < 9; i++) {
-    const y = (i * 9 + shift) % WALL_BASE_Y;
+/**
+ * The Dungeon Lord fight's mood for floor 3, set by the renderer right before it draws the floor (0 = calm):
+ * `dim` darkens the braziers (the intro), `surge` swells the lava falls (the enrage), `thrones` darkens the empty throne.
+ */
+const mood = { dim: 0, surge: 0, throne: 0 };
+export const setLordMood = (dim: number, surge: number, throne: number) => {
+  mood.dim = dim;
+  mood.surge = surge;
+  mood.throne = throne;
+};
+
+const lavaFall = (ctx: Ctx, x: number, time: number, still: boolean, surge = 0) => {
+  const wide = surge > 0 ? Math.round(surge * 3) : 0; // the fall swells on both sides
+  rect(ctx, RMORTAR, x - 1 - wide, 0, 14 + wide * 2, WALL_BASE_Y);
+  rect(ctx, LAVA_TONES[0], x - wide, 0, 12 + wide * 2, WALL_BASE_Y);
+  rect(ctx, LAVA_TONES[1], x + 2 - wide, 0, 8 + wide * 2, WALL_BASE_Y);
+  const shift = still ? 0 : Math.floor(time * (20 + surge * 26));
+  const blobs = surge > 0 ? 14 : 9;
+  for (let i = 0; i < blobs; i++) {
+    const y = (i * (surge > 0 ? 6 : 9) + shift) % WALL_BASE_Y;
     rect(ctx, LAVA_TONES[2], x + 3 + ((i * 5) % 5), y, 2, 5);
     rect(ctx, LAVA_TONES[3], x + 4 + ((i * 3) % 4), y + 1, 1, 2);
+    if (surge > 0) rect(ctx, LAVA_TONES[3], x + ((i * 7) % 12), (y + 11) % WALL_BASE_Y, 2, 3);
   }
-  rect(ctx, LAVA_TONES[3], x + 4, WALL_BASE_Y - 3, 4, 3); // the splash where it lands
+  rect(ctx, LAVA_TONES[3], x + 4 - wide, WALL_BASE_Y - 3, 4 + wide * 2, 3 + wide); // the splash where it lands
+  if (surge > 0 && !still) {
+    // spray flung off the splash
+    for (let k = 0; k < 4; k++) {
+      const phase = (time * 1.6 + k * 0.25) % 1;
+      rect(
+        ctx,
+        LAVA_TONES[k % 2 ? 2 : 3],
+        x + 6 + Math.round((k - 1.5) * 6 * phase),
+        WALL_BASE_Y - 4 - Math.round(Math.sin(phase * Math.PI) * 9),
+        2,
+        2,
+      );
+    }
+  }
+};
+
+/** the throne's dark silhouette (a dim overlay that touches only the throne's own pixels) */
+let throneShade: HTMLCanvasElement | null = null;
+const drawThroneShade = (ctx: Ctx) => {
+  if (mood.throne <= 0 || typeof document === "undefined") return;
+  if (!throneShade) {
+    const src = throneSprite();
+    throneShade = document.createElement("canvas");
+    throneShade.width = src.width;
+    throneShade.height = src.height;
+    const shade = throneShade.getContext("2d");
+    if (shade) {
+      shade.drawImage(src, 0, 0);
+      shade.globalCompositeOperation = "source-in";
+      shade.fillStyle = "#07050d";
+      shade.fillRect(0, 0, src.width, src.height);
+    }
+  }
+  ctx.globalAlpha = 0.72 * mood.throne;
+  ctx.drawImage(throneShade, THRONE_CX - THRONE_SEAT_DX, THRONE_SEAT_Y - THRONE_SEAT_DY);
+  ctx.globalAlpha = 1;
 };
 
 const animatedB3 = (ctx: Ctx, time: number, still: boolean) => {
-  BRAZIERS.forEach((point, i) => torch(ctx, point, time, still, i));
-  for (const pool of LAVA_POOLS) lightFloorByChannel(ctx, pool, "#ff5a2a");
+  drawBrazierDim(ctx, mood.dim);
+  drawAmbienceBack(ctx, time, still, 3);
+  BRAZIERS.forEach((point, i) => torch(ctx, point, time, still, i, mood.dim));
+  drawThroneShade(ctx);
   for (const pool of LAVA_POOLS) channel(ctx, pool, LAVA_TONES, time, still, 7 + pool.x0);
-  for (const x of LAVA_FALLS) lavaFall(ctx, x, time, still);
-  // the rubies in the throne's eyes pulse
-  const on = still || Math.floor(time * 2) % 2 === 0;
-  rect(ctx, on ? "#ff3b2a" : "#a8200f", THRONE_X - 3, 13, 2, 2);
-  rect(ctx, on ? "#ff3b2a" : "#a8200f", THRONE_X + 1, 13, 2, 2);
+  for (const x of LAVA_FALLS) lavaFall(ctx, x, time, still, mood.surge);
   // embers rising from the lava cracks in the floor
   if (still) return;
   for (let i = 0; i < 10; i++) {
@@ -827,9 +864,37 @@ const animatedB3 = (ctx: Ctx, time: number, still: boolean) => {
   }
 };
 
+/** B2 / B3 foregrounds: a plain rock ceiling edge with stalactites (no stone beams or arches: those belong to B1) */
+const CEILING_PALETTES = [
+  { edge: "#0d1822", rock: "#1c2e3a", hi: "#2c4656", tip: "#16242e" },
+  { edge: "#14070a", rock: "#2a1216", hi: "#4a2128", tip: "#1d0c10" },
+];
+const CAVE_STALACTITES = [-66, -30, 22, 74, 118, 150, 190, 232, 282, 322, 354];
+const buildCaveFront = (ctx: Ctx, palette: (typeof CEILING_PALETTES)[number]) => {
+  rect(ctx, palette.edge, VIEW_X0, 0, VIEW_W, 6);
+  for (let x = VIEW_X0; x < X_END; x += 12) {
+    rect(ctx, palette.rock, x + 1, 0, 11, 4 + (hash(x, 5) % 2));
+    rect(ctx, palette.hi, x + 1, 0, 11, 1);
+  }
+  for (const sx of CAVE_STALACTITES) {
+    const len = 3 + (hash(sx, 2) % 5);
+    for (let k = 0; k < len; k++)
+      rect(ctx, k < len - 2 ? palette.rock : palette.tip, sx + (k < len - 2 ? 0 : 1), 6 + k, k < len - 2 ? 3 : 1, 1);
+  }
+};
+const buildFrontB2 = (ctx: Ctx) => {
+  buildCaveFront(ctx, CEILING_PALETTES[0]);
+  buildFrontDecor(ctx, 2);
+};
+const buildFrontB3 = (ctx: Ctx) => {
+  buildCaveFront(ctx, CEILING_PALETTES[1]);
+  buildFrontDecor(ctx, 3);
+};
+
 // ---- caches -----------------------------------------------------------------------------------------------------
 const backLayers: (HTMLCanvasElement | null | undefined)[] = [];
 let frontLayer: HTMLCanvasElement | null = null;
+const caveFrontLayers: (HTMLCanvasElement | null | undefined)[] = [];
 const layer = (build: (ctx: Ctx) => void): HTMLCanvasElement | null => {
   if (typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
@@ -843,22 +908,9 @@ const layer = (build: (ctx: Ctx) => void): HTMLCanvasElement | null => {
 };
 
 // ---- animated pieces --------------------------------------------------------------------------------------------
-const torch = (ctx: Ctx, point: Pt, time: number, still: boolean, seed: number) => {
+const torch = (ctx: Ctx, point: Pt, time: number, still: boolean, seed: number, dim = 0) => {
   const { x, y } = point;
-  // light pools on the wall and floor (soft, BELOW every character)
-  const flick = still ? 0 : Math.sin(time * 9 + seed * 2) * 0.012;
-  ctx.fillStyle = COZY.torchGlow;
-  for (let k = 0; k < 3; k++) {
-    ctx.globalAlpha = 0.045 + flick;
-    const half = 12 + k * 9;
-    ctx.fillRect(x - half, y - 8 - half * 0.5, half * 2, half + 8);
-  }
-  for (let k = 0; k < 3; k++) {
-    ctx.globalAlpha = 0.04 + flick;
-    const half = 14 + k * 10;
-    ctx.fillRect(x - half, y + 22 - k * 3, half * 2, 14 + k * 8);
-  }
-  ctx.globalAlpha = 1;
+  const light = 1 - dim; // `dim` (0..1) is the Lord's intro snuffing the braziers; the pools themselves are baked palette
   // bracket and cup
   rect(ctx, MORTAR, x - 3, y - 1, 7, 10);
   rect(ctx, IRON, x - 1, y + 2, 3, 6);
@@ -867,7 +919,7 @@ const torch = (ctx: Ctx, point: Pt, time: number, still: boolean, seed: number) 
   rect(ctx, IRON, x - 3, y - 1, 7, 1);
   // flame (opaque, three frames; frozen under reduced motion)
   const frame = still ? 0 : Math.floor(time * 7 + seed) % 3;
-  const height = 6 + (frame === 1 ? 2 : 0);
+  const height = Math.max(2, Math.round((6 + (frame === 1 ? 2 : 0)) * light));
   rect(ctx, FLAME[0], x - 2, y - 1 - height, 5, height);
   rect(ctx, FLAME[0], x - 1 + (frame === 2 ? 1 : 0), y - 2 - height, 3, 2);
   rect(ctx, FLAME[1], x - 1, y - height, 3, height - 1);
@@ -903,20 +955,10 @@ const channel = (
   }
 };
 
-const lightFloorByChannel = (ctx: Ctx, zone: { x0: number; x1: number; y: number; h: number }, color: string) => {
-  ctx.fillStyle = color;
-  for (let k = 0; k < 4; k++) {
-    ctx.globalAlpha = 0.1 - k * 0.02;
-    ctx.fillRect(zone.x0 - 4, zone.y + zone.h + 2 + k * 5, zone.x1 - zone.x0 + 8, 5);
-  }
-  ctx.globalAlpha = 1;
-};
-
 const animated = (ctx: Ctx, time: number, still: boolean) => {
+  drawAmbienceBack(ctx, time, still, 1);
   TORCHES.forEach((point, i) => torch(ctx, point, time, still, i));
   // stairway torch is the daylight itself: nothing to flicker.
-  lightFloorByChannel(ctx, SLIME, "#7ccb62");
-  lightFloorByChannel(ctx, LAVA, "#ff5a2a");
   channel(ctx, SLIME, ["#2f6b3a", "#5aa852", "#7ccb62", "#c8f59a"], time, still, 3);
   channel(ctx, LAVA, ["#a8200f", "#ff5a2a", "#ffb040", "#ffe14a"], time, still, 7);
   // slime dripping from the pipe into the channel
@@ -967,10 +1009,27 @@ export const drawDungeonBack = (ctx: Ctx, time: number, still: boolean, floor = 
   ANIMATORS[index](ctx, time, still);
 };
 
-export const drawDungeonFront = (ctx: Ctx, time: number, still: boolean) => {
+export const drawDungeonFront = (ctx: Ctx, time: number, still: boolean, floor = 1) => {
+  if (floor >= 2) {
+    // B2 and B3 have their own rock ceiling (the stone beams and arches are B1's); B2 drips, B3 does not
+    const index = Math.min(floor, DUNGEON_FLOORS) - 2;
+    const build = index === 0 ? buildFrontB2 : buildFrontB3;
+    if (caveFrontLayers[index] === undefined) caveFrontLayers[index] = layer(build);
+    const cached = caveFrontLayers[index];
+    if (cached) ctx.drawImage(cached, VIEW_X0, 0);
+    else build(ctx);
+    drawAmbienceFront(ctx, time, still, floor >= 3 ? 3 : 2);
+    if (still || index > 0) return;
+    for (let i = 0; i < 3; i++) {
+      const phase = (time * 0.7 + i * 0.37) % 1;
+      rect(ctx, "#6fb8d8", [-30, 118, 232][i] + 1, 14 + Math.floor(phase * 10), 1, 2);
+    }
+    return;
+  }
   if (!frontLayer) frontLayer = layer(buildFront);
   if (frontLayer) ctx.drawImage(frontLayer, VIEW_X0, 0);
   else buildFront(ctx);
+  drawAmbienceFront(ctx, time, still, 1);
   // water dripping off the stalactites (opaque 1px drops in the top band only)
   if (still) return;
   for (let i = 0; i < 3; i++) {

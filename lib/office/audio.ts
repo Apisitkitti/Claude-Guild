@@ -4,7 +4,22 @@
  */
 
 export type SfxCue =
-  "hit" | "kill" | "levelUp" | "bossAppear" | "bossDown" | "bell" | "questDone" | "cheers" | "door" | "enterDungeon";
+  | "hit"
+  | "kill"
+  | "levelUp"
+  | "bossAppear"
+  | "bossDown"
+  | "bell"
+  | "questDone"
+  | "cheers"
+  | "door"
+  | "enterDungeon"
+  | "fanfare"
+  | "lordSlam"
+  | "lordFlame"
+  | "lordSummon"
+  | "lordEnrage"
+  | "lordDeath";
 
 export type AmbientKind = "tavern" | "dungeon" | null;
 
@@ -110,6 +125,36 @@ const CUES: Record<Exclude<SfxCue, "hit">, Tone[]> = {
   cheers: [
     { at: 0, freq: midi(91), dur: 0.12, wave: "sine", gain: 0.5 },
     { at: 0.05, freq: midi(95), dur: 0.2, wave: "sine", gain: 0.4 },
+  ],
+  fanfare: [
+    { at: 0, freq: midi(60), dur: 0.14, wave: "square", gain: 0.5 },
+    { at: 0.14, freq: midi(64), dur: 0.14, wave: "square", gain: 0.5 },
+    { at: 0.28, freq: midi(67), dur: 0.14, wave: "square", gain: 0.5 },
+    { at: 0.42, freq: midi(72), dur: 0.3, wave: "square", gain: 0.55 },
+    { at: 0.72, freq: midi(67), dur: 0.14, wave: "square", gain: 0.5 },
+    { at: 0.86, freq: midi(72), dur: 0.6, wave: "square", gain: 0.6 },
+    { at: 0.86, freq: midi(60), dur: 0.6, wave: "triangle", gain: 0.5 },
+  ],
+  lordSlam: [
+    { at: 0, freq: midi(36), dur: 0.35, wave: "sawtooth", gain: 0.7, slideTo: midi(24) },
+    { at: 0, freq: midi(48), dur: 0.12, wave: "square", gain: 0.4, slideTo: midi(36) },
+  ],
+  lordFlame: [
+    { at: 0, freq: midi(52), dur: 0.5, wave: "sawtooth", gain: 0.45, slideTo: midi(46) },
+    { at: 0.05, freq: midi(59), dur: 0.4, wave: "square", gain: 0.2, slideTo: midi(50) },
+  ],
+  lordSummon: [
+    { at: 0, freq: midi(40), dur: 0.5, wave: "triangle", gain: 0.6, slideTo: midi(52) },
+    { at: 0.25, freq: midi(43), dur: 0.4, wave: "sawtooth", gain: 0.3, slideTo: midi(55) },
+  ],
+  lordEnrage: [
+    { at: 0, freq: midi(33), dur: 0.9, wave: "sawtooth", gain: 0.7, slideTo: midi(28) },
+    { at: 0.1, freq: midi(34), dur: 0.9, wave: "square", gain: 0.35, slideTo: midi(26) },
+    { at: 0.5, freq: midi(45), dur: 0.4, wave: "sawtooth", gain: 0.4, slideTo: midi(57) },
+  ],
+  lordDeath: [
+    { at: 0, freq: midi(48), dur: 1.4, wave: "sawtooth", gain: 0.5, slideTo: midi(30) },
+    { at: 0.6, freq: midi(72), dur: 0.9, wave: "square", gain: 0.2, slideTo: midi(84) },
   ],
   door: [{ at: 0, freq: 180, dur: 0.35, wave: "sawtooth", gain: 0.3, slideTo: 110 }],
   enterDungeon: [

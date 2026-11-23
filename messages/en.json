@@ -26,7 +26,7 @@
   "stage_label": "Pixel-art guild: each Claude Code session is an adventurer on a quest",
   "queue_heading": "🔔 Your queue",
   "queue_empty": "Nobody needs you right now",
-  "queue_note": "Press N to jump to the next one in the queue · “probably waiting for your answer” is a guess from the end of the message · it can warn, but not block",
+  "queue_note": "Press N to jump to the next one in the queue, G for the Guild Master's report · “probably waiting for your answer” is a guess from the end of the message · it can warn, but not block",
   "queue_permission": "Waiting for your permission",
   "queue_permission_stale": "May already be allowed — check",
   "queue_loop": [
@@ -236,7 +236,9 @@
   "dungeon_enter": "Enter the dungeon",
   "dungeon_back": "Back to the guild",
   "dungeon_scene_raiders": "Dungeon — {count} raiding",
-  "dungeon_scene_empty": "Dungeon — empty… only sleeping monsters",
+  "dungeon_floor_quiet_1": "Dungeon B{floor} · {name} — empty… only sleeping monsters",
+  "dungeon_floor_quiet_2": "Dungeon B{floor} · {name} — silent… only dripping water",
+  "dungeon_floor_quiet_3": "Dungeon B{floor} · {name} — the Lord waits on his throne 👑",
   "chronicle_button": "📜 Chronicle",
   "chronicle_button_title": "Open the guild chronicle: a recap of today and yesterday",
   "chronicle_title": "📜 Guild chronicle",
@@ -434,5 +436,36 @@
   "dungeon_floor_lord_down": "Slain, rising again soon",
   "dungeon_floor_lord_slain": "{tag} and the raiders of {project} slew the Dungeon Lord!",
   "dungeon_floor_lord_slain_detail": "Dungeon Lord slain ({count} so far)",
-  "dungeon_floor_lord_count": "Slain {count}x"
+  "dungeon_floor_lord_count": "Slain {count}x",
+  "dungeon_lord_banner_raid": "⚔ Raid on the Dungeon Lord!",
+  "dungeon_lord_banner_slain": "The Dungeon Lord has fallen! 👑",
+  "dungeon_lord_pip_label": "Watch the Dungeon Lord fight live (click to enter dungeon floor B3)",
+  "dungeon_lord_status_to_raid": "Walking to raid the dungeon ⚔️",
+  "dungeon_lord_status_from_raid": "Walking back from the dungeon 🎒",
+  "dungeon_lord_status_raiding": "Raiding the dungeon ⚔️",
+  "gm_report_title": "📋 Guild Master's report",
+  "gm_report_close": "Close the report",
+  "gm_report_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} session needs you",
+        "countPlural=*": "{count} sessions need you"
+      }
+    }
+  ],
+  "gm_report_list_label": "Sessions waiting for you",
+  "gm_report_empty": "Everyone is working fine, nobody is waiting for you",
+  "gm_report_empty_calm": "The Guild Master sips his tea in peace ☕",
+  "gm_report_go": "Go",
+  "gm_report_go_label": "Go to session {tag}",
+  "gm_report_hover": "Guild Master — click for the report",
+  "gm_report_notify": "Guild Master: a session has waited for you over {minutes} minutes",
+  "gm_report_reason_permission": "🔒 Waiting for permission",
+  "gm_report_reason_question": "❓ Asking you a question",
+  "gm_report_reason_loop": "🔁 Stuck in a loop",
+  "gm_report_reason_stuck": "⏳ Tool is hanging",
+  "gm_report_reason_idle": "💤 Waiting for a prompt",
+  "gm_report_reason_compact": "📦 Compacting"
 }
