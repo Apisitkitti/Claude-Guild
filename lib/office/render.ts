@@ -25,6 +25,7 @@ import {
   type Employee,
   type Office,
 } from "./engine";
+import { drawHallLifeDecor, drawHallLifeLights, hallEntities } from "./hallRender";
 import {
   ALLY_BRIDGE_X,
   ALLY_GATE,
@@ -864,6 +865,7 @@ const buildBg = (): HTMLCanvasElement => {
   drawHall(ctx);
   drawHallDecor(ctx);
   drawWingDecor(ctx);
+  drawHallLifeDecor(ctx);
   drawWildDecor(ctx);
   return canvas;
 };
@@ -1321,8 +1323,9 @@ const drawLights = (ctx: Ctx, time: number, office: Office) => {
   rect(ctx, "#d95763", hx, 45, 12, 2);
   if (Math.floor(time * 5) % 3 === 0)
     rect(ctx, GOLD, hx + 2 + ((Math.floor(time * 9) * 5) % 9), 36 - (Math.floor(time * 9) % 4), 1, 1);
-  // candle on the counter
-  rect(ctx, GOLD, 113, 40 + (Math.floor(time * 8) % 2), 2, 2);
+  // candle on the counter (burns low while the guild sleeps)
+  if (office.hall.candle > 0.6) rect(ctx, GOLD, 113, 40 + (Math.floor(time * 8) % 2), 2, 2);
+  else rect(ctx, "#c98a3a", 113, 41, 2, 1);
   // the kitchen hearth in the west wing, and pennants while a feast is on
   drawKitchenFire(ctx, time, office.reducedMotion);
   if (office.feasting()) drawBunting(ctx, time, office.reducedMotion);
@@ -3060,6 +3063,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
     ctx.fillRect(VIEW_X0, 0, HALL_W - VIEW_X0, WORLD_H);
   }
   drawLights(ctx, time, office);
+  drawHallLifeLights(ctx, office.hall, time, hour, office.reducedMotion);
   drawAllyGlow(ctx, office, time);
   drawAmbientBelow(ctx, office, night);
   drawAmbientAbove(ctx, office, night);
@@ -3129,6 +3133,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   ents.push({ y: office.chef.y, fn: () => drawChef(ctx, office, time) });
   ents.push({ y: office.guildMaster.y, fn: () => drawGuildMaster(ctx, office, time) });
   ents.push({ y: BARD_POS.y, fn: () => drawBard(ctx, office, time) });
+  ents.push(...hallEntities(ctx, office.hall, time, office.reducedMotion));
   ents.push({ y: FEAST_TABLE.y + FEAST_TABLE.h - 2, fn: () => drawFeastTable(ctx, office, time) });
   ents.push({ y: NEAR_SETTINGS_Y, fn: () => drawSettings(ctx, office, time, false) });
   ents.sort((entA, entB) => entA.y - entB.y);
