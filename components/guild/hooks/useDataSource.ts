@@ -82,6 +82,9 @@ export const useDataSource = (officeRef: OfficeRef, mounted: boolean, prevClashR
         if (context && typeof context.session_id === "string")
           office.setContext(context.session_id, context.used, context.limit, !!context.limitGuessed);
       },
+      onSessionMeta: (meta) => {
+        if (meta && typeof meta.session_id === "string") office.setSessionMeta(meta.session_id, meta);
+      },
       onStatus: (status) => {
         if (status === "open") {
           opened = true;

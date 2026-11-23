@@ -15,6 +15,7 @@ const ATTN_ICON: Record<AttentionRow["kind"], string> = {
   loop: "🔁",
   asked: "💬",
   context: "🗜️",
+  limit: "😴",
   done: "✅",
 };
 

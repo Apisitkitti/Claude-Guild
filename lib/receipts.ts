@@ -234,6 +234,8 @@ type Receipt = {
   failed: Set<string>;
   red: boolean;
   staleRed: boolean;
+  /** the turn ended in a StopFailure (API error / usage limit): never labelled done */
+  interrupted: boolean;
   /** already in `closed` (a turn closed with no calls is held back until a late event lands on it) */
   listed: boolean;
 };
@@ -327,6 +329,7 @@ export class ReceiptTracker {
       failed: new Set(),
       red: false,
       staleRed: false,
+      interrupted: false,
       listed: false,
     };
     state.open = receipt;
@@ -353,11 +356,12 @@ export class ReceiptTracker {
     const name = str(raw.hook_event_name);
     if (!sid || !name) return;
     const agent = str(raw.agent_id);
-    if (name === "UserPromptSubmit" || name === "Stop") {
+    if (name === "UserPromptSubmit" || name === "Stop" || name === "StopFailure") {
       if (agent) return; // only the main agent starts / finishes a turn
       const state = this.state(sid, now);
       state.touched = now;
       if (str(raw.cwd)) state.cwd = str(raw.cwd);
+      if (name === "StopFailure" && state.open) state.open.interrupted = true;
       this.close(state, now);
       if (name === "UserPromptSubmit") {
         state.lastClosed = null;
@@ -489,7 +493,7 @@ export class ReceiptTracker {
         tasks: receipt.tasks,
         squire: receipt.squire,
         calls: receipt.calls,
-        verdict: receipt.red ? "red" : outcomeCount > 0 ? "done" : "none",
+        verdict: receipt.red ? "red" : outcomeCount > 0 && !receipt.interrupted ? "done" : "none",
         staleRed: receipt.staleRed,
       });
     }

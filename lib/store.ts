@@ -1,7 +1,9 @@
+import { isAgentSource, type AgentSource } from "@/lib/adapters/types";
 import { AttentionTracker, type AttentionRow } from "@/lib/attention";
 import { ChronicleTracker, CHRONICLE_THROTTLE_MS } from "@/lib/chronicle";
 import { MS_PER_MINUTE, MS_PER_SECOND } from "@/lib/constants";
 import { QuestBoardTracker, type QuestRow } from "@/lib/questBoard";
+import { buildRateLimit, isLimitExpired, limitHoldUntil, sanitizeModel, type RateLimit } from "@/lib/rateLimit";
 import { ReceiptTracker, type ReceiptRow } from "@/lib/receipts";
 import { redactDeep } from "@/lib/redact";
 import { TerritoryTracker } from "@/lib/territory";
@@ -9,6 +11,8 @@ import { readContext, type ContextUsage } from "@/lib/transcript";
 
 // In-memory event + session store shared by route handlers.
 // Kept on globalThis so it survives dev hot-reloads and is shared across route modules.
+
+export type { RateLimit } from "@/lib/rateLimit";
 
 export type HookEvent = {
   session_id?: string;
@@ -34,6 +38,12 @@ type Session = {
   waiting: boolean;
   /** when `waiting` last turned true (cleared with it) */
   waitingSince: number | null;
+  /** which AI tool the session belongs to (`agent_source` of its events; Claude Code events have none) */
+  source: AgentSource;
+  /** raw model id, e.g. "claude-opus-5-5"; null until known */
+  model: string | null;
+  /** set while the session is stopped by its plan usage limit */
+  rateLimit: RateLimit | null;
 };
 
 type Client = (chunk: string) => void;
@@ -74,9 +84,11 @@ type Store = {
   chronicleTimer: ReturnType<typeof setTimeout> | null;
   quests: QuestBoardTracker;
   questsJson: string;
+  limitClearedAt: Map<string, number>; // session_id -> when a limit was last cleared (stale transcript lines are ignored)
+  metaSent: Map<string, string>; // session_id -> last session_meta JSON broadcast
 };
 
-const STORE_VERSION = 15; // bump when Store shape changes so dev HMR rebuilds it
+const STORE_VERSION = 18; // bump when Store shape changes so dev HMR rebuilds it
 
 const globalStore = globalThis as typeof globalThis & { __claudeOffice?: Store & { version?: number } };
 
@@ -102,6 +114,8 @@ const createStore = (): Store & { version: number; timers: Timers } => {
     chronicleTimer: null,
     quests: new QuestBoardTracker(),
     questsJson: "[]",
+    metaSent: new Map(),
+    limitClearedAt: new Map(),
     startedAt: Date.now(),
     version: STORE_VERSION,
   } as unknown as Store & {
@@ -111,7 +125,10 @@ const createStore = (): Store & { version: number; timers: Timers } => {
   const ping = setInterval(() => broadcastRaw(store, ": ping\n\n"), PING_INTERVAL_MS);
   const sweep = setInterval(() => {
     const cutoff = Date.now() - STALE_MS;
-    for (const [id, session] of store.sessions) if (session.lastSeen < cutoff) dropSession(id);
+    for (const [id, session] of store.sessions) {
+      const held = session.rateLimit !== null && limitHoldUntil(session.rateLimit) > Date.now();
+      if (session.lastSeen < cutoff && !held) dropSession(id);
+    }
     const tombCutoff = Date.now() - TOMBSTONE_MS;
     for (const [id, at] of store.ended) if (at < tombCutoff) store.ended.delete(id);
     if (store.territory.sweep(Date.now())) broadcastTerritory(store);
@@ -121,6 +138,7 @@ const createStore = (): Store & { version: number; timers: Timers } => {
     refreshReceipts(store);
     refreshChronicle(store);
     if (store.quests.sweep(Date.now())) refreshQuests(store);
+    expireLimits(store, Date.now());
   }, SWEEP_INTERVAL_MS);
   ping.unref?.();
   sweep.unref?.();
@@ -215,7 +233,45 @@ const refreshQuests = (target: Store) => {
   broadcastRaw(target, `event: quests\ndata: ${json}\n\n`);
 };
 
+const metaOf = (session: Session) => ({
+  session_id: session.session_id,
+  source: session.source,
+  model: session.model,
+  rateLimit: session.rateLimit,
+});
+
+/** broadcast `session_meta` iff source / model / rateLimit changed since the last frame (defaults are not announced) */
+const syncMeta = (target: Store, session: Session) => {
+  const json = JSON.stringify(metaOf(session));
+  const known = target.metaSent.get(session.session_id);
+  if (known === json) return;
+  const isDefault = session.source === "claude" && session.model === null && session.rateLimit === null;
+  target.metaSent.set(session.session_id, json);
+  if (known === undefined && isDefault) return;
+  broadcastRaw(target, `event: session_meta\ndata: ${json}\n\n`);
+};
+
+const setRateLimit = (target: Store, session: Session, limit: RateLimit | null) => {
+  session.rateLimit = limit;
+  target.attention.setLimit(session.session_id, limit ? { since: limit.since, detail: limit.resetText } : null);
+};
+
+/** lazily clear limits whose reset time has passed; true iff any was cleared */
+const expireLimits = (target: Store, now: number): boolean => {
+  let changed = false;
+  for (const session of target.sessions.values()) {
+    if (!isLimitExpired(session.rateLimit, now)) continue;
+    setRateLimit(target, session, null);
+    syncMeta(target, session);
+    changed = true;
+  }
+  if (changed) refreshAttention(target);
+  return changed;
+};
+
 const dropSession = (id: string) => {
+  store.metaSent.delete(id);
+  store.limitClearedAt.delete(id);
   store.quests.dropSession(id, Date.now()); // the board stays a few minutes (grace), then sweep drops it
   refreshQuests(store);
   store.attention.dropSession(id);
@@ -247,7 +303,7 @@ const broadcastContext = (id: string, usage: ContextUsage | null) => {
 };
 
 const CTX_DEBOUNCE_MS = 500;
-const CTX_READ_EVENTS = new Set(["Stop", "PostToolUse", "UserPromptSubmit", "SessionStart"]);
+const CTX_READ_EVENTS = new Set(["Stop", "StopFailure", "PostToolUse", "UserPromptSubmit", "SessionStart"]);
 
 const MAX_SESSIONS = 200;
 const MAX_INFLIGHT_READS = 4;
@@ -274,6 +330,17 @@ const scheduleContext = (id: string, transcriptPath: string) => {
         if (store.ctxSeq.get(id) !== seq) return; // reset or newer read superseded this one
         const session = store.sessions.get(id);
         if (!usage || !session) return; // not found: keep previous value
+        if (!("compacted" in usage)) {
+          const model = sanitizeModel(usage.model);
+          if (model) session.model = model;
+          const found = usage.rateLimit;
+          const messageAt = found ? (found.at ?? Date.now()) : 0;
+          if (found && !session.rateLimit && messageAt >= (store.limitClearedAt.get(id) ?? 0)) {
+            const limit = buildRateLimit(found.text, messageAt, Date.now());
+            if (limit) setRateLimit(store, session, limit);
+          }
+          syncMeta(store, session);
+        }
         if ("compacted" in usage) {
           session.context = null;
           broadcastContext(id, null);
@@ -342,6 +409,9 @@ const updateSessions = (evt: HookEvent) => {
       context: null,
       waiting: false,
       waitingSince: null,
+      source: "claude",
+      model: null,
+      rateLimit: null,
     };
     store.sessions.set(id, session);
     if (store.sessions.size > MAX_SESSIONS) {
@@ -372,6 +442,7 @@ const updateSessions = (evt: HookEvent) => {
       hookName === "PostToolUseFailure" ||
       hookName === "UserPromptSubmit" ||
       hookName === "Stop" ||
+      hookName === "StopFailure" ||
       hookName === "SessionStart"
     ) {
       session.waiting = false;
@@ -382,6 +453,24 @@ const updateSessions = (evt: HookEvent) => {
   // SubagentStart/Stop carry agent_id of the subagent itself.
   if (evt.hook_event_name === "SubagentStart" && evt.agent_id) session.interns.add(evt.agent_id);
   if (evt.hook_event_name === "SubagentStop" && evt.agent_id) session.interns.delete(evt.agent_id);
+};
+
+const LIMIT_CLEARING_EVENTS = new Set(["UserPromptSubmit", "PreToolUse", "SessionStart", "Stop"]);
+
+/** source / model / usage-limit bookkeeping of one event (`raw` is the redacted payload incl. last_assistant_message) */
+const updateMeta = (evt: HookEvent, raw: Record<string, unknown>) => {
+  const session = evt.session_id ? store.sessions.get(evt.session_id) : undefined;
+  if (!session) return;
+  if (isAgentSource(evt.agent_source)) session.source = evt.agent_source;
+  const model = sanitizeModel(evt.model);
+  if (model) session.model = model;
+  const name = evt.hook_event_name ?? "";
+  if (name === "StopFailure" && !evt.agent_id && evt.error === "rate_limit")
+    setRateLimit(store, session, buildRateLimit(raw.last_assistant_message, evt.receivedAt));
+  else if (LIMIT_CLEARING_EVENTS.has(name)) {
+    store.limitClearedAt.set(session.session_id, evt.receivedAt);
+    if (session.rateLimit) setRateLimit(store, session, null);
+  } else if (isLimitExpired(session.rateLimit, evt.receivedAt)) setRateLimit(store, session, null);
 };
 
 const logEvent = (evt: HookEvent) => {
@@ -462,6 +551,9 @@ export const addEvent = (rawIn: Record<string, unknown>) => {
   }
   updateSessions(evt);
   try {
+    updateMeta(evt, raw);
+  } catch {}
+  try {
     const sid = evt.session_id;
     const sess = sid ? store.sessions.get(sid) : undefined;
     if (sid && sess) store.attention.setWaiting(sid, sess.waiting ? sess.waitingSince : null);
@@ -472,12 +564,18 @@ export const addEvent = (rawIn: Record<string, unknown>) => {
   } catch {}
   logEvent(evt);
   broadcastRaw(store, `data: ${JSON.stringify(evt)}\n\n`);
+  // after the event frame: the client must know a brand-new session before it can take its meta
+  try {
+    const metaSession = evt.session_id ? store.sessions.get(evt.session_id) : undefined;
+    if (metaSession) syncMeta(store, metaSession);
+  } catch {}
   try {
     handleContext(evt, rawIn.transcript_path);
   } catch {}
 };
 
 export const snapshot = () => {
+  expireLimits(store, Date.now());
   return {
     sessions: [...store.sessions.values()].map((session) => ({ ...session, interns: [...session.interns] })),
     events: store.events.slice(-SNAPSHOT_EVENTS),

@@ -27,6 +27,12 @@ const post = (
   );
 
 describe("ChronicleTracker", () => {
+  it("counts a session seen only through StopFailure", () => {
+    const tracker = new ChronicleTracker();
+    tracker.ingest({ session_id: "a", cwd: "/x/alpha", hook_event_name: "StopFailure" }, at(5, 9));
+    expect(tracker.view(at(5, 10)).today.sessions).toBe(1);
+  });
+
   it("counts sessions, projects, prompts, tools, files, commits, tasks", () => {
     const tracker = new ChronicleTracker();
     tracker.ingest({ session_id: "a", cwd: "/x/alpha", hook_event_name: "SessionStart" }, at(5, 9));

@@ -3,7 +3,7 @@
 # Payloads are derived from lib/store.ts, lib/attention.ts, lib/receipts.ts, lib/territory.ts, lib/office/engine.ts.
 # Only bash + curl + node (node just to parse the snapshot in `status`). Never kills anything.
 #
-# Scenarios: spawn boss boss-kill loop receipt duel compact squire cheers feast lord status cleanup help
+# Scenarios: spawn boss boss-kill loop receipt duel compact squire cheers feast lord limit ais status cleanup help
 # Session ids: 9401-<scenario>[-<suffix>][-a|-b|-c]   cwd: /Users/demo/<name> (fictional)
 # Created ids are recorded in $TMPDIR/guild-sim/ids so `cleanup` removes every one of them.
 set -u
@@ -11,7 +11,7 @@ set -u
 URL="${OFFICE_URL:-http://localhost:5050}"
 PREFIX="9401"
 STATE_DIR="${TMPDIR:-/tmp}/guild-sim"
-IDS_FILE="$STATE_DIR/ids"          # "<sid> <cwd>" per line
+IDS_FILE="$STATE_DIR/ids"          # "<sid> <cwd> [source]" per line (source = codex|copilot|cursor for adapter sessions)
 PENDING_FILE="$STATE_DIR/pending"  # "<sid> <tool_use_id> <tool_name> [agent json fragment]" per line (PreToolUse without a matching Post)
 AGENTS_FILE="$STATE_DIR/agents"    # "<sid> <agent_id> <agent_type>" per line (SubagentStart without a SubagentStop)
 mkdir -p "$STATE_DIR"
@@ -34,21 +34,32 @@ need_server() {
 sid() { echo "$PREFIX-$SCN${SFX:+-$SFX}${1:+-$1}"; }
 
 cwd_of() { awk -v s="$1" '$1==s {print $2; exit}' "$IDS_FILE"; }
+src_of() { awk -v s="$1" '$1==s {print $3; exit}' "$IDS_FILE"; }
+
+# Cursor names its events in camelCase; the other adapters accept the Claude names as they are.
+cursor_event() {
+  case "$1" in
+    SessionStart) echo sessionStart ;; SessionEnd) echo sessionEnd ;; UserPromptSubmit) echo beforeSubmitPrompt ;;
+    PreToolUse) echo preToolUse ;; PostToolUse) echo postToolUse ;; Stop) echo stop ;; *) echo "$1" ;;
+  esac
+}
 
 # send <EventName> <sid> [extra json fragment, e.g. "tool_name":"Bash"]
 send() {
-  local name="$1" id="$2" extra="${3:-}" cwd code
-  cwd="$(cwd_of "$id")"
+  local name="$1" id="$2" extra="${3:-}" cwd code src query=""
+  cwd="$(cwd_of "$id")"; src="$(src_of "$id")"
+  if [ -n "$src" ]; then query="?source=$src"; [ "$src" = cursor ] && name="$(cursor_event "$name")"; fi
   local body="{\"session_id\":\"$id\",\"hook_event_name\":\"$name\",\"cwd\":\"${cwd:-/Users/demo/sim}\"${extra:+,$extra}}"
-  code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary "$body" "$URL/events")"
+  code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary "$body" "$URL/events$query")"
   [ "$code" = "204" ] || echo "warn: $name -> HTTP $code" >&2
 }
 
-# start <sid> <project>: register for cleanup, SessionStart (also lifts the 60 s tombstone of a recently ended id)
+# start <sid> <project> [model] [source]: register for cleanup, SessionStart (also lifts the 60 s tombstone of a recently ended id)
+# source = codex|copilot|cursor sends through that adapter (?source=); the server stores the id with a -cx/-cp/-cu suffix.
 start() {
-  local id="$1" project="$2"
-  grep -q "^$id " "$IDS_FILE" || echo "$id /Users/demo/$project" >> "$IDS_FILE"
-  send SessionStart "$id" '"source":"startup","model":"claude-sim"'
+  local id="$1" project="$2" model="${3:-claude-sim}" source="${4:-}"
+  grep -q "^$id " "$IDS_FILE" || echo "$id /Users/demo/$project${source:+ $source}" >> "$IDS_FILE"
+  send SessionStart "$id" "\"source\":\"startup\",\"model\":\"$model\""
 }
 
 prompt() { send UserPromptSubmit "$1" '"prompt":"simulated task"'; }
@@ -205,6 +216,33 @@ lord)
     sleep "${LORD_PACE:-0.5}"
   done
   note "sent $n calls. Watch: B1 -> B3, banner 'Raid on the Dungeon Lord', the live inset on the guild scene, the Lord rising from the throne, then 'Dungeon Lord has fallen' and the walk home. Stop sending events and it walks home after ~75 s."
+  ;;
+
+limit)
+  # store.ts: StopFailure with error rate_limit sets session.rateLimit (text parsed from "resets <text>"), broadcasts
+  # session_meta and adds a "limit" attention row. The next UserPromptSubmit / PreToolUse / Stop clears it.
+  need_server
+  S="$(sid)"; start "$S" limit-demo; prompt "$S"
+  tool "$S" Read '{"file_path":"/Users/demo/limit-demo/README.md"}'
+  tool "$S" Grep '{"pattern":"TODO"}'
+  tool "$S" Edit '{"file_path":"/Users/demo/limit-demo/src/a.ts","old_string":"a","new_string":"b"}'
+  sleep 0.5
+  send StopFailure "$S" '"error":"rate_limit","error_details":"429","last_assistant_message":"You'"'"'ve hit your limit · resets 3pm (Asia/Bangkok)"'
+  note "StopFailure rate_limit sent for $S. Watch: the adventurer shows the usage-limit state, the Lookout Bell gets a 'limit' row (reset 3pm (Asia/Bangkok))."
+  note "it clears on the next UserPromptSubmit / PreToolUse / Stop (or cleanup), and by itself once the reset time (next 3pm, server local time) passes."
+  ;;
+
+ais)
+  # store.ts Session.source / Session.model: agent_source (adapters) + model (SessionStart payload, or the transcript).
+  need_server
+  A="$(sid a)"; B="$(sid b)"; C="$(sid c)"; D="$(sid d)"
+  start "$A" ais-claude claude-opus-5-5
+  start "$B" ais-codex gpt-5.1-codex codex
+  start "$C" ais-copilot gpt-4.1 copilot
+  start "$D" ais-cursor sonnet-4.5 cursor
+  for id in "$A" "$B" "$C" "$D"; do prompt "$id"; tool "$id" Read '{"file_path":"/Users/demo/ais/README.md"}'; done
+  note "spawned 4 sessions: claude (claude-opus-5-5), codex (gpt-5.1-codex), copilot (gpt-4.1), cursor (sonnet-4.5)."
+  note "Watch: each adventurer shows its AI tool + model. Server ids: $A, $B-cx, $C-cp, $D-cu."
   ;;
 
 feast)

@@ -183,7 +183,7 @@ export class ChronicleTracker {
     const day = this.day(now);
     const state = this.state(sid);
     if (str(raw.cwd)) state.cwd = str(raw.cwd);
-    if (name === "SessionStart" || name === "Stop" || name === "SessionEnd") {
+    if (name === "SessionStart" || name === "Stop" || name === "StopFailure" || name === "SessionEnd") {
       if (!agent) this.touch(day, sid, state, now);
       return;
     }

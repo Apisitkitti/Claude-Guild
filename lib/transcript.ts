@@ -6,8 +6,16 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { BYTES_PER_KB } from "@/lib/constants";
+import { sanitizeModel } from "@/lib/rateLimit";
 
-export type ContextUsage = { used: number; limit: number; limitGuessed: boolean };
+/** `model`: latest real assistant model. `rateLimit`: the newest line is a synthetic rate_limit error (text may be null). */
+export type ContextUsage = {
+  used: number;
+  limit: number;
+  limitGuessed: boolean;
+  model?: string;
+  rateLimit?: { text: string | null; at: number | null };
+};
 // `compacted`: the latest thing in the transcript is a compaction with no assistant usage after it yet.
 export type ContextRead = ContextUsage | { compacted: true } | null;
 
@@ -15,6 +23,7 @@ const TAIL_BYTES_KB = 256;
 const TAIL_BYTES = TAIL_BYTES_KB * BYTES_PER_KB;
 const DEFAULT_LIMIT = 200_000;
 const GUESSED_LIMIT = 1_000_000;
+const HTTP_TOO_MANY_REQUESTS = 429;
 
 const baseDir = async (): Promise<string | null> => {
   try {
@@ -27,6 +36,9 @@ const baseDir = async (): Promise<string | null> => {
 
 const positiveNumber = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+
+const isRateLimitError = (line: Record<string, unknown>): boolean =>
+  line.error === "rate_limit" || line.apiErrorStatus === HTTP_TOO_MANY_REQUESTS;
 
 export const readContext = async (transcriptPath: unknown): Promise<ContextRead> => {
   try {
@@ -57,6 +69,8 @@ export const readContext = async (transcriptPath: unknown): Promise<ContextRead>
     }
 
     const lines = text.split("\n");
+    let limited: { text: string | null; at: number | null } | undefined; // newest synthetic rate_limit error, before any user / real line
+    let blocked = false; // a user or real assistant line is newer than anything older: older errors are history
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (!line) continue;
@@ -73,9 +87,22 @@ export const readContext = async (transcriptPath: unknown): Promise<ContextRead>
       ) {
         return { compacted: true };
       }
+      if (obj && typeof obj === "object" && obj.type === "user" && obj.isSidechain !== true) blocked = true;
       if (!obj || typeof obj !== "object" || obj.type !== "assistant" || obj.isSidechain === true) continue;
-      const msg = obj.message as { model?: unknown; usage?: Record<string, unknown> } | undefined;
-      if (!msg || typeof msg !== "object" || msg.model === "<synthetic>") continue;
+      const msg = obj.message as { model?: unknown; usage?: Record<string, unknown>; content?: unknown } | undefined;
+      if (!msg || typeof msg !== "object") continue;
+      if (msg.model === "<synthetic>") {
+        if (!blocked && !limited && obj.isApiErrorMessage === true && isRateLimitError(obj)) {
+          const first = Array.isArray(msg.content) ? (msg.content[0] as { text?: unknown } | undefined) : undefined;
+          const stamp = typeof obj.timestamp === "string" ? Date.parse(obj.timestamp) : NaN;
+          limited = {
+            text: typeof first?.text === "string" ? first.text : null,
+            at: Number.isFinite(stamp) ? stamp : null,
+          };
+        }
+        continue;
+      }
+      blocked = true;
       const usage = msg.usage;
       if (!usage || typeof usage !== "object") continue;
       const used =
@@ -89,7 +116,14 @@ export const readContext = async (transcriptPath: unknown): Promise<ContextRead>
         limit = GUESSED_LIMIT;
         limitGuessed = true;
       }
-      return { used, limit, limitGuessed };
+      const model = sanitizeModel(msg.model);
+      return {
+        used,
+        limit,
+        limitGuessed,
+        ...(model ? { model } : {}),
+        ...(limited ? { rateLimit: limited } : {}),
+      };
     }
     return null;
   } catch {

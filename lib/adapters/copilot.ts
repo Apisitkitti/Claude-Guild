@@ -62,6 +62,7 @@ export const normalizeCopilot = (raw: RawEvent, hints: NormalizeHints = {}): Nor
     : pick(raw, "agent_id", "agentId");
   return build("copilot", pick(raw, "session_id", "sessionId"), eventName, {
     cwd: raw.cwd,
+    model: raw.model,
     source: raw.source,
     prompt: raw.prompt,
     trigger: raw.trigger,

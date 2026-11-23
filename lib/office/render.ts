@@ -1,3 +1,4 @@
+import { aiAccent, aiLabel } from "./aiLabel";
 import { bossCenterX, bossSprite } from "./bossSprites";
 import { CRYPT_KINDS, cryptSprite, type CryptKind } from "./cryptSprites";
 import {
@@ -84,6 +85,7 @@ import {
   MON_DX,
   type Pt,
 } from "./layout";
+import { limitSignLines } from "./limitScene";
 import { INTRO_EYES_S, dodgeLift, introLight, lavaSurge, lordClock, throneDarkness } from "./lordFight";
 import {
   attackFrame,
@@ -2324,6 +2326,53 @@ const onCoffeeTrip = (emp: Employee): boolean =>
   emp.state === "TO_COFFEE" || emp.state === "DRINK" || emp.state === "FROM_COFFEE";
 const waitsOnYou = (emp: Employee): boolean =>
   emp.act === "handup" && (emp.state === "SEATED" || onTavernRest(emp) || onCoffeeTrip(emp));
+/** hit the plan usage limit and sits slumped at the desk (raiders inside the dungeon are not drawn this way) */
+const limitedAtDesk = (emp: Employee): boolean =>
+  emp.rateLimit !== null && emp.state === "SEATED" && !emp.inDungeon && !emp.raidIn;
+/** the "out of stamina" sign shows (a raised hand always wins) */
+const showsLimit = (emp: Employee): boolean => limitedAtDesk(emp) && !waitsOnYou(emp);
+
+const SIGN_WOOD = "#d2a574";
+const SIGN_EDGE = "#6e4a36";
+const SIGN_TITLE = "#8d1a1f";
+const SIGN_LINE_GAP = 2;
+const SIGN_PAD_X = 4;
+const SIGN_PAD_Y = 3;
+/** gap between the sign's bottom and the head: room for the floating Zz */
+const SIGN_GAP = 9;
+/** how far the sign (with its gap) reaches above the head, for things stacked over it */
+const limitLift = (emp: Employee): number => {
+  if (!showsLimit(emp)) return 0;
+  const lines = limitSignLines(emp.rateLimit!, Date.now()).length;
+  return SIGN_GAP + SIGN_PAD_Y * 2 + GLYPH_H * lines + SIGN_LINE_GAP * (lines - 1) + 2;
+};
+/** opaque wooden sign over a rate-limited adventurer plus a looping pixel "Zz" beside the head */
+const drawLimitSign = (ctx: Ctx, emp: Employee, time: number, still: boolean) => {
+  const lines = limitSignLines(emp.rateLimit!, Date.now());
+  const textW = Math.max(...lines.map((line) => measurePixelText(line)));
+  const width = textW + SIGN_PAD_X * 2,
+    height = SIGN_PAD_Y * 2 + GLYPH_H * lines.length + SIGN_LINE_GAP * (lines.length - 1);
+  const hx = Math.round(emp.x);
+  const bottom = Math.round(emp.y - CH_H - SIGN_GAP);
+  const left = Math.max(VIEW_X0 + 2, Math.min(WORLD_W - width - 2, hx - Math.floor(width / 2)));
+  const top = bottom - height;
+  rect(ctx, INK, left - 1, top - 1, width + 2, height + 2);
+  rect(ctx, SIGN_EDGE, left, top, width, height);
+  rect(ctx, SIGN_WOOD, left + 1, top + 1, width - 2, height - 2);
+  rect(ctx, INK, hx - 1, bottom + 1, 3, 1);
+  rect(ctx, INK, hx, bottom + 2, 1, 1);
+  lines.forEach((line, row) => {
+    const color = row === 0 ? SIGN_TITLE : INK;
+    drawPixelText(ctx, line, left + Math.floor(width / 2), top + SIGN_PAD_Y + row * (GLYPH_H + SIGN_LINE_GAP), color, {
+      align: "center",
+    });
+  });
+  // looping Zz: two opaque letters that bob out of step
+  const beat = still ? 0 : Math.floor(time * 1.5);
+  const zy = bottom + 2;
+  drawPixelText(ctx, "Z", hx + 5, zy + (beat % 2), "#ffffff", { shadow: INK, outline: true });
+  drawPixelText(ctx, "Z", hx + 10, zy - 4 - ((beat + 1) % 2), "#dfe8ff", { shadow: INK, outline: true });
+};
 
 // ---------- squires ----------
 const drawBadge = (ctx: Ctx, txt: string, x: number, y: number) => {
@@ -2424,6 +2473,7 @@ const poseFor = (emp: Employee, time: number, raidFoe = false): { pose: Pose; fr
     case "DRINK":
       return atTable(emp, time);
   }
+  if (limitedAtDesk(emp) && !raidFoe) return { pose: "rest", frame: Math.floor(time * 1.2) % 2 }; // out of stamina: slumped
   if (emp.resting) return { pose: "rest", frame: Math.floor(time * 1.2) % 2 };
   if (emp.hurtUntil > time) return { pose: "hurt", frame: Math.floor(time * 10) % 2 };
   const hasMon = raidFoe || (!!emp.monPos && !emp.monDead && !emp.bossPath.length); // a boss still walking out is too far to fight
@@ -2494,7 +2544,7 @@ const drawMonster = (ctx: Ctx, emp: Employee, time: number) => {
     if (age < 0.5) blitC(ctx, "poof" + (Math.floor(age * 8) % 2), pos.x, pos.y - 8);
     if (age < 0.2) return;
     const seated = emp.state === "SEATED";
-    const asleep = emp.resting;
+    const asleep = emp.resting || (seated && limitedAtDesk(emp));
     const walking = emp.bossPath.length > 0; // a boss still walking out of the dungeon gate
     const hit =
       seated &&
@@ -2536,7 +2586,7 @@ const drawMonster = (ctx: Ctx, emp: Employee, time: number) => {
     const top = Math.round(pos.y - sprite.height) - (boss ? 6 : 5);
     if (boss) hpBar(ctx, Math.round(cx), top, 30, 3, Math.max(0.12, 1 - (time - emp.bossAt) / 120));
     else hpBar(ctx, Math.round(cx), top, 12, 2, emp.monHp / emp.monHpMax);
-    if (asleep) blitC(ctx, "zzz", cx + 6, top - 5 - (Math.floor(time * 1.5) % 2));
+    if (emp.resting) blitC(ctx, "zzz", cx + 6, top - 5 - (Math.floor(time * 1.5) % 2));
   } else {
     const dage = time - emp.monDeadAt;
     if (dage < 0.5) blitC(ctx, "poof" + (Math.floor(dage * 8) % 2), pos.x, pos.y - 8);
@@ -2790,7 +2840,7 @@ const internTagLine = (emp: Employee): string => {
   return parts.join("  ");
 };
 
-const drawTag = (ctx: Ctx, emp: Employee, topY: number, dx = 0) => {
+const drawTag = (ctx: Ctx, emp: Employee, topY: number, dx = 0): { bx: number; by: number; width: number } => {
   const text = `${emp.project} ${emp.tag}`;
   ctx.font = TAG_FONT;
   const width = Math.ceil(ctx.measureText(text).width) + 7,
@@ -2827,6 +2877,50 @@ const drawTag = (ctx: Ctx, emp: Employee, topY: number, dx = 0) => {
     ctx.fillStyle = "#bfe3ff";
     ctx.fillText(shortText, bx2 + 3.5, by2 + height / 2 + 0.3);
   }
+  return { bx, by, width };
+};
+
+const AI_PLATE = "#23253a";
+const AI_PLATE_TEXT = "#fff6e0";
+const AI_PLATE_H = 9;
+const AI_SWATCH_W = 2;
+const LEVEL_UP_S = 2.2;
+const LEVEL_UP_LIFT = 12;
+/** canvas AI label: the card's form ("Opus 5.5" for Claude, just the tool name otherwise) */
+const aiPlateText = (emp: Employee): string =>
+  emp.source === "claude" ? aiLabel(emp.source, emp.model) : aiLabel(emp.source, null);
+/** plate width in the name-tag font: accent bar + text + padding */
+const aiPlateWidth = (ctx: Ctx, text: string): number => {
+  ctx.font = TAG_FONT;
+  return Math.ceil(ctx.measureText(text).width) + AI_SWATCH_W + 7;
+};
+/** small opaque plate in the name tag's style with the tool's accent bar; next to the name tag when given */
+const drawAiPlate = (
+  ctx: Ctx,
+  emp: Employee,
+  centerX: number,
+  rowTop: number,
+  anchor: { bx: number; by: number; width: number } | null = null,
+) => {
+  const text = aiPlateText(emp);
+  const width = aiPlateWidth(ctx, text);
+  let left = Math.round(centerX - width / 2);
+  let top = rowTop;
+  if (anchor) {
+    left = Math.round(anchor.bx + anchor.width + 2);
+    if (left + width > WORLD_W - 1) left = Math.round(anchor.bx - 2 - width);
+    top = anchor.by;
+  }
+  left = Math.max(VIEW_X0 + 1, Math.min(WORLD_W - width - 1, left));
+  top = Math.max(1, Math.round(top));
+  ctx.fillStyle = AI_PLATE;
+  roundRect(ctx, left, top, width, AI_PLATE_H, 2.5);
+  ctx.fill();
+  rect(ctx, aiAccent(emp.source), left + 2, top + 2, AI_SWATCH_W, AI_PLATE_H - 4);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = AI_PLATE_TEXT;
+  ctx.fillText(text, left + AI_SWATCH_W + 4, top + AI_PLATE_H / 2 + 0.3);
 };
 
 // ---------- guild receptionist ----------
@@ -2901,6 +2995,8 @@ const drawAmbientAbove = (ctx: Ctx, office: Office, night: number) => {
 const drawOverhead = (ctx: Ctx, office: Office, emp: Employee, time: number) => {
   if (waitsOnYou(emp) && !emp.tempBubble) {
     if (Math.floor(time * 4) % 2 === 0 || office.selectedId === emp.id) drawAlert(ctx, emp.x, emp.y - CH_H - 1);
+  } else if (showsLimit(emp)) {
+    drawLimitSign(ctx, emp, time, office.reducedMotion);
   } else {
     const emote = bubbleOf(emp, time);
     // opaque 🔁 badge over a looping adventurer; alternates with any other bubble (static under reduced motion)
@@ -2920,7 +3016,7 @@ const drawOverhead = (ctx: Ctx, office: Office, emp: Employee, time: number) => 
       emp.y -
         CH_H -
         20 -
-        (bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp) ? 15 : 0) -
+        (limitLift(emp) || (bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp) ? 15 : 0)) -
         eob(Math.min(1, sinceLevelUp * 2)) * 6,
     );
     outlined(
@@ -2937,7 +3033,11 @@ const drawOverhead = (ctx: Ctx, office: Office, emp: Employee, time: number) => 
     duelOffsetInto(emp, time);
     const ax = Math.round(emp.x + DP.dx),
       ay = Math.round(
-        emp.y + DP.dy - 28 - (bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp) ? 16 : 0) - bounce,
+        emp.y +
+          DP.dy -
+          28 -
+          (limitLift(emp) || (bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp) ? 16 : 0)) -
+          bounce,
       );
     rect(ctx, "#f2c14e", ax - 3, ay - 3, 7, 1);
     rect(ctx, "#f2c14e", ax - 2, ay - 2, 5, 1);
@@ -2959,12 +3059,36 @@ const drawHover = (ctx: Ctx, office: Office, hovered: Employee, time: number) =>
     1,
   );
   ctx.globalAlpha = 1;
-  drawTag(
+  const tag = drawTag(
     ctx,
     hovered,
-    hovered.y + DP.dy - CH_H - 3 - (bubbleOf(hovered, time) || waitsOnYou(hovered) || isLooping(hovered) ? 17 : 0),
+    hovered.y +
+      DP.dy -
+      CH_H -
+      3 -
+      (limitLift(hovered) || (bubbleOf(hovered, time) || waitsOnYou(hovered) || isLooping(hovered) ? 17 : 0)),
     DP.dx,
   );
+  drawAiPlate(ctx, hovered, hovered.x + DP.dx, 0, tag);
+};
+
+/** the selected adventurer's AI plate: above the selection arrow (the hovered one already shows it beside its name tag) */
+const drawSelectedPlate = (ctx: Ctx, office: Office, selected: Employee, time: number) => {
+  duelOffsetInto(selected, time);
+  const arrowY =
+    selected.y +
+    DP.dy -
+    28 -
+    (limitLift(selected) || (bubbleOf(selected, time) || selected.act === "handup" || isLooping(selected) ? 16 : 0));
+  const leveling = time - selected.lvlAt >= 0 && time - selected.lvlAt < LEVEL_UP_S && selected.state !== "LEAVING";
+  const top = arrowY - AI_PLATE_H - 5 - (leveling ? LEVEL_UP_LIFT : 0);
+  if (top >= 2) {
+    drawAiPlate(ctx, selected, selected.x + DP.dx, top);
+    return;
+  }
+  // no room above (the sign / world edge): sit beside the arrow instead
+  const half = Math.ceil(aiPlateWidth(ctx, aiPlateText(selected)) / 2);
+  drawAiPlate(ctx, selected, selected.x + DP.dx + 8 + half, arrowY - 4);
 };
 
 // ---------- inside the dungeon ----------
@@ -3641,6 +3765,9 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   }
   const hovered = office.hoverId ? office.employees.get(office.hoverId) : undefined;
   if (hovered && !hovered.inDungeon) drawHover(ctx, office, hovered, time);
+  const picked = office.selectedId ? office.employees.get(office.selectedId) : undefined;
+  if (picked && picked !== hovered && !picked.inDungeon && !office.isHidden(picked) && picked.state !== "LEAVING")
+    drawSelectedPlate(ctx, office, picked, time);
   ctx.restore(); // end of shaken scene; screen-space overlays below
   drawScreenOverlays(ctx, office);
 };

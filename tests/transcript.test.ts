@@ -46,7 +46,7 @@ describe("readContext", () => {
       JSON.stringify({ type: "user", message: {} }),
       asst({ input_tokens: 10, cache_read_input_tokens: 2000, cache_creation_input_tokens: 300 }),
     ]);
-    expect(await readContext(file)).toEqual({ used: 2310, limit: 200000, limitGuessed: false });
+    expect(await readContext(file)).toMatchObject({ used: 2310, limit: 200000, limitGuessed: false });
   });
 
   it("treats missing fields as 0", async () => {
@@ -95,13 +95,13 @@ describe("readContext", () => {
 
   it("marks limit guessed as 1M when used exceeds 200k", async () => {
     const file = write("big.jsonl", [asst({ input_tokens: 10, cache_read_input_tokens: 250000 })]);
-    expect(await readContext(file)).toEqual({ used: 250010, limit: 1_000_000, limitGuessed: true });
+    expect(await readContext(file)).toMatchObject({ used: 250010, limit: 1_000_000, limitGuessed: true });
   });
 
   it("honors CLAUDE_OFFICE_CTX_LIMIT", async () => {
     process.env.CLAUDE_OFFICE_CTX_LIMIT = "500000";
     const file = write("lim.jsonl", [asst({ input_tokens: 250000 })]);
-    expect(await readContext(file)).toEqual({ used: 250000, limit: 500000, limitGuessed: false });
+    expect(await readContext(file)).toMatchObject({ used: 250000, limit: 500000, limitGuessed: false });
   });
 
   it("reads only the tail window of a large file", async () => {
@@ -120,7 +120,7 @@ describe("readContext", () => {
     const file = write("lim2.jsonl", [asst({ input_tokens: 10 })]);
     for (const value of ["abc", "-5", "0", "Infinity"]) {
       process.env.CLAUDE_OFFICE_CTX_LIMIT = value;
-      expect(await readContext(file)).toEqual({ used: 10, limit: 200000, limitGuessed: false });
+      expect(await readContext(file)).toMatchObject({ used: 10, limit: 200000, limitGuessed: false });
     }
   });
 
@@ -147,6 +147,6 @@ describe("readContext", () => {
       JSON.stringify({ type: "system", subtype: "compact_boundary" }),
       asst({ input_tokens: 5000 }),
     ]);
-    expect(await readContext(file)).toEqual({ used: 5000, limit: 200000, limitGuessed: false });
+    expect(await readContext(file)).toMatchObject({ used: 5000, limit: 200000, limitGuessed: false });
   });
 });

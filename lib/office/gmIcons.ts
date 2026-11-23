@@ -3,7 +3,7 @@
  * dispatcher sword, the thumbs-up, the hand bell and the report scroll.
  */
 export type GmIconId =
-  "permission" | "question" | "loop" | "stuck" | "idle" | "compact" | "sword" | "thumb" | "bell" | "scroll";
+  "permission" | "question" | "limit" | "loop" | "stuck" | "idle" | "compact" | "sword" | "thumb" | "bell" | "scroll";
 
 export const GM_ICON_SIZE = 9;
 
@@ -55,6 +55,21 @@ const ART: Record<GmIconId, IconArt> = {
       "...bb....",
     ],
     pal: { b: BLUE },
+  },
+  // drained battery
+  limit: {
+    rows: [
+      "...kkk...",
+      ".kkkkkkk.",
+      ".krrrrrk.",
+      ".k.....k.",
+      ".k.....k.",
+      ".k.....k.",
+      ".k.....k.",
+      ".k.....k.",
+      ".kkkkkkk.",
+    ],
+    pal: { k: INK, r: RED },
   },
   // circular arrows
   loop: {

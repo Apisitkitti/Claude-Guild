@@ -81,7 +81,7 @@ export class TerritoryTracker {
     const name = evt.hook_event_name;
     if (!sid || !name) return false;
     // Squires/subagents (agent_id set) count as their parent session_id, but never release it.
-    if (!evt.agent_id && (name === "Stop" || name === "SessionEnd")) {
+    if (!evt.agent_id && (name === "Stop" || name === "StopFailure" || name === "SessionEnd")) {
       this.expire(now);
       this.claims.delete(sid);
       return this.refresh(now);

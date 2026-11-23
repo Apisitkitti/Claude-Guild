@@ -294,6 +294,28 @@ describe("turns, verdicts, closing", () => {
     expect(tracker.rows(5)[0].closedAt).toBe(4);
   });
 
+  it("closes the turn on a main-agent StopFailure", () => {
+    const tracker = new ReceiptTracker();
+    tracker.ingest(lifecycle("a", "UserPromptSubmit"), 1);
+    tracker.ingest(edit("a", "/w/proj/x.ts"), 2);
+    tracker.ingest(lifecycle("a", "StopFailure", { agent_id: "sub1" }), 3);
+    expect(tracker.rows(4)).toEqual([]);
+    tracker.ingest(lifecycle("a", "StopFailure"), 5);
+    expect(tracker.rows(6)).toHaveLength(1);
+    expect(tracker.rows(6)[0].closedAt).toBe(5);
+  });
+
+  it("a turn ended by StopFailure is never labelled done", () => {
+    const tracker = new ReceiptTracker();
+    tracker.ingest(lifecycle("a", "UserPromptSubmit"), 1);
+    tracker.ingest(edit("a", "/w/proj/x.ts"), 2);
+    tracker.ingest(lifecycle("a", "StopFailure", { error: "rate_limit" }), 3);
+    const rows = tracker.rows(4);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].files).toBe(1);
+    expect(rows[0].verdict).toBe("none");
+  });
+
   it("a turn with no tool call leaves no receipt; activity without outcomes = none", () => {
     const tracker = new ReceiptTracker();
     turn(tracker, "a", 1, []);

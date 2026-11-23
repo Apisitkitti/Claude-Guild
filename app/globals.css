@@ -729,11 +729,17 @@ button:active {
   line-height: 1.25;
 }
 .card .who b {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  min-width: 0;
   color: var(--color-ink);
   font-family: var(--font-serif);
 }
 .card .cls {
-  margin-left: 6px;
+  margin-left: 0;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: 700;
@@ -743,6 +749,27 @@ button:active {
   border-radius: var(--radius-sm);
   padding: 0 5px;
   vertical-align: 1px;
+}
+.card .aibadge,
+.card .limitbadge {
+  display: inline-block;
+  max-width: 8em;
+  margin-left: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  border: 1px solid var(--color-wood-shadow);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  vertical-align: 1px;
+}
+.card .limitbadge {
+  color: var(--color-on-danger);
+  background: var(--color-danger);
+  border-color: var(--color-danger-deep);
 }
 .card .proj {
   color: var(--color-ink-dim);
@@ -999,7 +1026,8 @@ button:active {
 }
 
 .card .lv {
-  margin-left: 4px;
+  margin-left: 0;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: 700;
@@ -1479,6 +1507,9 @@ button:active {
 }
 .attn.context {
   border-left-color: var(--color-context);
+}
+.attn.limit {
+  border-left-color: var(--color-danger-text);
 }
 .attn.done {
   border-left-color: var(--color-success-dark);

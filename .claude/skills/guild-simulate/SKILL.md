@@ -1,6 +1,6 @@
 ---
 name: guild-simulate
-description: Fire fake Claude Code hook events at the running Claude Guild dev server to see features live on the canvas (boss, loop bell, receipt card, duel, tavern break, squire, cheers, feast), then clean up. Use when the user says "จำลอง", "ลองเรียกบอส", "ดูบนจอ", "ลองดูของจริง", "ส่ง event ปลอม", "simulate", "fake event", "test live", "trigger the boss", "see it in the browser".
+description: Fire fake Claude Code hook events at the running Claude Guild dev server to see features live on the canvas (boss, loop bell, receipt card, duel, tavern break, squire, cheers, feast, usage limit, AI badges), then clean up. Use when the user says "จำลอง", "ลองเรียกบอส", "ดูบนจอ", "ลองดูของจริง", "ส่ง event ปลอม", "simulate", "fake event", "test live", "trigger the boss", "see it in the browser".
 ---
 
 # guild-simulate
@@ -31,6 +31,8 @@ Drives `http://localhost:5050` (the `office-dev` server, already running) by POS
 | `cheers` | A: PreCompact (sits at the feast table); B: edit + Stop (done receipt) | Mugs up and "Cheers!" pill (~2.6 s). Timing-sensitive: tune `CHEERS_DELAY` (default 6 s) | ~20 s |
 | `feast` | 3 sessions; two done receipts within 60 s (cooldown 90 s) | Feast banner ~16 s: confetti, bard, plates | ~15 s |
 | `lord` | One session: 40 Reads (raid-ready), then ~90 Bash calls paced `LORD_PACE` (0.5 s); `LORD_CALLS` = total (default 130) | Leaves its spot for the dungeon gate, descends B1 to B3, "Raid on the Dungeon Lord" banner + live inset on the guild scene, Lord rises from the throne, hits flash him, he falls (fanfare, hall toast), the raider walks home | ~80 s |
+| `limit` | One session: Read, Grep, Edit, then `StopFailure` (`error: rate_limit`, message "You've hit your limit · resets 3pm (Asia/Bangkok)") | Adventurer shows the plan-limit state; Lookout Bell "limit" row with reset text. Clears on the next prompt/tool event, or after 3pm local | instant |
+| `ais` | 4 sessions: claude (model `claude-opus-5-5`), codex / copilot / cursor via `?source=` (models `gpt-5.1-codex`, `gpt-4.1`, `sonnet-4.5`), each a prompt + Read | Each adventurer shows its AI tool and model (server ids get `-cx`/`-cp`/`-cu` suffixes) | ~5 s |
 | `status` | none | Health plus which sim/real session ids are on the server | instant |
 | `cleanup` | PostToolUse for every pending tool (subagent ones keep their `agent_id`), SubagentStop for every squire, then SessionEnd for every recorded id (only `9401-` ids) | All simulated adventurers leave | ~1 s, adventurers walk out |
 

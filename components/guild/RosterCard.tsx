@@ -1,3 +1,4 @@
+import { AI_ACCENT_INK, aiAccent, aiLabel } from "@/lib/office/aiLabel";
 import type { RosterAct, RosterRow } from "@/lib/office/engine";
 import { classLabel } from "@/lib/office/palette";
 import { m } from "@/paraglide/messages";
@@ -45,6 +46,14 @@ export const RosterCard = ({
 }) => {
   const chip = ACT_CHIP[row.act] ?? ACT_CHIP.thinking;
   const rpg = row as RpgRow;
+  // the card is tight: Claude shows "Opus 5.5", other tools just their name (the model stays in the title)
+  const aiText = row.ai.source === "claude" ? row.ai.label : aiLabel(row.ai.source, null);
+  const aiTitle = m.ai_badge_title({ label: row.ai.label });
+  const limitTitle = row.rateLimit
+    ? row.rateLimit.resetText
+      ? m.card_limit_title({ time: row.rateLimit.resetText })
+      : m.card_limit_title_unknown()
+    : "";
   return (
     <li className={`card${highlighted ? " hl" : ""}${flashing ? " lvup" : ""}`} style={{ borderLeftColor: row.color }}>
       <button
@@ -52,14 +61,26 @@ export const RosterCard = ({
         className="csel"
         onClick={() => officeRef.current?.select(row.id)}
         aria-pressed={selected}
-        aria-label={`${row.tag} ${row.project}: ${row.status}`}
-        title={row.status}
+        aria-label={`${row.tag} ${row.project}: ${row.status} (${row.ai.label})`}
+        title={`${row.status} · ${aiTitle}`}
       >
         <Avatar look={row.look} />
         <span className="who">
           <b>
             {row.tag}
             {row.look.cls ? <span className="cls">{classLabel(row.look.cls)}</span> : null}
+            <span
+              className="aibadge"
+              style={{ background: aiAccent(row.ai.source), color: AI_ACCENT_INK }}
+              title={aiTitle}
+            >
+              {aiText}
+            </span>
+            {row.rateLimit ? (
+              <span className="limitbadge" title={limitTitle}>
+                {m.card_limit_label()}
+              </span>
+            ) : null}
             {isNum(rpg.level) ? <span className="lv">Lv.{rpg.level}</span> : null}
           </b>
           <span className="proj">{row.project}</span>

@@ -59,6 +59,7 @@ export const normalizeCodex = (raw: RawEvent, hints: NormalizeHints = {}): Norma
   }
   return build("codex", str(raw.session_id), eventName, {
     cwd: raw.cwd,
+    model: raw.model,
     source: raw.source,
     trigger: raw.trigger,
     prompt: raw.prompt,

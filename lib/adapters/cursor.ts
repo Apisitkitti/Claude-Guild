@@ -114,6 +114,7 @@ export const normalizeCursor = (raw: RawEvent, hints: NormalizeHints = {}): Norm
   const isSubagent = shape.event === "SubagentStart" || shape.event === "SubagentStop";
   return build("cursor", pick(raw, "conversation_id", "session_id"), shape.event, {
     cwd: cwdOf(raw),
+    model: raw.model,
     prompt: raw.prompt,
     trigger: raw.trigger,
     tool_name: shape.tool,

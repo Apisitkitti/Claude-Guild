@@ -19,7 +19,8 @@ export type SfxCue =
   | "lordFlame"
   | "lordSummon"
   | "lordEnrage"
-  | "lordDeath";
+  | "lordDeath"
+  | "limit";
 
 export type AmbientKind = "tavern" | "dungeon" | null;
 
@@ -125,6 +126,11 @@ const CUES: Record<Exclude<SfxCue, "hit">, Tone[]> = {
   cheers: [
     { at: 0, freq: midi(91), dur: 0.12, wave: "sine", gain: 0.5 },
     { at: 0.05, freq: midi(95), dur: 0.2, wave: "sine", gain: 0.4 },
+  ],
+  limit: [
+    { at: 0, freq: midi(67), dur: 0.16, wave: "triangle", gain: 0.5, slideTo: midi(64) },
+    { at: 0.18, freq: midi(62), dur: 0.16, wave: "triangle", gain: 0.45, slideTo: midi(58) },
+    { at: 0.36, freq: midi(55), dur: 0.4, wave: "triangle", gain: 0.45, slideTo: midi(48) },
   ],
   fanfare: [
     { at: 0, freq: midi(60), dur: 0.14, wave: "square", gain: 0.5 },

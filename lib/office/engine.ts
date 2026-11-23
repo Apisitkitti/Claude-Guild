@@ -1,6 +1,7 @@
 import type { ChronicleSnapshot } from "@/lib/chronicle";
 import { m } from "@/paraglide/messages";
 
+import { aiInfo, isAiSource, type AiInfo, type AiSource } from "./aiLabel";
 import type { SfxCue } from "./audio";
 import { bossCenterX, BOSS_H, BOSS_W } from "./bossSprites";
 import { CRYPT_KINDS, type CryptKind } from "./cryptSprites";
@@ -58,6 +59,7 @@ import {
   squirePoint,
   type Pt,
 } from "./layout";
+import { parseRateLimit, type RateLimitInfo } from "./limitScene";
 import {
   ATTACK_BREATH,
   ATTACK_METEOR,
@@ -479,8 +481,16 @@ const GM_PRAISE_MAX = 4;
 const GM_DISPATCH_TALK_S = 1.5;
 const GM_DISPATCH_MAX_S = 9;
 const GM_ESCORT_POINT_S = 1.5;
-const GM_RANK: Record<GmReason, number> = { permission: 0, question: 1, loop: 2, stuck: 3, idle: 4, compact: 5 };
-const GM_LAST_URGENT = 3;
+const GM_RANK: Record<GmReason, number> = {
+  permission: 0,
+  question: 1,
+  limit: 2,
+  loop: 3,
+  stuck: 4,
+  idle: 5,
+  compact: 6,
+};
+const GM_LAST_URGENT = 4;
 
 export interface HookEvt {
   session_id?: string;
@@ -494,6 +504,8 @@ export interface HookEvt {
   notification_type?: string;
   reason?: string;
   trigger?: string;
+  /** StopFailure: what ended the turn (e.g. "rate_limit") */
+  error?: string;
   receivedAt?: number;
   [k: string]: unknown;
 }
@@ -536,7 +548,7 @@ export interface ConflictRow {
 }
 export const conflictKey = (conflict: { file: string; level: string }): string => `${conflict.file}|${conflict.level}`;
 
-export type AttentionKind = "permission" | "loop" | "asked" | "context" | "done";
+export type AttentionKind = "permission" | "loop" | "asked" | "context" | "done" | "limit";
 /** a row of the server's Lookout Bell queue */
 export interface AttentionMsgRow {
   key: string;
@@ -554,6 +566,8 @@ export interface AttentionMsgRow {
   tail?: string;
   /** context: percent of the window used */
   pct?: number;
+  /** limit: the reset text ("3pm (Asia/Bangkok)") */
+  detail?: string;
 }
 /** a queue row joined with the adventurer it is about (only sessions the guild knows) */
 export interface AttentionRow extends AttentionMsgRow {
@@ -568,7 +582,11 @@ export const bellCount = (rows: readonly { kind: AttentionKind }[], withPermissi
   return count;
 };
 const SFX_QUEUE_MAX = 32;
-const ATTN_KINDS: readonly string[] = ["permission", "loop", "asked", "context", "done"];
+const ATTN_KINDS: readonly string[] = ["permission", "loop", "asked", "context", "done", "limit"];
+const ATTN_DETAIL_MAX = 60;
+/** longest model id kept per adventurer */
+const MODEL_MAX = 80;
+const META_PENDING_MAX = 64;
 /** ids of the next queue row after the selected one (wraps); first row when nothing in the queue is selected */
 export const nextAttentionId = (rows: readonly { sid: string }[], selectedId: string | null): string | null => {
   const ids: string[] = [];
@@ -635,7 +653,19 @@ export interface SnapshotMsg {
   /** Quest Board: each session's todo list (full replacement) */
   quests?: QuestMsgRow[];
   territory?: TerritoryMsg;
-  sessions?: { session_id: string; cwd?: string; interns?: string[]; context?: CtxMsg | null; waiting?: boolean }[];
+  sessions?: {
+    session_id: string;
+    cwd?: string;
+    interns?: string[];
+    context?: CtxMsg | null;
+    waiting?: boolean;
+    /** which agent tool the session belongs to */
+    source?: AiSource;
+    /** raw model id, e.g. "claude-opus-5-5" */
+    model?: string | null;
+    /** plan usage limit the session hit (null / absent = none) */
+    rateLimit?: RateLimitInfo | null;
+  }[];
   events?: HookEvt[];
 }
 
@@ -1151,6 +1181,11 @@ export interface Employee {
   manaFlashUntil: number;
   /** raising a mug at the feast table until this clock time */
   cheerUntil: number;
+  /** which agent tool + model this session runs */
+  source: AiSource;
+  model: string | null;
+  /** plan usage limit the session is stuck behind (null = none): the adventurer sits exhausted until it clears */
+  rateLimit: RateLimitInfo | null;
 }
 
 /** a raider's current dungeon foe */
@@ -1180,7 +1215,7 @@ export interface Chef {
   target: number;
 }
 /** why the guild master wants an adventurer's attention, most urgent first */
-export type GmReason = "permission" | "question" | "loop" | "stuck" | "idle" | "compact";
+export type GmReason = "permission" | "question" | "limit" | "loop" | "stuck" | "idle" | "compact";
 /** one line of the guild master's report */
 export interface GmReportRow {
   id: string;
@@ -1441,6 +1476,10 @@ export interface RosterRow {
   claims?: number;
   /** strongest live, non-dismissed conflict this session is part of */
   conflict?: "overlap" | "clash";
+  /** the AI behind the adventurer: agent tool + model with ready-made display labels */
+  ai: AiInfo;
+  /** plan usage limit the session is stuck behind (null = none) */
+  rateLimit: RateLimitInfo | null;
 }
 export interface OfficeView {
   roster: RosterRow[];
@@ -2086,6 +2125,7 @@ export class Office {
         const target = text(row.target, ATTN_TARGET_MAX);
         const error = text(row.error, ATTN_ERROR_MAX);
         const tail = text(row.tail, ATTN_TAIL_MAX);
+        const detail = row.kind === "limit" ? text(row.detail ?? row.error ?? row.tail, ATTN_DETAIL_MAX) : undefined;
         out.push({
           key: row.key.slice(0, RECEIPT_KEY_MAX),
           sid: row.sid,
@@ -2098,6 +2138,7 @@ export class Office {
           ...(error ? { error } : {}),
           ...(tail ? { tail } : {}),
           ...(row.kind === "context" ? { pct: Math.min(PERCENT, count(row.pct)) } : {}),
+          ...(detail ? { detail } : {}),
         });
       }
     }
@@ -2347,6 +2388,65 @@ export class Office {
     this.statsVer++;
     this.dirty = true;
     this.emit(true);
+  }
+
+  /**
+   * Which AI a session belongs to and whether it hit its plan limit (server `session_meta` frame). Absent fields keep
+   * their value; `rateLimit: null` clears the limit and the adventurer gets up again. Unknown sessions are ignored.
+   */
+  setSessionMeta(sid: string, meta: { source?: unknown; model?: unknown; rateLimit?: unknown } | null | undefined) {
+    if (!meta || typeof meta !== "object") return;
+    const emp = this.employees.get(sid);
+    if (!emp) {
+      // the session has not spawned yet (the meta frame beat its first event): keep it for spawn()
+      const kept = this.metaPending.get(sid) ?? {};
+      this.metaPending.delete(sid);
+      this.metaPending.set(sid, { ...kept, ...meta });
+      if (this.metaPending.size > META_PENDING_MAX)
+        this.metaPending.delete(this.metaPending.keys().next().value as string);
+      return;
+    }
+    this.applySessionMeta(emp, meta, true);
+  }
+  /** session_meta frames that arrived before their adventurer (capped, applied in spawn) */
+  private metaPending = new Map<string, { source?: unknown; model?: unknown; rateLimit?: unknown }>();
+  private applySessionMeta(
+    emp: Employee,
+    meta: { source?: unknown; model?: unknown; rateLimit?: unknown },
+    announce = false,
+  ) {
+    if (isAiSource(meta.source) && emp.source !== meta.source) {
+      emp.source = meta.source;
+      this.dirty = true;
+    }
+    if (meta.model !== undefined) {
+      const model = typeof meta.model === "string" && meta.model.trim() ? meta.model.trim().slice(0, MODEL_MAX) : null;
+      if (emp.model !== model) {
+        emp.model = model;
+        this.dirty = true;
+      }
+    }
+    if (meta.rateLimit === undefined) return;
+    const next = parseRateLimit(meta.rateLimit);
+    const current = emp.rateLimit;
+    if (!next && !current) return;
+    if (next && current && next.since === current.since) {
+      emp.rateLimit = next; // the same hit, maybe with a better reset time
+      if (next.resetText !== current.resetText || next.resetsAt !== current.resetsAt) {
+        this.gmRowsAt = -Infinity;
+        this.dirty = true;
+      }
+      return;
+    }
+    emp.rateLimit = next;
+    this.gmRowsAt = -Infinity;
+    this.dirty = true;
+    if (!next) return;
+    // the adventurer drops what it was doing: back to the desk, no tavern break
+    this.cutTrip(emp);
+    if (emp.state === "STRETCH") emp.state = "SEATED";
+    emp.coffeeAfter = false;
+    if (announce && emp.state === "SEATED") this.sfx("limit");
   }
 
   setContext(sid: string, used: number | null | undefined, limit: number | null | undefined, guessed = false) {
@@ -3158,7 +3258,7 @@ export class Office {
         continue;
       }
       const cf = this.ctxFrac(emp.id);
-      sig += `;${emp.id}${cf === null ? "" : "c" + Math.round(cf * PERCENT) + (this.ctxMap.get(emp.id)!.guessed ? "g" : "")},${this.statusOf(emp)},${emp.interns.size},${emp.deskIdx},${emp.lv}:${emp.xp}:${emp.gold}:${emp.kills}:${emp.hearts}`;
+      sig += `;${emp.id}${cf === null ? "" : "c" + Math.round(cf * PERCENT) + (this.ctxMap.get(emp.id)!.guessed ? "g" : "")},${this.statusOf(emp)},${emp.interns.size},${emp.deskIdx},${emp.lv}:${emp.xp}:${emp.gold}:${emp.kills}:${emp.hearts},${emp.source}:${emp.model ?? ""}:${emp.rateLimit ? emp.rateLimit.since : 0}`;
       for (const intern of emp.interns.values())
         sig += `,${intern.id}:${intern.label}:${intern.act}:${intern.detail ?? ""}:${intern.count}:${intern.failed ? 1 : 0}`;
     }
@@ -3233,6 +3333,8 @@ export class Office {
           kills: emp.kills,
           hp: emp.hearts,
           hpMax: MAX_HEARTS,
+          ai: aiInfo(emp.source, emp.model),
+          rateLimit: emp.rateLimit,
         };
       });
     return {
@@ -3375,6 +3477,7 @@ export class Office {
     if (emp.raidIn && emp.act !== "handup") return m.dungeon_lord_status_raiding();
     if (emp.hurtUntil > this.clock) return m.status_hurt();
     if (emp.boss && emp.act !== "handup") return m.status_boss();
+    if (emp.rateLimit && emp.act !== "handup") return m.status_limit();
     if (emp.resting && emp.act !== "handup") return m.status_resting();
     if (emp.act !== "handup")
       for (const intern of emp.interns.values()) if (intern.act === "handup") return m.status_squire_handup();
@@ -3742,6 +3845,7 @@ export class Office {
       emp.state !== "LEAVING" &&
       emp.act !== "handup" &&
       emp.pending.size === 0 &&
+      !emp.rateLimit &&
       this.clock - emp.lastEventAt > IDLE_GRACE_S * Math.max(1, this.speed)
     )
       this.leave(emp);
@@ -4852,7 +4956,15 @@ export class Office {
       restSpot: -1,
       manaFlashUntil: 0,
       cheerUntil: 0,
+      source: "claude",
+      model: null,
+      rateLimit: null,
     };
+    const early = this.metaPending.get(id);
+    if (early) {
+      this.metaPending.delete(id);
+      this.applySessionMeta(emp, early);
+    }
     const sv = this.demo ? undefined : this.progress[id];
     if (sv) {
       emp.lv = sv.lv;
@@ -4898,6 +5010,7 @@ export class Office {
       let emp = this.employees.get(session.session_id);
       if (!emp) emp = this.spawn(session.session_id, session.cwd, true);
       emp.known = true;
+      this.applySessionMeta(emp, session);
       const sn = seen.get(session.session_id);
       if (sn) {
         emp.evCount = Math.max(emp.evCount, sn.n);
@@ -5066,7 +5179,7 @@ export class Office {
         break;
       case "DUEL": // never queued: apply state-only (no coffee walk), the adventurer keeps dueling; updateDuels() aborts on a ❗
         this.applyEvent(emp, evt, false);
-        emp.coffeeAfter = name === "Stop";
+        emp.coffeeAfter = name === "Stop" || false;
         break;
       case "TO_COFFEE":
       case "DRINK":
@@ -5218,17 +5331,18 @@ export class Office {
         break;
       }
       case "Stop":
+      case "StopFailure":
         emp.hasPaper = false;
         this.setAct(emp, "thinking");
         this.clearPending(emp);
         if (emp.boss) this.bossLeaves(emp);
-        if (emp.toolCalls >= QUEST_MIN_TOOLS) {
+        if (name === "Stop" && emp.toolCalls >= QUEST_MIN_TOOLS) {
           this.addBanner("quest", m.banner_quest_done({ calls: emp.toolCalls, gold: emp.qGold }));
         }
         emp.toolCalls = 0;
         emp.qKills = 0;
         emp.qGold = 0;
-        if (emp.hearts < MAX_HEARTS) {
+        if (emp.hearts < MAX_HEARTS && !(name === "StopFailure" && this.limitedStop(emp, evt))) {
           emp.hearts = MAX_HEARTS;
           for (let k = 0; k < HEART_COUNT; k++)
             this.emitP(
@@ -5243,7 +5357,7 @@ export class Office {
               "heart",
             );
         }
-        if (coffee && !emp.raidIn) {
+        if (coffee && !emp.raidIn && name === "Stop") {
           emp.state = "STRETCH";
           emp.stateSince = clock;
         }
@@ -5251,6 +5365,11 @@ export class Office {
       default:
         break;
     }
+  }
+
+  /** a StopFailure caused by a plan limit (the session cannot go on): the adventurer stays at the desk */
+  private limitedStop(emp: Employee, evt: HookEvt): boolean {
+    return !!emp.rateLimit || str(evt.error).toLowerCase().includes("rate_limit");
   }
 
   private pendSeq = 0;
@@ -5915,11 +6034,13 @@ export class Office {
         asked.add(row.sid);
         add(emp, "question", began, row.tail ?? "");
       } else if (row.kind === "loop") add(emp, "loop", began, `${row.tool ?? ""} ${row.target ?? ""}`.trim());
+      else if (row.kind === "limit") add(emp, "limit", began, row.detail ?? emp.rateLimit?.resetText ?? "");
     }
     for (const emp of this.employees.values()) {
       if (emp.state === "LEAVING") continue;
       // a raised hand began at realTime `handAt`; the office clock may run at another speed, so count back real seconds
       const handBegan = emp.act === "handup" ? this.clock - Math.min(this.clock, this.realTime - emp.handAt) : null;
+      if (emp.rateLimit) add(emp, "limit", fromWall(emp.rateLimit.since), emp.rateLimit.resetText ?? "");
       if (this.isWaiting(emp) && !asked.has(emp.id)) add(emp, "permission", handBegan, emp.lastTool);
       if (emp.act !== "handup" && emp.pending.size > 0) {
         let oldest = Infinity;
@@ -5932,6 +6053,7 @@ export class Office {
         !emp.raidIn &&
         !emp.compactPending &&
         emp.state === "SEATED" &&
+        !emp.rateLimit &&
         this.clock - emp.lastEventAt > GM_IDLE_REPORT_S
       )
         add(emp, "idle", emp.lastEventAt, "");

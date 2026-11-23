@@ -85,6 +85,14 @@ describe("TerritoryTracker claims", () => {
     expect(tracker.sweep(T0 + 1000)).toBe(false);
   });
 
+  it("releases on a main-agent StopFailure", () => {
+    const tracker = new TerritoryTracker();
+    tracker.onEvent(ev("a", "PreToolUse", "/proj/a.ts"), T0);
+    expect(tracker.onEvent({ session_id: "a", hook_event_name: "StopFailure", agent_id: "sq" }, T0 + 1)).toBe(false);
+    expect(tracker.onEvent({ session_id: "a", hook_event_name: "StopFailure" }, T0 + 2)).toBe(true);
+    expect(tracker.snapshot().claims).toEqual([]);
+  });
+
   it("releases on Stop and SessionEnd, but not for squire events", () => {
     const tracker = new TerritoryTracker();
     tracker.onEvent(ev("a", "PreToolUse", "/proj/a.ts"), T0);

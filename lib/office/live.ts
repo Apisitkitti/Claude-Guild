@@ -12,6 +12,7 @@ export interface LiveHandlers {
   onSnapshot(s: SnapshotMsg): void;
   onEvent(e: HookEvt): void;
   onContext?(m: { session_id: string; used: number | null; limit: number | null; limitGuessed?: boolean }): void;
+  onSessionMeta?(m: { session_id: string; source?: string; model?: string | null; rateLimit?: unknown }): void;
   onTerritory?(m: TerritoryMsg): void;
   onAttention?(rows: AttentionMsgRow[]): void;
   onReceipts?(rows: ReceiptMsgRow[]): void;
@@ -56,6 +57,13 @@ export const connectLive = (handlers: LiveHandlers): { close(): void } => {
     src.addEventListener("context", (ev) => {
       try {
         handlers.onContext?.(JSON.parse((ev as MessageEvent).data));
+      } catch {
+        /* ignore bad frame */
+      }
+    });
+    src.addEventListener("session_meta", (ev) => {
+      try {
+        handlers.onSessionMeta?.(JSON.parse((ev as MessageEvent).data));
       } catch {
         /* ignore bad frame */
       }

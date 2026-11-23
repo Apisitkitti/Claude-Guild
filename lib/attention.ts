@@ -54,7 +54,7 @@ export const ERROR_CHARS = 120;
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
-export type AttentionKind = "permission" | "loop" | "asked" | "context" | "done";
+export type AttentionKind = "permission" | "loop" | "asked" | "limit" | "context" | "done";
 export type AttentionRow = {
   /** stable identity of this reason (dismissals are per key) */
   key: string;
@@ -70,11 +70,13 @@ export type AttentionRow = {
   error?: string;
   /** asked only: tail of the final message (the client words the row and builds any text to copy) */
   tail?: string;
+  /** limit only: when the plan limit resets (e.g. "3pm (Asia/Bangkok)"), if the message said */
+  detail?: string;
   /** context only: percent of the window used */
   pct?: number;
 };
 
-const RANK: Record<AttentionKind, number> = { permission: 0, loop: 1, asked: 2, context: 3, done: 4 };
+const RANK: Record<AttentionKind, number> = { permission: 0, loop: 1, asked: 2, limit: 3, context: 4, done: 5 };
 /** a possibly-already-granted permission wait ranks just below loop */
 const STALE_PERM_RANK = 1.5;
 
@@ -226,6 +228,7 @@ export class AttentionTracker {
   private done = new Map<string, Done>();
   private waiting = new Map<string, number>();
   private ctx = new Map<string, { frac: number; since: number }>();
+  private limits = new Map<string, { since: number; detail: string | null }>();
 
   private key(sid: string, agent: string): KeyState {
     const mapKey = sid + "\0" + agent;
@@ -262,9 +265,13 @@ export class AttentionTracker {
       if (agent) this.keys.delete(sid + "\0" + agent);
       return;
     }
-    if (name === "Stop") {
+    if (name === "Stop" || name === "StopFailure") {
       this.resetSession(sid, agent || "main");
       if (agent) return; // only the main agent "finishes" for the user
+      if (name === "StopFailure") {
+        this.done.delete(sid); // an API error is not "done, awaiting review" (a limit gets its own row)
+        return;
+      }
       const msg = raw.last_assistant_message;
       const entry: Done =
         typeof msg === "string"
@@ -344,6 +351,12 @@ export class AttentionTracker {
     this.ctx.set(sid, { frac, since: current ? current.since : now });
   }
 
+  /** the session is stopped by its plan usage limit since `since` (null = no longer) */
+  setLimit(sid: string, limit: { since: number; detail: string | null } | null): void {
+    if (limit === null) this.limits.delete(sid);
+    else this.limits.set(sid, limit);
+  }
+
   queue(now: number): AttentionRow[] {
     const rows: AttentionRow[] = [];
     const rank = new Map<AttentionRow, number>();
@@ -384,6 +397,14 @@ export class AttentionTracker {
         });
       else rows.push({ key: `${sid}|done|${entry.since}`, sid, kind: "done", since: entry.since });
     }
+    for (const [sid, limit] of this.limits)
+      rows.push({
+        key: `${sid}|limit|${limit.since}`,
+        sid,
+        kind: "limit",
+        since: limit.since,
+        ...(limit.detail ? { detail: limit.detail } : {}),
+      });
     for (const [sid, pressure] of this.ctx)
       rows.push({
         key: `${sid}|context`,
@@ -423,6 +444,7 @@ export class AttentionTracker {
     this.done.delete(sid);
     this.waiting.delete(sid);
     this.ctx.delete(sid);
+    this.limits.delete(sid);
   }
 
   /** test/diagnostic: sizes of internal maps */
