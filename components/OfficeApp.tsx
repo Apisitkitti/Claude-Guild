@@ -17,6 +17,7 @@ import { useOfficeEngine } from "./guild/hooks/useOfficeEngine";
 import { useFullscreen, usePanelCollapsed } from "./guild/hooks/usePanelState";
 import { useRevealSelect } from "./guild/hooks/useRevealSelect";
 import { useSessionFilter } from "./guild/hooks/useSessionFilter";
+import { useSound } from "./guild/hooks/useSound";
 import { SidePanel } from "./guild/SidePanel";
 import { Stage } from "./guild/Stage";
 
@@ -35,6 +36,7 @@ const OfficeApp = () => {
   const revealSelect = useRevealSelect(officeRef, filter.setFilterQuery);
   const jumpTo = useKeyboardNav(attention, view.selectedId, revealSelect);
   const notify = useNotifications({ officeRef, mode: source.mode, view, waiting, clashes, prevClashRef, revealSelect });
+  const sound = useSound(officeRef);
   useDocumentTitle({ waitingN: waiting.length, clashN: clashes.length, bellN });
   const nowMs = useNow();
   const [collapsed, toggleCollapsed] = usePanelCollapsed();
@@ -53,6 +55,7 @@ const OfficeApp = () => {
         paused={source.paused}
         speed={source.speed}
         notify={notify}
+        sound={sound}
         full={full}
         collapsed={collapsed}
         officeRef={officeRef}

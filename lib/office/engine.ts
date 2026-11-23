@@ -1,5 +1,6 @@
 import { m } from "@/paraglide/messages";
 
+import type { SfxCue } from "./audio";
 import { bossCenterX, BOSS_H, BOSS_W } from "./bossSprites";
 import { ToolTally, type DungeonStats } from "./dungeon";
 import { dungeonMonsterPoint, dungeonSpotOf } from "./dungeonScene";
@@ -479,6 +480,7 @@ export const bellCount = (rows: readonly { kind: AttentionKind }[], withPermissi
     if (row.kind === "loop" || row.kind === "asked" || (withPermission && row.kind === "permission")) count++;
   return count;
 };
+const SFX_QUEUE_MAX = 32;
 const ATTN_KINDS: readonly string[] = ["permission", "loop", "asked", "context", "done"];
 /** ids of the next queue row after the selected one (wraps); first row when nothing in the queue is selected */
 export const nextAttentionId = (rows: readonly { sid: string }[], selectedId: string | null): string | null => {
@@ -1412,9 +1414,17 @@ export class Office {
   bossAlive = 0;
   /** which view the canvas shows: the guild grounds or the inside of the dungeon */
   scene: "guild" | "dungeon" = "guild";
+  /** sound cues waiting for the React sound hook (capped; the hook drains it, or clears it while sound is off) */
+  readonly sfxQueue: SfxCue[] = [];
+  private sfx(cue: SfxCue) {
+    if (this.sfxQueue.length < SFX_QUEUE_MAX) this.sfxQueue.push(cue);
+  }
+  /** attention keys that were ringing the bell at the last snapshot (null until the first one: no ring on load) */
+  private bellKeys: Set<string> | null = null;
   setScene(next: "guild" | "dungeon") {
     if (this.scene === next) return;
     this.scene = next;
+    this.sfx(next === "dungeon" ? "enterDungeon" : "door");
     this.hoverId = null; // the hovered adventurer is not in the other scene
     this.dirty = true;
   }
@@ -1779,6 +1789,11 @@ export class Office {
     const keys = new Set(out.map((row) => row.key));
     for (const key of this.attnDismissed) if (!keys.has(key)) this.attnDismissed.delete(key);
     this.attn = out;
+    const ringing = new Set(
+      out.filter((row) => bellCount([row]) > 0 && this.employees.has(row.sid)).map((row) => row.key),
+    );
+    if (this.bellKeys && [...ringing].some((key) => !this.bellKeys!.has(key))) this.sfx("bell");
+    this.bellKeys = ringing;
     this.bumpAttn();
   }
   /** Replace the Receipt Ledger. Malformed rows are skipped. A receipt that just closed with outcomes pops a 📜 bubble + quest-log line. */
@@ -1826,6 +1841,7 @@ export class Office {
       if (first || Date.now() - receipt.closedAt > RECEIPT_FRESH_MS) continue;
       if (receipt.verdict === "done" || receipt.commits > 0) this.cheers();
       if (receipt.verdict === "done") this.noteDone(receipt.sid);
+      if (receipt.verdict === "done") this.sfx("questDone");
       const sum = receiptSummary(receipt);
       const emp = this.employees.get(receipt.sid);
       if (!sum || !emp) continue;
@@ -1922,6 +1938,7 @@ export class Office {
     this.endedAgents.clear();
     this.ctxMap.clear();
     this.attn = [];
+    this.bellKeys = null;
     this.attnDismissed.clear();
     this.bumpAttn();
     this.rcpts = [];
@@ -4211,6 +4228,7 @@ export class Office {
       let dmg = HEAVY_TOOLS.has(tool) ? 2 : 1;
       if (crit) dmg *= 2;
       emp.monHp -= dmg;
+      this.sfx("hit");
       emp.flashUntil = clock + FLASH_S;
       emp.hsUntil = clock + HITSTOP_S;
       emp.hsAt = clock;
@@ -4250,6 +4268,7 @@ export class Office {
     this.treasury += gold;
     this.stats.monsters++;
     this.bumpStats();
+    this.sfx("kill");
     this.defeatMonster(emp);
     this.pop(mp.x - XP_POP_DX, mp.y - XP_POP_LIFT, "+5xp", "#8ee8ff", false, false, LOOT_POP_DUR);
     this.pop(mp.x + GOLD_POP_DX, mp.y - GOLD_POP_LIFT, `+${gold}g`, "#f2c14e", false, false, LOOT_POP_DUR);
@@ -4278,6 +4297,7 @@ export class Office {
       up = true;
     }
     if (up) {
+      this.sfx("levelUp");
       emp.lvlAt = this.clock;
       emp.lvlTo = emp.lv;
       const at = emp.inDungeon ? dungeonSpotOf(emp.slot) : emp;
@@ -4323,6 +4343,7 @@ export class Office {
   private spawnBoss(emp: Employee) {
     const kinds = BOSS_KINDS as readonly BossKind[];
     emp.boss = kinds[(h32(emp.id) + emp.monN) % kinds.length];
+    this.sfx("bossAppear");
     emp.bossAt = this.clock;
     emp.bossReal = this.realTime;
     emp.monDead = false;
@@ -4377,6 +4398,7 @@ export class Office {
     emp.qGold += 10;
     this.treasury += 10;
     this.stats.bosses++;
+    this.sfx("bossDown");
     this.endBossFight(emp);
     emp.boss = null;
     emp.monDead = true;
@@ -4574,6 +4596,7 @@ export class Office {
     this.cheersAt = this.clock;
     this.cheersReal = this.realTime;
     this.cheersText = m.cheers_pop();
+    this.sfx("cheers");
     let sumX = 0;
     for (const emp of diners) {
       emp.cheerUntil = this.clock + CHEERS_S;

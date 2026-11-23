@@ -4,6 +4,7 @@ import { getLocale, setLocale, type Locale } from "@/paraglide/runtime";
 import { isNum } from "./format";
 import type { Notify } from "./hooks/useNotifications";
 import { useTreasuryBump } from "./hooks/useRpgEffects";
+import type { Sound } from "./hooks/useSound";
 import type { Conn, Mode, OfficeRef } from "./types";
 
 const SPEED_FAST = 4;
@@ -22,6 +23,7 @@ export const Header = ({
   paused,
   speed,
   notify,
+  sound,
   full,
   collapsed,
   officeRef,
@@ -38,6 +40,7 @@ export const Header = ({
   paused: boolean;
   speed: number;
   notify: Notify;
+  sound: Sound;
   full: boolean;
   collapsed: boolean;
   officeRef: OfficeRef;
@@ -109,6 +112,28 @@ export const Header = ({
           {bellOn ? "🔔" : "🔕"}
         </button>
       )}
+      {sound.on && (
+        <input
+          className="sound-vol"
+          type="range"
+          min={0}
+          max={1}
+          step={0.1}
+          value={sound.volume}
+          onChange={(event) => sound.setVolume(Number(event.target.value))}
+          aria-label={m.sound_volume()}
+          title={m.sound_volume()}
+        />
+      )}
+      <button
+        className={`bell${sound.on ? " on" : ""}`}
+        onClick={sound.toggle}
+        aria-pressed={sound.on}
+        aria-label={m.sound_label()}
+        title={sound.on ? m.sound_off() : m.sound_on()}
+      >
+        {sound.on ? "🔊" : "🔇"}
+      </button>
       <div className="seg" role="group" aria-label={m.header_language()}>
         {LOCALE_BUTTONS.map((button) => (
           <button

@@ -1121,6 +1121,10 @@ button:active {
 .bar .bell.on {
   opacity: 1;
 }
+.bar .sound-vol {
+  width: 64px;
+  accent-color: var(--accent, #f2c14e);
+}
 
 /* territory */
 .card .terr {
