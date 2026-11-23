@@ -16,6 +16,7 @@ export interface LiveHandlers {
   onAttention?(rows: AttentionMsgRow[]): void;
   onReceipts?(rows: ReceiptMsgRow[]): void;
   onChronicle?(chronicle: ChronicleSnapshot): void;
+  onQuests?(rows: unknown): void;
   onStatus(s: "open" | "error"): void;
 }
 
@@ -83,6 +84,13 @@ export const connectLive = (handlers: LiveHandlers): { close(): void } => {
     src.addEventListener("chronicle", (ev) => {
       try {
         handlers.onChronicle?.(JSON.parse((ev as MessageEvent).data));
+      } catch {
+        /* ignore bad frame */
+      }
+    });
+    src.addEventListener("quests", (ev) => {
+      try {
+        handlers.onQuests?.(JSON.parse((ev as MessageEvent).data));
       } catch {
         /* ignore bad frame */
       }

@@ -44,6 +44,7 @@ import {
 } from "./layout";
 import { MON_H, MON_W } from "./monsterSprites";
 import { BOSS_KINDS, lookFor, MONSTER_KINDS, type BossKind, type Look, type MonsterKind } from "./palette";
+import { BoardNotes, sanitizeQuests, type QuestMsgRow } from "./questNotes";
 import { drawScene } from "./render";
 
 // ---------------------------------------------------------------------------
@@ -546,6 +547,8 @@ export interface SnapshotMsg {
   chronicle?: ChronicleSnapshot;
   attention?: AttentionMsgRow[];
   receipts?: ReceiptMsgRow[];
+  /** Quest Board: each session's todo list (full replacement) */
+  quests?: QuestMsgRow[];
   territory?: TerritoryMsg;
   sessions?: { session_id: string; cwd?: string; interns?: string[]; context?: CtxMsg | null; waiting?: boolean }[];
   events?: HookEvt[];
@@ -1238,10 +1241,20 @@ export interface OfficeView {
   attention?: AttentionRow[];
   /** Receipt Ledger: closed turns, newest first */
   receipts?: ReceiptRow[];
+  /** Quest Board: todo lists per session, most recently updated first */
+  quests?: QuestView[];
   /** counters behind the dungeon-gate card */
   dungeon: DungeonStats;
   /** which view the canvas shows (the UI mirrors it: selecting a raider switches the scene) */
   scene: "guild" | "dungeon";
+}
+/** a session's todo list joined with the adventurer: `live` = that adventurer is still in the guild */
+export interface QuestView extends QuestMsgRow {
+  tag: string;
+  /** the session's class colour (shirt) */
+  color: string;
+  look: Look;
+  live: boolean;
 }
 export const EMPTY_DUNGEON: DungeonStats = {
   since: 0,
@@ -1268,6 +1281,7 @@ export const EMPTY_VIEW: OfficeView = {
   conflicts: [],
   attention: [],
   receipts: [],
+  quests: [],
   dungeon: EMPTY_DUNGEON,
   scene: "guild",
 };
@@ -1382,6 +1396,10 @@ export class Office {
   private rcptSeen = new Set<string>();
   private rcptInit = false;
   private rcptVer = 0;
+  /** Quest Board (server state, full replacement) and the pinned notes drawn from it. Never persisted. */
+  private quests: QuestMsgRow[] = [];
+  private questVer = 0;
+  readonly board = new BoardNotes();
   /** key -> Infinity while the conflict is live, else the time its dismissal expires (kept briefly so clash->overlap flaps stay dismissed) */
   private dismissed = new Map<string, number>();
   /** clash conflictKeys already fought out by a finished duel: their contested strip / flag / link are no longer drawn */
@@ -1899,6 +1917,27 @@ export class Office {
     this.rcptVer++;
     this.dirty = true;
   }
+  /** Replace the Quest Board (every session's todo list). Malformed rows are skipped; the notes on the board follow. */
+  setQuests(rows: unknown) {
+    this.quests = sanitizeQuests(rows);
+    this.board.update(this.quests, this.clock, this.reducedMotion);
+    this.questVer++;
+    this.dirty = true;
+  }
+  /** todo lists joined with the adventurer (colour, tag), most recently updated first */
+  questViews(): QuestView[] {
+    return this.quests.map((row) => {
+      const emp = this.employees.get(row.sid);
+      return {
+        ...row,
+        tag: emp ? emp.tag : "#" + row.sid.slice(0, TAG_LEN),
+        project: emp ? emp.project : row.project || "unknown",
+        color: lookFor(row.sid).shirt,
+        look: emp ? emp.look : lookFor(row.sid),
+        live: !!emp,
+      };
+    });
+  }
   /** receipts to show: newest first, joined with the adventurer when the guild still knows them */
   receiptRows(): ReceiptRow[] {
     return this.rcpts.map((receipt) => {
@@ -1972,6 +2011,9 @@ export class Office {
     this.rcptSeen.clear();
     this.rcptInit = false;
     this.rcptVer++;
+    this.quests = [];
+    this.questVer++;
+    this.board.clear();
     this.claimN.clear();
     this.conflicts = [];
     this.dismissed.clear();
@@ -2806,7 +2848,7 @@ export class Office {
 
   private signature(): string {
     let sig = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
-    sig += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}|R${this.rcptVer}`;
+    sig += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}|R${this.rcptVer}|Q${this.questVer}`;
     sig += `|D${this.statsVer}:${this.bossAlive}|S${this.scene}`;
     for (const emp of this.employees.values()) {
       if (this.isHidden(emp)) {
@@ -2903,6 +2945,7 @@ export class Office {
       conflicts,
       attention: this.attentionRows(),
       receipts: this.receiptRows(),
+      quests: this.questViews(),
       dungeon: this.dungeonStats(),
       scene: this.scene,
     };
@@ -3912,6 +3955,7 @@ export class Office {
     if (snap.attention !== undefined) this.setAttention(snap.attention);
     if (snap.receipts !== undefined) this.setReceipts(snap.receipts);
     if (snap.chronicle !== undefined) this.setChronicle(snap.chronicle);
+    if (snap.quests !== undefined) this.setQuests(snap.quests);
     this.hidVer++;
     this.dirty = true;
   }

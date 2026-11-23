@@ -77,6 +77,7 @@ export const useDataSource = (officeRef: OfficeRef, mounted: boolean, prevClashR
       onAttention: (rows) => office.setAttention(rows),
       onReceipts: (rows) => office.setReceipts(rows),
       onChronicle: (chronicle) => office.setChronicle(chronicle),
+      onQuests: (rows) => office.setQuests(rows),
       onContext: (context) => {
         if (context && typeof context.session_id === "string")
           office.setContext(context.session_id, context.used, context.limit, !!context.limitGuessed);
