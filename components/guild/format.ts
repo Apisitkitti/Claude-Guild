@@ -1,5 +1,5 @@
 import { MINUTES_PER_HOUR, MS_PER_SECOND, SECONDS_PER_MINUTE, TOKENS_PER_K, TOKENS_PER_M } from "@/lib/constants";
-import { KIND_CLASH, KIND_RECEIPT } from "@/lib/office/engine";
+import { KIND_CLASH, KIND_LORD, KIND_RECEIPT } from "@/lib/office/engine";
 import { m } from "@/paraglide/messages";
 
 export const isNum = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
@@ -40,6 +40,7 @@ const EVT_ICON: Record<string, string> = {
   UserPromptSubmit: "💬",
   Stop: "⏹️",
   [KIND_RECEIPT]: "📜",
+  [KIND_LORD]: "👑",
 };
 export const iconFor = (kind: string) => EVT_ICON[kind] ?? (kind.startsWith("mcp__") ? "🔌" : "•");
 
@@ -84,5 +85,6 @@ export const durText = (totalSeconds: number): string => {
 
 /** quest-log label of an event kind: the two guild-made kinds are worded, hook/tool names stay as they are */
 export const kindLabel = (kind: string): string => {
+  if (kind === KIND_LORD) return m.log_kind_lord();
   return kind === KIND_RECEIPT ? m.log_kind_receipt() : kind === KIND_CLASH ? m.log_kind_clash() : kind;
 };

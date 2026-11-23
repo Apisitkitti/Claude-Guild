@@ -70,6 +70,7 @@ const OfficeApp = () => {
           officeRef={officeRef}
           dungeon={view.dungeon}
           viewScene={view.scene}
+          viewFloor={view.dungeonFloor}
         />
         <SidePanel
           view={view}

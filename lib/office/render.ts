@@ -1,13 +1,15 @@
 import { bossCenterX, bossSprite } from "./bossSprites";
+import { LORD_ATTACK_FROM, lordSprite } from "./dungeonLordSprite";
 import {
   DUNGEON_IDLERS,
   DUNGEON_LAST_SPOT,
-  DUNGEON_SPOTS,
   drawDungeonBack,
   drawDungeonFront,
+  dungeonLordPoint,
   dungeonMonsterPoint,
   dungeonSpotIndex,
   dungeonSpotOf,
+  DUNGEON_FLOORS,
 } from "./dungeonScene";
 import {
   CHEERS_S,
@@ -19,6 +21,7 @@ import {
   DUEL_STOP_FINAL,
   duelContact,
   duelScript,
+  LORD_RESPAWN_S,
   MAX_HEARTS,
   type Duel,
   type DuelScript,
@@ -2915,6 +2918,16 @@ const drawRaidFoe = (ctx: Ctx, emp: Employee, time: number, still: boolean, pos:
     ctx.drawImage(sprite, sx, sy);
     if (sinceHit >= 0 && sinceHit < 0.12) ctx.drawImage(tinted(sprite, "#ffffff"), sx, sy);
     hpBar(ctx, Math.round(pos.x), Math.round(pos.y - sprite.height) - 5, 12, 2, foe.hp);
+    // a deeper-floor foe carries a bone-white skull pip beside its hp bar
+    if (foe.tough > 1) {
+      const bx = Math.round(pos.x) + 9,
+        by = Math.round(pos.y - sprite.height) - 7;
+      rect(ctx, INK, bx - 1, by - 1, 6, 6);
+      rect(ctx, "#efe6c8", bx, by, 4, 3);
+      rect(ctx, "#efe6c8", bx + 1, by + 3, 2, 1);
+      rect(ctx, INK, bx, by + 1, 1, 1);
+      rect(ctx, INK, bx + 3, by + 1, 1, 1);
+    }
     return;
   }
   const dage = time - foe.deadAt;
@@ -2936,26 +2949,83 @@ const drawSleepers = (ctx: Ctx, time: number, still: boolean) => {
   });
 };
 
+const LORD_BAR = { w: 176, h: 8, y: 40 };
+const LORD_DOWN_FADE_S = 1.2;
+const LORD_HURT_S = 0.25;
+const LORD_ATTACK_BEAT = 2.4;
+
+/** the Dungeon Lord on B3: idle breathing, attack frames while raiders stand before it, the hurt flash on a hit */
+const drawLord = (ctx: Ctx, office: Office, time: number, still: boolean, hasRaiders: boolean) => {
+  const lord = office.lord;
+  const at = dungeonLordPoint();
+  if (lord.hp > 0) {
+    const hurt = time - lord.hitAt >= 0 && time - lord.hitAt < LORD_HURT_S;
+    const attacking = hasRaiders && !still;
+    const frame = still
+      ? 0
+      : attacking
+        ? LORD_ATTACK_FROM + (Math.floor(time * LORD_ATTACK_BEAT) % 2)
+        : Math.floor(time * 1.5) % 2;
+    const sprite = lordSprite(frame, hurt);
+    shadow(ctx, at.x, at.y, 34);
+    ctx.drawImage(sprite, Math.round(at.x - sprite.width / 2 + (hurt ? 1 : 0)), Math.round(at.y - sprite.height + 2));
+    return;
+  }
+  const dage = time - lord.deadAt;
+  if (dage < 0 || dage > LORD_DOWN_FADE_S) return;
+  blitC(ctx, "poof" + (Math.floor(dage * 8) % 2), at.x, at.y - 24);
+  blitC(ctx, "coin", at.x - 2, at.y - 30 - dage * 12);
+};
+
+/** the Lord's hp bar across the top of B3 (opaque panel, readable label), or its rest timer while it is down */
+const drawLordBar = (ctx: Ctx, office: Office, time: number) => {
+  const lord = office.lord;
+  const cx = Math.round(VIEW_X0 + VIEW_W / 2),
+    { w, h, y } = LORD_BAR;
+  const label = lord.hp > 0 ? `Dungeon Lord  ${Math.ceil(lord.hp * 100)}%` : "Dungeon Lord is down";
+  rect(ctx, INK, cx - w / 2 - 3, y - 12, w + 6, h + 17);
+  rect(ctx, "#2a1a24", cx - w / 2 - 2, y - 11, w + 4, h + 15);
+  ctx.font = "700 7px ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(label, cx, y - 6);
+  rect(ctx, INK, cx - w / 2 - 1, y - 1, w + 2, h + 2);
+  rect(ctx, "#5a1f2a", cx - w / 2, y, w, h);
+  if (lord.hp > 0) {
+    rect(ctx, "#d9481f", cx - w / 2, y, Math.max(1, Math.round(w * lord.hp)), h);
+    rect(ctx, "#ff8a2a", cx - w / 2, y, Math.max(1, Math.round(w * lord.hp)), 2);
+  } else {
+    const rest = Math.min(1, Math.max(0, (time - lord.deadAt) / LORD_RESPAWN_S));
+    rect(ctx, "#8d93a0", cx - w / 2, y, Math.round(w * rest), h);
+  }
+};
+
 const drawDungeonScene = (ctx: Ctx, office: Office, time: number) => {
   const still = office.reducedMotion;
-  drawDungeonBack(ctx, time, still);
-  const raiders = office.dungeonRaiders().filter((emp) => !office.isHidden(emp));
+  const floor = office.dungeonFloor;
+  const onLordFloor = floor >= DUNGEON_FLOORS;
+  drawDungeonBack(ctx, time, still, floor);
+  const raiders = office.dungeonRaiders().filter((emp) => !office.isHidden(emp) && emp.floor === floor);
   const ents: { y: number; fn: () => void }[] = [];
-  if (raiders.length === 0) ents.push({ y: 0, fn: () => drawSleepers(ctx, time, still) });
+  if (raiders.length === 0 && floor === 1) ents.push({ y: 0, fn: () => drawSleepers(ctx, time, still) });
+  if (onLordFloor)
+    ents.push({ y: dungeonLordPoint().y, fn: () => drawLord(ctx, office, time, still, raiders.length > 0) });
   let stackedOnLast = 0;
   raiders.forEach((emp) => {
-    const spot = dungeonSpotOf(emp.slot); // keyed by the overflow slot: nobody jumps when another raider leaves
+    const spot = office.raiderPoint(emp); // keyed by the overflow slot: nobody jumps when another raider leaves
+    const home = dungeonSpotOf(emp.slot, floor);
     if (dungeonSpotIndex(emp.slot) === DUNGEON_LAST_SPOT) stackedOnLast++;
-    const foePos = dungeonMonsterPoint(spot);
-    const fighting = !!emp.raid && emp.raid.hp > 0;
+    const foePos = dungeonMonsterPoint(home);
+    const fighting = emp.stairsAt < 0 && (onLordFloor ? office.lord.hp > 0 : !!emp.raid && emp.raid.hp > 0);
     const heldTime = frozenTime(emp, time);
     ents.push({ y: spot.y, fn: () => atSpot(emp, spot, () => drawAdventurer(ctx, emp, heldTime, fighting)) });
-    ents.push({ y: spot.y, fn: () => drawRaidFoe(ctx, emp, time, still, foePos) });
+    if (!onLordFloor) ents.push({ y: home.y, fn: () => drawRaidFoe(ctx, emp, time, still, foePos) });
     ents.push({ y: spot.y + 0.4, fn: () => atSpot(emp, spot, () => drawFx(ctx, emp, heldTime, office, fighting)) });
   });
   const stacked = stackedOnLast - 1;
   if (stacked > 0) {
-    const spot = DUNGEON_SPOTS[DUNGEON_LAST_SPOT];
+    const spot = dungeonSpotOf(DUNGEON_LAST_SPOT, floor);
     ents.push({ y: spot.y + 2, fn: () => drawBadge(ctx, `+${stacked}`, spot.x, spot.y + 9) });
   }
   ents.sort((entA, entB) => entA.y - entB.y);
@@ -2964,8 +3034,9 @@ const drawDungeonScene = (ctx: Ctx, office: Office, time: number) => {
   drawDungeonFront(ctx, time, still);
   drawParticles(ctx, office, false, true);
   drawPopups(ctx, office, true);
+  if (onLordFloor) drawLordBar(ctx, office, time);
   raiders.forEach((emp) => {
-    atSpot(emp, dungeonSpotOf(emp.slot), () => {
+    atSpot(emp, office.raiderPoint(emp), () => {
       drawOverhead(ctx, office, emp, time);
       if (office.hoverId === emp.id) drawHover(ctx, office, emp, time);
     });
@@ -2973,8 +3044,8 @@ const drawDungeonScene = (ctx: Ctx, office: Office, time: number) => {
 };
 
 /** opaque count badge over the dungeon gate while adventurers are raiding inside */
-const drawRaidBadge = (ctx: Ctx, count: number) => {
-  const text = String(count);
+const drawRaidBadge = (ctx: Ctx, counts: number[], lordAlive: boolean) => {
+  const text = counts.map((count, i) => `B${i + 1} ${count}`).join(" · ") + (lordAlive ? "" : " · ☠");
   ctx.font = "700 7px ui-sans-serif, system-ui, sans-serif";
   const width = Math.ceil(ctx.measureText(text).width) + 16;
   const bx = Math.round(DUNGEON.x - width / 2),
@@ -3091,10 +3162,12 @@ export const drawScene = (ctx: Ctx, office: Office) => {
 
   const ents: { y: number; fn: () => void }[] = [];
   let raidersInside = 0;
+  const raidersByFloor = new Array<number>(DUNGEON_FLOORS).fill(0);
   for (const emp of office.employees.values()) {
     if (office.isHidden(emp)) continue;
     if (emp.inDungeon) {
-      raidersInside++; // the badge counts only the raiders the session filter lets through (as the dungeon scene does)
+      raidersInside++;
+      raidersByFloor[emp.floor - 1]++; // the badge counts only the raiders the session filter lets through (as the dungeon scene does)
       continue;
     }
     const heldTime = frozenTime(emp, time);
@@ -3139,7 +3212,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   drawParticles(ctx, office, false);
   drawPopups(ctx, office);
   drawCheers(ctx, office, time);
-  if (raidersInside > 0) drawRaidBadge(ctx, raidersInside);
+  if (raidersInside > 0) drawRaidBadge(ctx, raidersByFloor, office.lord.hp > 0);
 
   // bubbles, highlights, tags
   for (const emp of office.employees.values()) {

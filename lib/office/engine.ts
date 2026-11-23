@@ -2,7 +2,13 @@ import { m } from "@/paraglide/messages";
 
 import { bossCenterX, BOSS_H, BOSS_W } from "./bossSprites";
 import { ToolTally, type DungeonStats } from "./dungeon";
-import { dungeonMonsterPoint, dungeonSpotOf } from "./dungeonScene";
+import {
+  DUNGEON_FLOORS,
+  dungeonLordPoint,
+  dungeonMonsterPoint,
+  dungeonSpotOf,
+  dungeonStairsPoint,
+} from "./dungeonScene";
 import {
   ALLY_GATE_MOUTH,
   DESK_COUNT,
@@ -1030,6 +1036,12 @@ export interface Employee {
   inDungeon: boolean;
   /** the foe a raider is fighting inside (null unless inDungeon): kind = index into MONSTER_KINDS, hp 0..1, clock times of the last hit / death */
   raid: RaidFoe | null;
+  /** dungeon floor the raider is on, 1..3 (reset to 1 whenever they leave the dungeon) */
+  floor: number;
+  /** kills on the current floor (the Kth one sends them down the stairs) */
+  floorKills: number;
+  /** clock time the raider started walking to the stairs (-1 = not descending) */
+  stairsAt: number;
   /** index into FEAST_SEATS used by a break / rest trip (-1 = beside the counter) */
   restSpot: number;
   manaFlashUntil: number;
@@ -1043,6 +1055,18 @@ export interface RaidFoe {
   hp: number;
   hitAt: number;
   deadAt: number;
+  /** hp multiplier over the monster's base hp (1 on B1, more on B2) */
+  tough: number;
+}
+
+/** the Dungeon Lord at the bottom of floor 3: one hp pool shared by every raider standing there */
+export interface DungeonLord {
+  /** 0..1 */
+  hp: number;
+  hitAt: number;
+  deadAt: number;
+  /** times it has been slain since the page opened */
+  slain: number;
 }
 
 /** the guild's cook: stirs at the hearth, carries a plate to the feast table now and then */
@@ -1152,6 +1176,27 @@ const HEAVY_TOOLS = new Set(["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit
 const BOSS_AFTER = 30;
 /** seconds a slain dungeon foe lies there before the next one steps up */
 const RAID_RESPAWN_S = 1.2;
+/** kills on a floor that send a raider down to the next one */
+export const RAID_FLOOR_KILLS = 4;
+/** seconds a raider spends walking to the stairs before they appear one floor down */
+export const RAID_STAIRS_S = 1.4;
+/** floor 2 foes have this many times a monster's base hp */
+export const RAID_TOUGH_B2 = 2;
+/** floor 2 draws its foes from the scarier half of the bestiary */
+const RAID_B2_KINDS: MonsterKind[] = ["skeleton", "goblin", "mushroom"];
+/** damage points the Dungeon Lord takes to fall (a raider's hit is 1, a heavy tool 2, a crit doubles) */
+export const LORD_HP = 40;
+/** seconds the Lord stays down before it rises again */
+export const LORD_RESPAWN_S = 90;
+/** gold every raider standing on floor 3 gets when the Lord falls */
+export const LORD_GOLD = 80;
+/** kills credited to each of them */
+export const LORD_KILLS = 3;
+const LORD_POP_LIFT = 30;
+const LORD_COIN_COUNT = 24;
+const LORD_COIN_SPREAD = 22;
+/** the guild log kind of that event */
+export const KIND_LORD = "guild:lord";
 const REST_AFTER = 60;
 const PROGRESS_KEY = "guild.progress.v1";
 const PROGRESS_TTL = PROGRESS_TTL_DAYS * HOURS_PER_DAY * SECONDS_PER_HOUR * MS_PER_SECOND;
@@ -1238,6 +1283,8 @@ export interface OfficeView {
   dungeon: DungeonStats;
   /** which view the canvas shows (the UI mirrors it: selecting a raider switches the scene) */
   scene: "guild" | "dungeon";
+  /** the dungeon floor the scene shows (1..3) */
+  dungeonFloor: number;
 }
 export const EMPTY_DUNGEON: DungeonStats = {
   since: 0,
@@ -1251,6 +1298,10 @@ export const EMPTY_DUNGEON: DungeonStats = {
   waitS: 0,
   raiders: 0,
   raidersShown: 0,
+  floorRaiders: [0, 0, 0],
+  lordAlive: true,
+  lordHp: 1,
+  lordSlain: 0,
   topTools: [],
 };
 export const EMPTY_VIEW: OfficeView = {
@@ -1266,6 +1317,7 @@ export const EMPTY_VIEW: OfficeView = {
   receipts: [],
   dungeon: EMPTY_DUNGEON,
   scene: "guild",
+  dungeonFloor: 1,
 };
 
 declare global {
@@ -1414,9 +1466,42 @@ export class Office {
   scene: "guild" | "dungeon" = "guild";
   setScene(next: "guild" | "dungeon") {
     if (this.scene === next) return;
+    if (next === "dungeon") this.dungeonFloor = this.busiestFloor(); // open on the floor with the most raiders
     this.scene = next;
     this.hoverId = null; // the hovered adventurer is not in the other scene
     this.dirty = true;
+  }
+  /** the dungeon floor on screen, 1..3 (default: the floor with the most raiders when the scene opens) */
+  dungeonFloor = 1;
+  setDungeonFloor(floor: number) {
+    const next = Math.min(Math.max(1, Math.round(floor) || 1), DUNGEON_FLOORS);
+    if (next === this.dungeonFloor) return;
+    this.dungeonFloor = next;
+    this.hoverId = null;
+    this.bumpStats();
+  }
+  /** the floor holding the most visible raiders (ties go to the shallower one; B1 when nobody is inside) */
+  busiestFloor(): number {
+    const counts = this.floorCounts();
+    let best = 1;
+    for (let floor = 2; floor <= DUNGEON_FLOORS; floor++) if (counts[floor - 1] > counts[best - 1]) best = floor;
+    return best;
+  }
+  /** visible raiders per floor (index 0 = B1) */
+  floorCounts(): number[] {
+    const counts = new Array<number>(DUNGEON_FLOORS).fill(0);
+    for (const emp of this.employees.values()) if (emp.inDungeon && !this.isHidden(emp)) counts[emp.floor - 1]++;
+    return counts;
+  }
+  /** the Dungeon Lord on floor 3 */
+  readonly lord: DungeonLord = { hp: 1, hitAt: -99, deadAt: -99, slain: 0 };
+  /** where a raider stands right now: their spot on their floor, or on the way to the stairs while descending */
+  raiderPoint(emp: Employee): Pt {
+    const spot = dungeonSpotOf(emp.slot, emp.floor);
+    if (emp.stairsAt < 0) return spot;
+    const stairs = dungeonStairsPoint(emp.floor);
+    const progress = Math.min(1, Math.max(0, (this.clock - emp.stairsAt) / RAID_STAIRS_S));
+    return { x: spot.x + (stairs.x - spot.x) * progress, y: spot.y + (stairs.y - spot.y) * progress };
   }
   /** adventurers raiding inside the dungeon, in slot order (then arrival order) */
   dungeonRaiders(): Employee[] {
@@ -1908,7 +1993,10 @@ export class Office {
   select(id: string | null) {
     this.selectedId = id;
     const target = id ? this.employees.get(id) : undefined;
-    if (target && !this.isHidden(target)) this.setScene(target.inDungeon ? "dungeon" : "guild"); // show where they are
+    if (target && !this.isHidden(target)) {
+      if (target.inDungeon) this.setDungeonFloor(target.floor);
+      this.setScene(target.inDungeon ? "dungeon" : "guild"); // show where they are
+    }
     this.selectedUntil = this.realTime + SELECT_HOLD_S;
     this.dirty = true;
   }
@@ -1952,6 +2040,8 @@ export class Office {
     this.allyNextAt = 0;
     this.resetWing();
     this.scene = "guild";
+    this.dungeonFloor = 1;
+    Object.assign(this.lord, { hp: 1, hitAt: -99, deadAt: -99, slain: 0 });
     this.stats = { since: Date.now(), entered: 0, left: 0, monsters: 0, bosses: 0, longestBossS: 0, waitS: 0 };
     this.tools.clear();
     this.statsVer++;
@@ -2761,7 +2851,7 @@ export class Office {
   private signature(): string {
     let sig = `${this.logSeq}|${this.log.length}|${this.hoverId}|${this.selectedId}|${this.treasury}`;
     sig += `|${this.filter.query}|${this.filter.hideStray ? 1 : 0}|T${this.terrVer}|A${this.attnVer}|R${this.rcptVer}`;
-    sig += `|D${this.statsVer}:${this.bossAlive}|S${this.scene}`;
+    sig += `|D${this.statsVer}:${this.bossAlive}|S${this.scene}${this.dungeonFloor}`;
     for (const emp of this.employees.values()) {
       if (this.isHidden(emp)) {
         sig += `;h${emp.id}${this.isWaiting(emp) ? "w" + this.statusOf(emp) : ""}`;
@@ -2859,6 +2949,7 @@ export class Office {
       receipts: this.receiptRows(),
       dungeon: this.dungeonStats(),
       scene: this.scene,
+      dungeonFloor: this.dungeonFloor,
     };
   }
 
@@ -2875,11 +2966,15 @@ export class Office {
       bossesAlive = 0,
       raiders = 0,
       raidersShown = 0;
+    const floorRaiders = new Array<number>(DUNGEON_FLOORS).fill(0);
     for (const emp of this.employees.values()) {
       if (emp.state !== "LEAVING") live++;
       if (emp.inDungeon) {
         raiders++;
-        if (!this.isHidden(emp)) raidersShown++;
+        if (!this.isHidden(emp)) {
+          raidersShown++;
+          floorRaiders[emp.floor - 1]++;
+        }
       }
       if (emp.boss) bossesAlive++;
     }
@@ -2895,6 +2990,10 @@ export class Office {
       waitS: this.waitTotal(),
       raiders,
       raidersShown,
+      floorRaiders,
+      lordAlive: this.lord.hp > 0,
+      lordHp: this.lord.hp,
+      lordSlain: this.lord.slain,
       topTools: this.tools.top(),
     };
   }
@@ -2999,8 +3098,8 @@ export class Office {
     let best: string | null = null,
       bestY = -Infinity;
     for (const emp of this.employees.values()) {
-      if (this.isHidden(emp) || emp.inDungeon !== inside) continue;
-      const pos = inside ? dungeonSpotOf(emp.slot) : emp;
+      if (this.isHidden(emp) || emp.inDungeon !== inside || (inside && emp.floor !== this.dungeonFloor)) continue;
+      const pos = inside ? this.raiderPoint(emp) : emp;
       if (lx >= pos.x - CH_W / 2 && lx <= pos.x + CH_W / 2 && ly >= pos.y - CH_H && ly <= pos.y && pos.y >= bestY) {
         best = emp.id;
         bestY = pos.y;
@@ -3024,6 +3123,7 @@ export class Office {
 
   // ---------- update ----------
   update(rawDt: number) {
+    this.updateDungeon();
     this.realTime += rawDt;
     if (this.selectedId && this.realTime > this.selectedUntil) {
       this.selectedId = null;
@@ -3627,6 +3727,9 @@ export class Office {
     const inside = emp.state === "SEATED" && emp.deskIdx < 0 && emp.slot >= 0;
     if (inside === emp.inDungeon) return;
     emp.inDungeon = inside;
+    emp.floor = 1; // every raid starts on B1 and a promotion starts the next one from scratch
+    emp.floorKills = 0;
+    emp.stairsAt = -1;
     if (inside) this.newRaidFoe(emp);
     else emp.raid = null;
     this.bumpStats();
@@ -3634,24 +3737,117 @@ export class Office {
 
   private newRaidFoe(emp: Employee) {
     const kinds = MONSTER_KINDS as readonly MonsterKind[];
-    const kind = (h32(emp.id) + emp.monN * MON_KIND_STRIDE) % kinds.length;
+    const pick = (h32(emp.id) + emp.monN * MON_KIND_STRIDE) % kinds.length;
     emp.monN++;
-    emp.raid = { kind, hp: 1, hitAt: -99, deadAt: -99 };
+    if (emp.floor >= DUNGEON_FLOORS) {
+      emp.raid = null; // the Dungeon Lord is the only foe down here
+      return;
+    }
+    const deeper = emp.floor >= 2;
+    const kind = deeper ? kinds.indexOf(RAID_B2_KINDS[pick % RAID_B2_KINDS.length]) : pick;
+    emp.raid = { kind, hp: 1, hitAt: -99, deadAt: -99, tough: deeper ? RAID_TOUGH_B2 : 1 };
+  }
+
+  /** the stair walk ends: the raider appears on the next floor with a fresh foe (or in the Lord's hall) */
+  private arriveOnNextFloor(emp: Employee) {
+    emp.floor = Math.min(DUNGEON_FLOORS, emp.floor + 1);
+    emp.floorKills = 0;
+    emp.stairsAt = -1;
+    this.newRaidFoe(emp);
+    this.bumpStats();
+  }
+
+  /** a floor foe fell: count it, and send the raider down once enough have */
+  private floorKill(emp: Employee) {
+    emp.floorKills++;
+    if (emp.floorKills >= RAID_FLOOR_KILLS && emp.floor < DUNGEON_FLOORS) emp.stairsAt = this.clock;
+  }
+
+  /** the Lord rises again after its rest */
+  private updateDungeon() {
+    if (this.lord.hp <= 0 && this.clock - this.lord.deadAt >= LORD_RESPAWN_S) {
+      this.lord.hp = 1;
+      this.bumpStats();
+    }
+  }
+
+  /** every raider on floor 3 hits the one Lord: the damage pools into a single hp bar; the kill rewards them all */
+  private lordHit(emp: Employee, dmg: number) {
+    const lord = this.lord;
+    if (lord.hp <= 0) return;
+    lord.hp = Math.max(0, lord.hp - dmg / LORD_HP);
+    lord.hitAt = this.clock;
+    if (lord.hp > 0) return;
+    lord.deadAt = this.clock;
+    lord.slain++;
+    this.stats.bosses++;
+    const at = dungeonLordPoint();
+    let first: Employee | null = null;
+    for (const raider of this.dungeonRaiders()) {
+      if (raider.floor !== DUNGEON_FLOORS) continue;
+      first ??= raider;
+      raider.kills += LORD_KILLS;
+      raider.qKills += LORD_KILLS;
+      raider.gold += LORD_GOLD;
+      raider.qGold += LORD_GOLD;
+      this.treasury += LORD_GOLD;
+    }
+    this.fxFor(emp, () => {
+      this.pop(at.x, at.y - LORD_POP_LIFT, `+${LORD_GOLD}g`, "#f2c14e", true, true, LOOT_POP_DUR);
+      for (let k = 0; k < LORD_COIN_COUNT; k++)
+        this.emitP(
+          at.x + rand(-LORD_COIN_SPREAD, LORD_COIN_SPREAD),
+          at.y - LORD_POP_LIFT,
+          rand(-COIN_VX, COIN_VX),
+          rand(-COIN_VY_MAX, -COIN_VY_MIN),
+          COIN_GRAVITY,
+          COIN_LIFE,
+          "#f2c14e",
+          1,
+          "coin",
+        );
+    });
+    const slayer = first ?? emp;
+    this.log.unshift({
+      id: this.logSeq++,
+      sid: slayer.id,
+      color: slayer.look.shirt,
+      bad: false,
+      text: m.dungeon_floor_lord_slain({ tag: slayer.tag, project: slayer.project }),
+      time: Date.now(),
+      tag: slayer.tag,
+      project: slayer.project,
+      intern: false,
+      internLabel: "",
+      kind: KIND_LORD,
+      detail: m.dungeon_floor_lord_slain_detail({ count: lord.slain }),
+    });
+    if (this.log.length > LOG_MAX) this.log.length = LOG_MAX;
+    this.bumpStats();
   }
 
   /** a dead foe is replaced by a new kind after a short beat */
   private respawnRaid(emp: Employee) {
+    if (emp.stairsAt >= 0) {
+      if (this.clock - emp.stairsAt >= RAID_STAIRS_S) this.arriveOnNextFloor(emp);
+      return;
+    }
     const foe = emp.raid;
     if (foe && foe.hp <= 0 && this.clock - foe.deadAt >= RAID_RESPAWN_S) this.newRaidFoe(emp);
   }
 
   /** a tool finished inside the dungeon: the same damage rules as a field monster, scaled to the foe's hp */
   private raidHit(emp: Employee, tool: string) {
-    const foe = emp.raid;
-    if (!foe || foe.hp <= 0) return;
+    if (emp.stairsAt >= 0) return; // on the stairs: no fighting
     let dmg = HEAVY_TOOLS.has(tool) ? 2 : 1;
     if (Math.random() < CRIT_CHANCE) dmg *= 2;
-    foe.hp = Math.max(0, foe.hp - dmg / MON_HP[MONSTER_KINDS[foe.kind]]);
+    if (emp.floor >= DUNGEON_FLOORS) {
+      this.lordHit(emp, dmg);
+      return;
+    }
+    const foe = emp.raid;
+    if (!foe || foe.hp <= 0) return;
+    foe.hp = Math.max(0, foe.hp - dmg / (MON_HP[MONSTER_KINDS[foe.kind]] * foe.tough));
     foe.hitAt = this.clock;
     if (foe.hp > 0) return;
     foe.deadAt = this.clock;
@@ -3663,7 +3859,8 @@ export class Office {
     this.treasury += gold;
     this.stats.monsters++;
     this.bumpStats();
-    const foePos = dungeonMonsterPoint(dungeonSpotOf(emp.slot));
+    const foePos = dungeonMonsterPoint(dungeonSpotOf(emp.slot, emp.floor));
+    this.floorKill(emp);
     this.fxFor(emp, () => {
       this.pop(foePos.x, foePos.y - GOLD_POP_LIFT, `+${gold}g`, "#f2c14e", false, false, LOOT_POP_DUR);
       for (let k = 0; k < COIN_COUNT; k++)
@@ -3785,6 +3982,9 @@ export class Office {
       compactPending: false,
       inDungeon: false,
       raid: null,
+      floor: 1,
+      floorKills: 0,
+      stairsAt: -1,
       restSpot: -1,
       manaFlashUntil: 0,
       cheerUntil: 0,
@@ -4280,7 +4480,7 @@ export class Office {
     if (up) {
       emp.lvlAt = this.clock;
       emp.lvlTo = emp.lv;
-      const at = emp.inDungeon ? dungeonSpotOf(emp.slot) : emp;
+      const at = emp.inDungeon ? this.raiderPoint(emp) : emp;
       this.fxFor(emp, () =>
         this.ring(
           at.x,
@@ -4300,7 +4500,7 @@ export class Office {
     emp.hearts = Math.max(0, emp.hearts - 1);
     emp.hurtUntil = this.clock + HURT_S;
     emp.redUntil = this.clock + RED_S;
-    const at = emp.inDungeon ? dungeonSpotOf(emp.slot) : emp;
+    const at = emp.inDungeon ? this.raiderPoint(emp) : emp;
     this.fxFor(emp, () => {
       this.pop(at.x - HURT_POP_DX, at.y - HURT_POP_LIFT, "-1", "#ff5a5a", false, false, HURT_POP_DUR);
       this.burst(at.x, at.y - FX_HURT_BURST.lift, FX_HURT_BURST.n, ["#ff5a5a", "#ff9a9a"], FX_HURT_BURST.speed);

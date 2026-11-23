@@ -8,6 +8,7 @@ import type { OfficeRef } from "./types";
 
 const NONE = "—";
 const REFRESH_MS = 1000;
+const PERCENT = 100;
 
 /** The dungeon gate's ledger: client-side counters since this page opened. Closes with ✕, Escape or a click outside. */
 export const DungeonCard = ({
@@ -57,6 +58,19 @@ export const DungeonCard = ({
         <div className="drow">
           <dt>{m.dungeon_raiders()}</dt>
           <dd>{stats.raiders}</dd>
+        </div>
+        <div className="drow">
+          <dt>{m.dungeon_floor_row()}</dt>
+          <dd>{stats.floorRaiders.map((count, i) => `B${i + 1} ${count}`).join(" · ")}</dd>
+        </div>
+        <div className="drow">
+          <dt>{m.dungeon_floor_lord()}</dt>
+          <dd>
+            {stats.lordAlive
+              ? m.dungeon_floor_lord_alive({ hp: Math.ceil(stats.lordHp * PERCENT) })
+              : m.dungeon_floor_lord_down()}
+            {stats.lordSlain > 0 && <small>{m.dungeon_floor_lord_count({ count: stats.lordSlain })}</small>}
+          </dd>
         </div>
         <div className="drow">
           <dt>{m.dungeon_live()}</dt>

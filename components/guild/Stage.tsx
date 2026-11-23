@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 import type { DungeonStats } from "@/lib/office/dungeon";
+import { DUNGEON_FLOORS } from "@/lib/office/dungeonScene";
 import { DUNGEON_HIT, VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
 import { m } from "@/paraglide/messages";
 
@@ -10,6 +11,8 @@ import type { OfficeRef } from "./types";
 /** canvas border (see `.frame canvas` in globals.css): the overlay's origin is inside it */
 const CANVAS_BORDER = 3;
 const CARD_GAP = 4;
+const FLOORS = Array.from({ length: DUNGEON_FLOORS }, (_, i) => i + 1);
+const FLOOR_NAMES = [m.dungeon_floor_name_1, m.dungeon_floor_name_2, m.dungeon_floor_name_3];
 
 export const Stage = ({
   canvasRef,
@@ -18,6 +21,7 @@ export const Stage = ({
   officeRef,
   dungeon,
   viewScene,
+  viewFloor,
 }: {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   stageRef: RefObject<HTMLDivElement | null>;
@@ -26,6 +30,8 @@ export const Stage = ({
   dungeon: DungeonStats;
   /** the engine's scene from the view snapshot: selecting a raider (or a field adventurer) switches it from outside */
   viewScene: "guild" | "dungeon";
+  /** the dungeon floor on screen (1..3), mirrored from the engine */
+  viewFloor: number;
 }) => {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState(false);
@@ -40,8 +46,14 @@ export const Stage = ({
   const gateTop = DUNGEON_HIT.y * scale + CANVAS_BORDER;
   const scene = viewScene; // the engine owns the scene; the view snapshot mirrors it (selection can change it too)
   const inDungeon = scene === "dungeon";
+  const floorCount = dungeon.floorRaiders[viewFloor - 1] ?? 0;
+  const floorName = FLOOR_NAMES[viewFloor - 1]?.() ?? "";
   const caption =
-    dungeon.raidersShown > 0 ? m.dungeon_scene_raiders({ count: dungeon.raidersShown }) : m.dungeon_scene_empty();
+    floorCount > 0
+      ? m.dungeon_floor_caption({ floor: viewFloor, name: floorName, count: floorCount })
+      : dungeon.raidersShown > 0
+        ? m.dungeon_floor_caption_empty({ floor: viewFloor, name: floorName })
+        : m.dungeon_scene_empty();
   const toLogical = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = ev.currentTarget;
     const rect = canvas.getBoundingClientRect();
@@ -59,6 +71,7 @@ export const Stage = ({
     setOpen(false);
     setHover(false);
   };
+  const pickFloor = (floor: number) => officeRef.current?.setDungeonFloor(floor);
   const backToGuild = () => {
     officeRef.current?.setScene("guild");
   };
@@ -132,6 +145,24 @@ export const Stage = ({
                 <span aria-hidden="true">⬅</span> {m.dungeon_back()}
               </button>
               <p className="dungeoncap">{caption}</p>
+              <div className="floortabs" role="group" aria-label={m.dungeon_floor_tabs_label()}>
+                {FLOORS.map((floor) => (
+                  <button
+                    key={floor}
+                    type="button"
+                    className={floor === viewFloor ? "floortab floortab--on" : "floortab"}
+                    aria-pressed={floor === viewFloor}
+                    title={m.dungeon_floor_tab_title({
+                      floor,
+                      name: FLOOR_NAMES[floor - 1](),
+                      count: dungeon.floorRaiders[floor - 1] ?? 0,
+                    })}
+                    onClick={() => pickFloor(floor)}
+                  >
+                    {m.dungeon_floor_tab({ floor, count: dungeon.floorRaiders[floor - 1] ?? 0 })}
+                  </button>
+                ))}
+              </div>
               <p className="sr-only" role="status" aria-live="polite">
                 {entered}
               </p>

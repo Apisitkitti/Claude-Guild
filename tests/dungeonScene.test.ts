@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DUNGEON_FLOORS,
   DUNGEON_IDLERS,
   DUNGEON_SPOTS,
   drawDungeonBack,
   drawDungeonFront,
+  dungeonLordPoint,
   dungeonMonsterPoint,
   dungeonSpotIndex,
   dungeonSpotOf,
+  dungeonSpotsOf,
+  dungeonStairsPoint,
+  LORD_SPOTS,
 } from "@/lib/office/dungeonScene";
 import { MON_DX, VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
 
@@ -134,6 +139,87 @@ describe("dungeon drawing", () => {
       const top = fill.y + fill.height <= MAX_TOP;
       const bottom = fill.y >= BOTTOM;
       expect(side || top || bottom, JSON.stringify(fill)).toBe(true);
+    }
+  });
+});
+
+describe("dungeon floors", () => {
+  it("has three floors, B1 and B2 sharing the hall spots and B3 ringing the Lord", () => {
+    expect(DUNGEON_FLOORS).toBe(3);
+    expect(dungeonSpotsOf(1)).toBe(DUNGEON_SPOTS);
+    expect(dungeonSpotsOf(2)).toBe(DUNGEON_SPOTS);
+    expect(dungeonSpotsOf(3)).toBe(LORD_SPOTS);
+    expect(dungeonSpotOf(4, 2)).toEqual(DUNGEON_SPOTS[4]);
+    expect(dungeonSpotOf(4, 3)).toEqual(LORD_SPOTS[4]);
+    expect(dungeonSpotOf(999, 3)).toEqual(LORD_SPOTS[LORD_SPOTS.length - 1]);
+  });
+
+  it("offers as many floor 3 spots as the other floors, all distinct and inside the canvas", () => {
+    expect(LORD_SPOTS.length).toBe(DUNGEON_SPOTS.length);
+    expect(new Set(LORD_SPOTS.map((spot) => `${spot.x},${spot.y}`)).size).toBe(LORD_SPOTS.length);
+    for (const spot of LORD_SPOTS) {
+      expect(spot.x - CHAR_HALF_W).toBeGreaterThanOrEqual(VIEW_X0);
+      expect(spot.x + CHAR_HALF_W).toBeLessThanOrEqual(VIEW_X0 + VIEW_W);
+      expect(spot.y - CHAR_H).toBeGreaterThan(0);
+      expect(spot.y).toBeLessThan(WORLD_H);
+    }
+  });
+
+  it("keeps floor 3 raiders to the left of the Lord, never inside its 48px body, spread over three rings", () => {
+    const lord = dungeonLordPoint();
+    const LORD_HALF_W = 24;
+    for (const spot of LORD_SPOTS) expect(spot.x + CHAR_HALF_W).toBeLessThanOrEqual(lord.x - LORD_HALF_W + 4);
+    expect(new Set(LORD_SPOTS.map((spot) => spot.x)).size).toBeGreaterThan(8);
+    // the first slots surround it: some above and some below its feet line
+    const first = LORD_SPOTS.slice(0, 8);
+    expect(first.some((spot) => spot.y < lord.y)).toBe(true);
+    expect(first.some((spot) => spot.y > lord.y)).toBe(true);
+  });
+
+  it("puts the stairs down in the bottom-left corner, inside the canvas", () => {
+    const stairs = dungeonStairsPoint(1);
+    expect(stairs.x).toBeGreaterThanOrEqual(VIEW_X0);
+    expect(stairs.y).toBeLessThan(WORLD_H);
+  });
+
+  it("draws every floor with its own art, with and without a canvas cache", () => {
+    const sums: string[] = [];
+    for (const floor of [1, 2, 3]) {
+      const { ctx, fills } = mockCtx();
+      drawDungeonBack(ctx, 1, true, floor);
+      expect(fills.length).toBeGreaterThan(500);
+      sums.push(fills.map((fill) => `${fill.color}${fill.x}${fill.y}`).join(""));
+    }
+    expect(new Set(sums).size).toBe(DUNGEON_FLOORS);
+    const layerCtx = mockCtx().ctx;
+    vi.stubGlobal("document", { createElement: () => ({ width: 0, height: 0, getContext: () => layerCtx }) });
+    const { ctx } = mockCtx();
+    expect(() => {
+      for (const floor of [1, 2, 3, 0, 7]) drawDungeonBack(ctx, 2, false, floor);
+    }).not.toThrow();
+  });
+
+  it("B2 paints water and ghost lantern colours, B3 paints lava and the throne, B1 neither", () => {
+    const colorsOf = (floor: number) => {
+      const { ctx, fills } = mockCtx();
+      drawDungeonBack(ctx, 1, true, floor);
+      return new Set(fills.map((fill) => fill.color));
+    };
+    expect(colorsOf(2).has("#9ff5ee")).toBe(true); // ghost lantern flame
+    expect(colorsOf(2).has("#2f9aa0")).toBe(true); // flooded channel
+    expect(colorsOf(1).has("#9ff5ee")).toBe(false);
+    expect(colorsOf(3).has("#ffe14a")).toBe(true); // lava falls
+    expect(colorsOf(3).has("#8a7cc0")).toBe(true); // throne obsidian
+    expect(colorsOf(1).has("#8a7cc0")).toBe(false);
+  });
+
+  it("every floor is static under reduced motion", () => {
+    for (const floor of [1, 2, 3]) {
+      const first = mockCtx(),
+        second = mockCtx();
+      drawDungeonBack(first.ctx, 1, true, floor);
+      drawDungeonBack(second.ctx, 9.9, true, floor);
+      expect(second.fills).toEqual(first.fills);
     }
   });
 });
