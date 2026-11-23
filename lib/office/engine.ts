@@ -11,6 +11,7 @@ import {
   dungeonSpotOf,
   dungeonStairsPoint,
 } from "./dungeonScene";
+import { HallLife } from "./hallLife";
 import {
   ALLY_GATE_MOUTH,
   DESK_COUNT,
@@ -378,6 +379,7 @@ const NOTE_EVERY_S = 0.9;
 const NOTE_JITTER_MIN = 0.7;
 const NOTE_JITTER_MAX = 1.3;
 const NEVER_S = -99;
+const MINUTES_PER_HOUR = 60;
 const NOTE_VX = 6;
 const NOTE_VY_MIN = 10;
 const NOTE_VY_MAX = 14;
@@ -1554,6 +1556,9 @@ export class Office {
     alert: false,
     until: GM_IDLE_MIN_S,
   };
+  /** the guild hall's cat, dog and regulars (render reads these) */
+  readonly hall = new HallLife();
+  private readonly hallWalkers: Pt[] = [];
   /** reusable scratch points for the guild master's safety check (runs every frame while he is out) */
   private gmStandPt: Pt = { x: 0, y: 0 };
   private gmDuelPt: Pt = { x: 0, y: 0 };
@@ -4809,6 +4814,7 @@ export class Office {
     this.chef.plate = -1;
     this.chef.target = -1;
     this.resetGuildMaster();
+    this.hall.reset();
     this.dishes.fill(null);
     this.cheersAt = NEVER_S;
     this.cheersReal = NEVER_S;
@@ -4868,6 +4874,7 @@ export class Office {
 
   /** a receipt closed "done" (or a commit landed): everyone at the table raises a mug */
   cheers() {
+    this.hall.toast();
     const diners = this.feastDiners();
     if (!diners.length) return;
     this.cheersAt = this.clock;
@@ -4921,6 +4928,7 @@ export class Office {
     }
     this.updateChef(dt, diners);
     this.updateGuildMaster(dt);
+    this.updateHall(dt);
     this.bardOn = this.bardShouldPlay(diners);
     if (this.reducedMotion) return;
     if (this.bardOn && this.clock >= this.nextNoteAt) {
@@ -4958,6 +4966,20 @@ export class Office {
     }
   }
 
+  private updateHall(dt: number) {
+    const walkers = this.hallWalkers;
+    walkers.length = 0;
+    for (const emp of this.employees.values()) if (!emp.inDungeon && !this.isHidden(emp)) walkers.push(emp);
+    const now = new Date();
+    this.hall.update({
+      dt,
+      hour: now.getHours() + now.getMinutes() / MINUTES_PER_HOUR,
+      reduced: this.reducedMotion,
+      bossOut: this.bossAlive > 0,
+      busy: this.employees.size > 0,
+      walkers,
+    });
+  }
   private updateChef(dt: number, diners: Employee[]) {
     const chef = this.chef;
     if (this.reducedMotion) {
