@@ -45,3 +45,6 @@ next-env.d.ts
 
 # sed -i backup leftovers
 *-e
+
+# agent worktrees
+/.claude/worktrees/

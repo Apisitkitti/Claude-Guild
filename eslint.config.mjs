@@ -18,6 +18,7 @@ const eslintConfig = defineConfig([
     "node_modules/**",
     "coverage/**",
     "paraglide/**",
+    ".claude/worktrees/**",
   ]),
   {
     plugins: { local: componentOrder },

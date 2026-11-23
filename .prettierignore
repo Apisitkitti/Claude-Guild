@@ -12,3 +12,4 @@ public/
 *.md
 !docs/*.md
 project.inlang/.meta.json
+.claude/worktrees/
