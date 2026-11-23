@@ -1,3 +1,4 @@
+import type { ChronicleSnapshot } from "@/lib/chronicle";
 import { MS_PER_SECOND } from "@/lib/constants";
 
 /** SSE reconnect backoff: first delay and ceiling */
@@ -14,6 +15,7 @@ export interface LiveHandlers {
   onTerritory?(m: TerritoryMsg): void;
   onAttention?(rows: AttentionMsgRow[]): void;
   onReceipts?(rows: ReceiptMsgRow[]): void;
+  onChronicle?(chronicle: ChronicleSnapshot): void;
   onStatus(s: "open" | "error"): void;
 }
 
@@ -74,6 +76,13 @@ export const connectLive = (handlers: LiveHandlers): { close(): void } => {
     src.addEventListener("receipts", (ev) => {
       try {
         handlers.onReceipts?.(JSON.parse((ev as MessageEvent).data));
+      } catch {
+        /* ignore bad frame */
+      }
+    });
+    src.addEventListener("chronicle", (ev) => {
+      try {
+        handlers.onChronicle?.(JSON.parse((ev as MessageEvent).data));
       } catch {
         /* ignore bad frame */
       }

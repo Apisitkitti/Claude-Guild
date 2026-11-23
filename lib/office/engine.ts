@@ -1,3 +1,4 @@
+import type { ChronicleSnapshot } from "@/lib/chronicle";
 import { m } from "@/paraglide/messages";
 
 import type { SfxCue } from "./audio";
@@ -542,6 +543,7 @@ export const receiptVerdictText = (verdict: ReceiptVerdict): string =>
       : m.receipt_verdict_none();
 
 export interface SnapshotMsg {
+  chronicle?: ChronicleSnapshot;
   attention?: AttentionMsgRow[];
   receipts?: ReceiptMsgRow[];
   territory?: TerritoryMsg;
@@ -1485,6 +1487,10 @@ export class Office {
     waitS: 0,
   };
   private tools = new ToolTally();
+  /** daily chronicle from the server (or the demo simulator) */
+  private chron: ChronicleSnapshot | null = null;
+  /** chronicle counters only the client can know, since the page opened (or the last Live/Demo switch) */
+  private chronLocal = { levels: 0, raids: 0 };
   private statsVer = 0;
   private filter: GuildFilter = { query: "", hideStray: false };
   /** isHidden cache; invalidated by bumping hidVer (filter/events/snapshot) or when the act changes */
@@ -1796,6 +1802,27 @@ export class Office {
     this.bellKeys = ringing;
     this.bumpAttn();
   }
+  /** Replace the daily chronicle (server frame or demo). Malformed input is ignored. */
+  setChronicle(next: ChronicleSnapshot | null | undefined) {
+    if (!next || typeof next !== "object" || !next.today || !next.yesterday) return;
+    this.chron = next;
+  }
+  /** the daily chronicle plus the client-only counters (monsters slain, bosses defeated, raiders, levels gained) */
+  chronicleView(): {
+    server: ChronicleSnapshot | null;
+    monsters: number;
+    bosses: number;
+    raids: number;
+    levels: number;
+  } {
+    return {
+      server: this.chron,
+      monsters: this.stats.monsters,
+      bosses: this.stats.bosses,
+      raids: this.chronLocal.raids,
+      levels: this.chronLocal.levels,
+    };
+  }
   /** Replace the Receipt Ledger. Malformed rows are skipped. A receipt that just closed with outcomes pops a 📜 bubble + quest-log line. */
   setReceipts(rows: ReceiptMsgRow[] | null | undefined) {
     const num = (value: unknown) =>
@@ -1971,6 +1998,8 @@ export class Office {
     this.scene = "guild";
     this.stats = { since: Date.now(), entered: 0, left: 0, monsters: 0, bosses: 0, longestBossS: 0, waitS: 0 };
     this.tools.clear();
+    this.chron = null;
+    this.chronLocal = { levels: 0, raids: 0 };
     this.statsVer++;
     this.dirty = true;
     this.emit(true);
@@ -3644,8 +3673,10 @@ export class Office {
     const inside = emp.state === "SEATED" && emp.deskIdx < 0 && emp.slot >= 0;
     if (inside === emp.inDungeon) return;
     emp.inDungeon = inside;
-    if (inside) this.newRaidFoe(emp);
-    else emp.raid = null;
+    if (inside) {
+      this.chronLocal.raids++;
+      this.newRaidFoe(emp);
+    } else emp.raid = null;
     this.bumpStats();
   }
 
@@ -3880,6 +3911,7 @@ export class Office {
     if (snap.territory !== undefined) this.setTerritory(snap.territory, true);
     if (snap.attention !== undefined) this.setAttention(snap.attention);
     if (snap.receipts !== undefined) this.setReceipts(snap.receipts);
+    if (snap.chronicle !== undefined) this.setChronicle(snap.chronicle);
     this.hidVer++;
     this.dirty = true;
   }
@@ -4294,6 +4326,7 @@ export class Office {
     while (emp.xp >= xpNeed(emp.lv)) {
       emp.xp -= xpNeed(emp.lv);
       emp.lv++;
+      this.chronLocal.levels++;
       up = true;
     }
     if (up) {

@@ -1,4 +1,5 @@
 import { AttentionTracker, type AttentionRow } from "@/lib/attention";
+import { ChronicleTracker, CHRONICLE_THROTTLE_MS } from "@/lib/chronicle";
 import { MS_PER_MINUTE, MS_PER_SECOND } from "@/lib/constants";
 import { ReceiptTracker, type ReceiptRow } from "@/lib/receipts";
 import { redactDeep } from "@/lib/redact";
@@ -66,9 +67,13 @@ type Store = {
   attentionJson: string;
   receipts: ReceiptTracker;
   receiptsJson: string;
+  chronicle: ChronicleTracker;
+  chronicleJson: string;
+  chronicleSentAt: number;
+  chronicleTimer: ReturnType<typeof setTimeout> | null;
 };
 
-const STORE_VERSION = 13; // bump when Store shape changes so dev HMR rebuilds it
+const STORE_VERSION = 14; // bump when Store shape changes so dev HMR rebuilds it
 
 const globalStore = globalThis as typeof globalThis & { __claudeOffice?: Store & { version?: number } };
 
@@ -88,6 +93,10 @@ const createStore = (): Store & { version: number; timers: Timers } => {
     attentionJson: "[]",
     receipts: new ReceiptTracker(),
     receiptsJson: "[]",
+    chronicle: new ChronicleTracker(),
+    chronicleJson: "",
+    chronicleSentAt: 0,
+    chronicleTimer: null,
     startedAt: Date.now(),
     version: STORE_VERSION,
   } as unknown as Store & {
@@ -105,6 +114,7 @@ const createStore = (): Store & { version: number; timers: Timers } => {
     refreshAttention(store);
     store.receipts.sweep(Date.now());
     refreshReceipts(store);
+    refreshChronicle(store);
   }, SWEEP_INTERVAL_MS);
   ping.unref?.();
   sweep.unref?.();
@@ -116,6 +126,7 @@ const getStore = (): Store => {
   const existing = globalStore.__claudeOffice as (Store & { version?: number; timers?: Timers }) | undefined;
   if (existing && existing.version === STORE_VERSION) return existing;
   if (existing?.ctxTimers) for (const timer of existing.ctxTimers.values()) clearTimeout(timer);
+  if (existing?.chronicleTimer) clearTimeout(existing.chronicleTimer);
   if (existing?.timers) {
     clearInterval(existing.timers.ping);
     clearInterval(existing.timers.sweep);
@@ -142,11 +153,37 @@ const broadcastTerritory = (target: Store) => {
   broadcastRaw(target, `event: territory\ndata: ${JSON.stringify(target.territory.snapshot())}\n\n`);
 };
 
+/**
+ * recompute the daily chronicle; broadcast iff it changed, at most once per CHRONICLE_THROTTLE_MS (a change inside the
+ * window is sent by a trailing timer). Counts only, never persisted.
+ */
+const refreshChronicle = (target: Store) => {
+  const now = Date.now();
+  const json = JSON.stringify(target.chronicle.view(now));
+  if (json === target.chronicleJson) return;
+  const wait = target.chronicleSentAt + CHRONICLE_THROTTLE_MS - now;
+  if (wait > 0) {
+    if (!target.chronicleTimer) {
+      target.chronicleTimer = setTimeout(() => {
+        target.chronicleTimer = null;
+        refreshChronicle(target);
+      }, wait);
+      target.chronicleTimer.unref?.();
+    }
+    return;
+  }
+  target.chronicleJson = json;
+  target.chronicleSentAt = now;
+  broadcastRaw(target, `event: chronicle\ndata: ${json}\n\n`);
+};
+
 const attentionQueue = (target: Store): AttentionRow[] => target.attention.queue(Date.now());
 
 /** recompute the Lookout Bell queue; broadcast iff it changed. Never persisted. */
 const refreshAttention = (target: Store) => {
-  const json = JSON.stringify(attentionQueue(target));
+  const rows = attentionQueue(target);
+  target.chronicle.noteLoops(rows, Date.now());
+  const json = JSON.stringify(rows);
   if (json === target.attentionJson) return;
   target.attentionJson = json;
   broadcastRaw(target, `event: attention\ndata: ${json}\n\n`);
@@ -396,6 +433,9 @@ export const addEvent = (rawIn: Record<string, unknown>) => {
     try {
       store.receipts.ingest(raw, evt.receivedAt);
     } catch {}
+    try {
+      store.chronicle.ingest(raw, evt.receivedAt);
+    } catch {}
   }
   updateSessions(evt);
   try {
@@ -404,6 +444,7 @@ export const addEvent = (rawIn: Record<string, unknown>) => {
     if (sid && sess) store.attention.setWaiting(sid, sess.waiting ? sess.waitingSince : null);
     refreshAttention(store);
     refreshReceipts(store);
+    refreshChronicle(store);
   } catch {}
   logEvent(evt);
   broadcastRaw(store, `data: ${JSON.stringify(evt)}\n\n`);
@@ -419,6 +460,7 @@ export const snapshot = () => {
     territory: store.territory.snapshot(),
     attention: attentionQueue(store),
     receipts: receiptRows(store),
+    chronicle: store.chronicle.view(Date.now()),
   };
 };
 
