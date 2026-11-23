@@ -79,6 +79,7 @@ const eslintConfig = defineConfig([
       "lib/office/audio.ts",
       "lib/office/questBoardDraw.ts",
       "lib/office/dungeonScene.ts",
+      "lib/office/dungeonLordSprite.ts",
       "tests/**",
     ],
     rules: { "@typescript-eslint/no-magic-numbers": "off" },

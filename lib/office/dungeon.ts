@@ -18,6 +18,12 @@ export interface DungeonStats {
   raiders: number;
   /** the raiders the session filter lets through (what the dungeon scene and the gate badge actually show) */
   raidersShown: number;
+  /** raiders per dungeon floor (index 0 = B1) among the ones the filter lets through */
+  floorRaiders: number[];
+  /** the Dungeon Lord on B3: still standing, how much hp is left (0..1), times slain */
+  lordAlive: boolean;
+  lordHp: number;
+  lordSlain: number;
   topTools: { tool: string; count: number }[];
 }
 

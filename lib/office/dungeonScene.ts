@@ -26,8 +26,33 @@ export const DUNGEON_SPOTS: Pt[] = Array.from({ length: SPOT_COUNT_COLS * SPOT_R
 export const DUNGEON_LAST_SPOT = DUNGEON_SPOTS.length - 1;
 /** spot index of the raider in overflow slot `slot`: keyed by the slot, so nobody jumps when another raider leaves */
 export const dungeonSpotIndex = (slot: number): number => Math.min(Math.max(0, slot), DUNGEON_LAST_SPOT);
-/** where the raider in overflow slot `slot` stands inside the dungeon */
-export const dungeonSpotOf = (slot: number): Pt => DUNGEON_SPOTS[dungeonSpotIndex(slot)];
+/** the dungeon has three floors: B1 stone halls, B2 flooded catacombs, B3 the Dungeon Lord's throne cavern */
+export const DUNGEON_FLOORS = 3;
+/** where the Dungeon Lord stands on B3 (its feet; the 48x48 sprite is centred on x) */
+const LORD_FEET: Pt = { x: 268, y: 134 };
+export const dungeonLordPoint = (): Pt => LORD_FEET;
+/** floor 3: raiders ring the Lord on its left, three rings deep (the first eight slots take the inner ring) */
+const LORD_RING_R = [48, 76, 104];
+const LORD_RING_ANGLES = [3, 4, 2, 5, 1, 6, 0, 7];
+const LORD_RING_SPAN = 56;
+const LORD_RING_SQUASH = 0.62;
+const LORD_RING_ANGLE_STEPS = 7;
+export const LORD_SPOTS: Pt[] = Array.from({ length: SPOT_COUNT_COLS * LORD_RING_R.length }, (_, i) => {
+  const ring = Math.floor(i / SPOT_COUNT_COLS);
+  const angle = ((LORD_RING_ANGLES[i % SPOT_COUNT_COLS] / LORD_RING_ANGLE_STEPS) * 2 - 1) * LORD_RING_SPAN;
+  const rad = (angle * Math.PI) / 180;
+  return {
+    x: Math.round(LORD_FEET.x - 20 - LORD_RING_R[ring] * Math.cos(rad)),
+    y: Math.round(LORD_FEET.y + LORD_RING_R[ring] * Math.sin(rad) * LORD_RING_SQUASH),
+  };
+});
+/** the floors' raider spots (B1 and B2 share a layout, B3 rings the Lord) */
+export const dungeonSpotsOf = (floor: number): Pt[] => (floor >= DUNGEON_FLOORS ? LORD_SPOTS : DUNGEON_SPOTS);
+/** where the raider in overflow slot `slot` stands on `floor` (1..3) of the dungeon */
+export const dungeonSpotOf = (slot: number, floor = 1): Pt => dungeonSpotsOf(floor)[dungeonSpotIndex(slot)];
+/** the top of the stairs down on B1 and B2: raiders walk here before they appear one floor lower */
+const STAIRS_POINT: Pt = { x: VIEW_X0 + 24, y: 200 };
+export const dungeonStairsPoint = (_floor = 1): Pt => STAIRS_POINT;
 /** a raider's foe stands to the right of the raider */
 export const dungeonMonsterPoint = (spot: Pt): Pt => ({ x: spot.x + MON_DX, y: spot.y });
 
@@ -376,7 +401,7 @@ const cobwebs = (ctx: Ctx) => {
   cobweb(ctx, X_END - 2, 4, -1);
 };
 
-const buildBack = (ctx: Ctx) => {
+const buildBackB1 = (ctx: Ctx) => {
   drawWall(ctx);
   drawFloor(ctx);
   stairway(ctx);
@@ -393,6 +418,7 @@ const buildBack = (ctx: Ctx) => {
   treasure(ctx);
   bones(ctx);
   cobwebs(ctx);
+  stairsDown(ctx);
 };
 
 /** the ceiling beams, arches and hanging chains: top and side edges only (never over a character's body) */
@@ -446,8 +472,363 @@ const buildFront = (ctx: Ctx) => {
   rect(ctx, "#2b2d3d", VIEW_X0, WORLD_H - 2, VIEW_W, 1);
 };
 
+// ---- the stairs between floors ----------------------------------------------------------------------------------
+/** the way down on B1 and B2: a dark stairwell in the bottom-left corner of the floor */
+const STAIRS_DOWN_X = VIEW_X0 + 4;
+const STAIRS_DOWN_Y = 188;
+const stairsDown = (ctx: Ctx) => {
+  const x0 = STAIRS_DOWN_X,
+    y0 = STAIRS_DOWN_Y;
+  rect(ctx, MORTAR, x0 - 1, y0 - 1, 42, 24);
+  rect(ctx, "#4a4f63", x0, y0, 40, 3);
+  rect(ctx, WALL_HI, x0, y0, 40, 1);
+  const shades = ["#2a2b3a", "#1f2030", "#171826", "#10111c", "#0a0a12"];
+  shades.forEach((shade, step) => {
+    rect(ctx, shade, x0 + 2 + step * 3, y0 + 3 + step * 4, 36 - step * 6, 4);
+    rect(ctx, mixDown(shade), x0 + 2 + step * 3, y0 + 6 + step * 4, 36 - step * 6, 1);
+  });
+  // an arrow pointing down, in bone white
+  rect(ctx, BONE, x0 + 18, y0 + 6, 4, 4);
+  rect(ctx, BONE, x0 + 16, y0 + 10, 8, 1);
+  rect(ctx, BONE, x0 + 17, y0 + 11, 6, 1);
+  rect(ctx, BONE, x0 + 18, y0 + 12, 4, 1);
+  rect(ctx, BONE, x0 + 19, y0 + 13, 2, 1);
+};
+const mixDown = (color: string): string => {
+  const value = parseInt(color.slice(1), 16);
+  const part = (shift: number) => Math.max(0, ((value >> shift) & 255) - 14);
+  return `#${((part(16) << 16) | (part(8) << 8) | part(0)).toString(16).padStart(6, "0")}`;
+};
+
+/** the way up (to the floor above): a dark arch with a few steps and a lit lantern, same spot as the surface door */
+const stairsUp = (ctx: Ctx, glow: string, glowHi: string, frame: string, stone: string) => {
+  const x0 = STAIR_X;
+  rect(ctx, MORTAR, x0 - 3, 4, 40, 62);
+  rect(ctx, frame, x0 - 2, 6, 38, 60);
+  rect(ctx, "#070a10", x0 + 1, 10, 32, 38);
+  rect(ctx, "#0e141c", x0 + 1, 30, 32, 18);
+  rect(ctx, glow, x0 + 12, 14, 10, 14);
+  rect(ctx, glowHi, x0 + 14, 17, 6, 8);
+  rect(ctx, frame, x0 - 2, 6, 38, 4);
+  rect(ctx, WALL_HI, x0 - 2, 6, 38, 1);
+  rect(ctx, frame, x0 + 1, 8, 6, 3);
+  rect(ctx, frame, x0 + 27, 8, 6, 3);
+  for (let step = 0; step < 6; step++) {
+    const y = 48 + step * 8;
+    const inset = (5 - step) * 2;
+    rect(ctx, "#1a1c28", x0 - 2 + inset, y + 6, 38 - inset * 2, 3);
+    rect(ctx, stone, x0 - 2 + inset, y, 38 - inset * 2, 6);
+    rect(ctx, mixDown(stone), x0 - 2 + inset, y + 5, 38 - inset * 2, 1);
+  }
+  // an arrow pointing up above the arch
+  rect(ctx, BONE, x0 + 16, 0, 2, 3);
+  rect(ctx, BONE, x0 + 15, 3, 4, 1);
+};
+
+// ---- B2: the flooded catacombs ----------------------------------------------------------------------------------
+const CMORTAR = "#0a1216";
+const CWALL = ["#1d2a30", "#203239", "#1a262b", "#24363d"];
+const CWALL_HI = "#3f5a63";
+const CFLOOR = ["#1f2b2f", "#233237", "#1b2629", "#293a40"];
+const WATER_TONES: [string, string, string, string] = ["#1d5f6e", "#2f9aa0", "#5fd0c0", "#b8f5e0"];
+const GHOST = "#9ff5ee",
+  GHOST_HI = "#e8fffb",
+  GHOST_LO = "#3fb7b0";
+const COFFIN = ["#5a3d2b", "#7a553b", "#3b271b"];
+const WATER_B2 = { x0: VIEW_X0 + 46, x1: X_END, y: 62, h: 9 };
+const GHOST_LANTERNS: Pt[] = [
+  { x: -44, y: 26 },
+  { x: 48, y: 30 },
+  { x: 128, y: 26 },
+  { x: 212, y: 30 },
+  { x: 296, y: 26 },
+  { x: 362, y: 30 },
+];
+
+const coffin = (ctx: Ctx, x: number, y: number, open: boolean) => {
+  rect(ctx, CMORTAR, x - 1, y + 3, 18, 36);
+  rect(ctx, CMORTAR, x + 3, y - 1, 10, 6);
+  rect(ctx, COFFIN[0], x, y + 6, 16, 32);
+  rect(ctx, COFFIN[0], x + 3, y + 2, 10, 5);
+  rect(ctx, COFFIN[1], x, y + 6, 2, 32);
+  rect(ctx, COFFIN[1], x + 3, y + 2, 10, 1);
+  rect(ctx, COFFIN[2], x + 13, y + 6, 3, 32);
+  if (open) {
+    rect(ctx, CMORTAR, x + 3, y + 9, 10, 26);
+    rect(ctx, BONE, x + 11, y + 22, 4, 2); // a bony hand on the rim
+    rect(ctx, BONE_DARK, x + 14, y + 24, 1, 2);
+    rect(ctx, BONE, x + 5, y + 11, 5, 4); // the occupant's skull peeks out
+    rect(ctx, CMORTAR, x + 6, y + 12, 1, 2);
+    rect(ctx, CMORTAR, x + 8, y + 12, 1, 2);
+  } else {
+    rect(ctx, BONE_DARK, x + 7, y + 11, 2, 11);
+    rect(ctx, BONE_DARK, x + 4, y + 14, 8, 2);
+    rect(ctx, "#8a8f9c", x + 2, y + 34, 12, 2); // iron band
+  }
+};
+
+const drawWallB2 = (ctx: Ctx) => {
+  rect(ctx, CMORTAR, VIEW_X0, 0, VIEW_W, WALL_BASE_Y);
+  for (let row = 0, y = 0; y < WALL_BASE_Y; y += 7, row++) {
+    for (let x = VIEW_X0 - (row % 2) * 9; x < X_END; x += 18) {
+      rect(ctx, pick(CWALL, x, y), x + 1, y + 1, 17, 6);
+      rect(ctx, CWALL_HI, x + 1, y + 1, 17, 1);
+      if (hash(x, y) % 8 === 0) rect(ctx, CMORTAR, x + 3 + (hash(y, x) % 10), y + 2, 1, 4);
+    }
+  }
+  // ossuary: a dark niche band of stacked skulls running along the wall
+  rect(ctx, CMORTAR, VIEW_X0, 16, VIEW_W, 18);
+  for (let x = VIEW_X0 + 4; x < X_END - 6; x += 10) {
+    if (hash(x, 5) % 6 === 0) continue;
+    skull(ctx, x, 18);
+    if (hash(x, 9) % 3 === 0) skull(ctx, x + 4, 26);
+  }
+  rect(ctx, "#2b3f47", VIEW_X0, 34, VIEW_W, 2);
+  rect(ctx, CWALL_HI, VIEW_X0, 34, VIEW_W, 1);
+  rect(ctx, "#14202a", VIEW_X0, WALL_BASE_Y - 5, VIEW_W, 5);
+  rect(ctx, CMORTAR, VIEW_X0, WALL_BASE_Y - 1, VIEW_W, 1);
+  rect(ctx, "#14202a", VIEW_X0, 0, VIEW_W, 3);
+};
+
+const drawFloorB2 = (ctx: Ctx) => {
+  rect(ctx, CMORTAR, VIEW_X0, WALL_BASE_Y, VIEW_W, WORLD_H - WALL_BASE_Y);
+  for (let row = 0, y = WALL_BASE_Y; y < WORLD_H; y += 12, row++) {
+    for (let x = VIEW_X0 - (row % 2) * 10; x < X_END; x += 20) {
+      rect(ctx, pick(CFLOOR, x, y), x + 1, y + 1, 19, 11);
+      rect(ctx, CFLOOR[3], x + 1, y + 1, 19, 1);
+      if (hash(x, y) % 7 === 0) rect(ctx, CMORTAR, x + 4 + (hash(y, x) % 10), y + 4, 5, 1);
+    }
+  }
+  // standing puddles of the flood, opaque, under everything that walks here
+  for (let i = 0; i < 16; i++) {
+    const px = VIEW_X0 + 16 + (hash(i, 31) % (VIEW_W - 40)),
+      py = 84 + (hash(i, 17) % 110);
+    const wide = 10 + (hash(i, 3) % 12);
+    rect(ctx, WATER_TONES[0], px, py, wide, 4);
+    rect(ctx, WATER_TONES[1], px + 1, py, wide - 2, 1);
+    rect(ctx, WATER_TONES[2], px + 3, py + 2, 3, 1);
+  }
+  rect(ctx, "#14202a", VIEW_X0, WALL_BASE_Y, VIEW_W, 3);
+};
+
+const buildBackB2 = (ctx: Ctx) => {
+  drawWallB2(ctx);
+  drawFloorB2(ctx);
+  stairsUp(ctx, GHOST_LO, GHOST, "#3a5560", "#4c6670");
+  coffin(ctx, -8, 28, true);
+  coffin(ctx, 20, 30, false);
+  coffin(ctx, 150, 28, false);
+  coffin(ctx, 176, 30, true);
+  coffin(ctx, 306, 28, true);
+  coffin(ctx, 334, 30, false);
+  pillar(ctx, PILLAR_A_X);
+  pillar(ctx, PILLAR_B_X);
+  // the flood channel along the foot of the wall, with a stone rim
+  channelRim(ctx, WATER_B2);
+  bones(ctx);
+  stairsDown(ctx);
+};
+
+const animatedB2 = (ctx: Ctx, time: number, still: boolean) => {
+  lightFloorByChannel(ctx, WATER_B2, "#5fd0c0");
+  channel(ctx, WATER_B2, WATER_TONES, time, still, 11);
+  GHOST_LANTERNS.forEach((lantern, i) => {
+    const bob = still ? 0 : Math.round(Math.sin(time * 1.4 + i * 1.7) * 1.5);
+    const { x } = lantern,
+      y = lantern.y + bob;
+    // a soft cold glow on the wall (drawn before any character, never over one)
+    ctx.fillStyle = GHOST_LO;
+    for (let k = 0; k < 3; k++) {
+      ctx.globalAlpha = 0.05;
+      const half = 10 + k * 8;
+      ctx.fillRect(x - half, y - half * 0.6, half * 2, half + 10);
+    }
+    ctx.globalAlpha = 1;
+    rect(ctx, IRON_DARK, x, 0, 1, y - 4); // the chain from the ceiling
+    rect(ctx, IRON_DARK, x - 3, y - 4, 7, 2);
+    rect(ctx, IRON, x - 3, y - 2, 7, 8);
+    rect(ctx, MORTAR, x - 4, y - 3, 1, 10);
+    rect(ctx, MORTAR, x + 4, y - 3, 1, 10);
+    const flicker = still ? 0 : Math.floor(time * 6 + i) % 3;
+    rect(ctx, GHOST_LO, x - 2, y - 1, 5, 6);
+    rect(ctx, GHOST, x - 1, y - 1 - (flicker === 1 ? 1 : 0), 3, 5);
+    rect(ctx, GHOST_HI, x, y + (flicker === 2 ? 1 : 0), 1, 3);
+    rect(ctx, IRON_DARK, x - 3, y + 6, 7, 2);
+  });
+  // wisps drifting up off the water
+  if (still) return;
+  for (let i = 0; i < 5; i++) {
+    const phase = (time * 0.25 + i * 0.2) % 1;
+    const wx = WATER_B2.x0 + 20 + ((i * 71) % (WATER_B2.x1 - WATER_B2.x0 - 40));
+    rect(ctx, GHOST, wx + Math.round(Math.sin(phase * 9 + i) * 3), 60 - Math.floor(phase * 22), 1, 2);
+  }
+};
+
+// ---- B3: the Dungeon Lord's throne cavern ------------------------------------------------------------------------
+const RMORTAR = "#0c0609";
+const RWALL = ["#241218", "#2a161c", "#1e0f14", "#301a21"];
+const RWALL_HI = "#52303a";
+const RFLOOR = ["#1c1620", "#211a26", "#17121b", "#281f2e"];
+const LAVA_TONES: [string, string, string, string] = ["#a8200f", "#ff5a2a", "#ffb040", "#ffe14a"];
+const OBSIDIAN = ["#3f3560", "#5a4e86", "#241c40", "#8a7cc0"];
+const THRONE_X = 266;
+const LAVA_POOLS = [
+  { x0: VIEW_X0 + 4, x1: -34, y: 62, h: 9 },
+  { x0: 132, x1: 176, y: 62, h: 9 },
+  { x0: 330, x1: X_END - 4, y: 62, h: 9 },
+];
+const LAVA_FALLS = [-52, 148, 346];
+const CHAIN_X = [-34, 40, 108, 200, 326];
+const BRAZIERS: Pt[] = [
+  { x: -18, y: 42 },
+  { x: 70, y: 42 },
+  { x: 190, y: 42 },
+  { x: 222, y: 42 },
+  { x: 312, y: 42 },
+];
+
+const drawWallB3 = (ctx: Ctx) => {
+  rect(ctx, RMORTAR, VIEW_X0, 0, VIEW_W, WALL_BASE_Y);
+  // rough cave rock: uneven blocks
+  for (let y = 0; y < WALL_BASE_Y; y += 9) {
+    for (let x = VIEW_X0 - (hash(y, 1) % 14); x < X_END;) {
+      const wide = 12 + (hash(x, y) % 18);
+      rect(ctx, pick(RWALL, x, y), x + 1, y + 1, wide - 1, 8);
+      rect(ctx, RWALL_HI, x + 1, y + 1, wide - 1, 1);
+      if (hash(x, y) % 8 === 0) rect(ctx, RMORTAR, x + 3, y + 3, 1, 5);
+      x += wide;
+    }
+  }
+  rect(ctx, "#190d11", VIEW_X0, WALL_BASE_Y - 5, VIEW_W, 5);
+  rect(ctx, RMORTAR, VIEW_X0, WALL_BASE_Y - 1, VIEW_W, 1);
+  rect(ctx, "#190d11", VIEW_X0, 0, VIEW_W, 3);
+};
+
+const drawFloorB3 = (ctx: Ctx) => {
+  rect(ctx, RMORTAR, VIEW_X0, WALL_BASE_Y, VIEW_W, WORLD_H - WALL_BASE_Y);
+  for (let row = 0, y = WALL_BASE_Y; y < WORLD_H; y += 12, row++) {
+    for (let x = VIEW_X0 - (row % 2) * 10; x < X_END; x += 20) {
+      rect(ctx, pick(RFLOOR, x, y), x + 1, y + 1, 19, 11);
+      rect(ctx, RFLOOR[3], x + 1, y + 1, 19, 1);
+      if (hash(x, y) % 6 === 0) rect(ctx, LAVA_TONES[0], x + 3 + (hash(y, x) % 9), y + 5, 6, 1); // an ember crack
+      if (hash(x, y) % 14 === 0) rect(ctx, LAVA_TONES[1], x + 5 + (hash(y, x) % 6), y + 5, 2, 1);
+    }
+  }
+  rect(ctx, "#190d11", VIEW_X0, WALL_BASE_Y, VIEW_W, 3);
+  // the red carpet runs from the stairs to the foot of the throne, trimmed in gold
+  const carpetY = 110;
+  rect(ctx, RMORTAR, VIEW_X0 + 40, carpetY - 1, THRONE_X - 30 - VIEW_X0 - 40, 22);
+  rect(ctx, "#7a1426", VIEW_X0 + 40, carpetY, THRONE_X - 30 - VIEW_X0 - 40, 20);
+  rect(ctx, "#9c1f36", VIEW_X0 + 40, carpetY + 2, THRONE_X - 30 - VIEW_X0 - 40, 2);
+  rect(ctx, GOLD_DIM, VIEW_X0 + 40, carpetY, THRONE_X - 30 - VIEW_X0 - 40, 1);
+  rect(ctx, GOLD_DIM, VIEW_X0 + 40, carpetY + 19, THRONE_X - 30 - VIEW_X0 - 40, 1);
+  for (let x = VIEW_X0 + 52; x < THRONE_X - 40; x += 24) rect(ctx, GOLD_DIM, x, carpetY + 8, 6, 3);
+};
+
+const chain = (ctx: Ctx, x: number, length: number) => {
+  for (let y = 0; y < length; y += 7) {
+    const wide = (y / 7) % 2 === 0;
+    rect(ctx, RMORTAR, x - 1, y - 1, wide ? 9 : 5, 9);
+    rect(ctx, IRON, x, y, wide ? 7 : 3, 7);
+    rect(ctx, IRON_HI, x, y, wide ? 7 : 3, 1);
+    rect(ctx, RMORTAR, x + (wide ? 2 : 1), y + 2, wide ? 3 : 1, 3);
+  }
+  // a rusted hook at the end
+  rect(ctx, RMORTAR, x - 2, length - 1, 12, 5);
+  rect(ctx, IRON_DARK, x - 1, length, 10, 3);
+  rect(ctx, IRON, x + 1, length + 3, 3, 4);
+};
+
+const throne = (ctx: Ctx) => {
+  const cx = THRONE_X;
+  // dais steps in front of the wall
+  for (let step = 0; step < 3; step++) {
+    const half = 34 + step * 10;
+    const y = 66 + step * 9;
+    rect(ctx, RMORTAR, cx - half - 1, y - 1, half * 2 + 2, 11);
+    rect(ctx, OBSIDIAN[0], cx - half, y, half * 2, 9);
+    rect(ctx, OBSIDIAN[3], cx - half, y, half * 2, 1);
+    rect(ctx, GOLD_DIM, cx - half, y + 8, half * 2, 1);
+  }
+  // the tall spiked backrest
+  rect(ctx, RMORTAR, cx - 23, 6, 46, 62);
+  rect(ctx, OBSIDIAN[0], cx - 22, 10, 44, 56);
+  rect(ctx, OBSIDIAN[1], cx - 22, 10, 6, 56);
+  rect(ctx, OBSIDIAN[2], cx + 14, 10, 8, 56);
+  for (const dx of [-22, -12, -2, 8, 18]) {
+    const height = dx === -2 ? 16 : 10;
+    rect(ctx, RMORTAR, cx + dx - 1, 10 - height - 1, 7, height + 2);
+    rect(ctx, OBSIDIAN[3], cx + dx, 10 - height, 5, height);
+    rect(ctx, OBSIDIAN[0], cx + dx + 2, 10 - height + 2, 3, height - 2);
+  }
+  // a giant skull crowns the backrest, ruby eyes
+  skull(ctx, cx - 3, 12);
+  rect(ctx, BONE, cx - 4, 11, 8, 6);
+  rect(ctx, "#ff3b2a", cx - 3, 13, 2, 2);
+  rect(ctx, "#ff3b2a", cx + 1, 13, 2, 2);
+  // seat and arms
+  rect(ctx, OBSIDIAN[1], cx - 28, 44, 56, 8);
+  rect(ctx, OBSIDIAN[3], cx - 28, 44, 56, 1);
+  rect(ctx, OBSIDIAN[0], cx - 30, 52, 10, 14);
+  rect(ctx, OBSIDIAN[0], cx + 20, 52, 10, 14);
+  rect(ctx, "#ff3b2a", cx - 26, 56, 2, 2);
+  rect(ctx, "#ff3b2a", cx + 24, 56, 2, 2);
+  // bones heaped at the foot
+  skull(ctx, cx - 44, 100);
+  skull(ctx, cx + 38, 102);
+  rect(ctx, BONE, cx - 40, 108, 9, 2);
+  rect(ctx, BONE_DARK, cx + 36, 110, 8, 2);
+};
+
+const buildBackB3 = (ctx: Ctx) => {
+  drawWallB3(ctx);
+  drawFloorB3(ctx);
+  stairsUp(ctx, LAVA_TONES[1], LAVA_TONES[3], "#4a3040", "#6a4a58");
+  for (const pool of LAVA_POOLS) channelRim(ctx, pool);
+  for (const x of CHAIN_X) chain(ctx, x, 34 + (hash(x, 4) % 22));
+  throne(ctx);
+};
+
+const lavaFall = (ctx: Ctx, x: number, time: number, still: boolean) => {
+  rect(ctx, RMORTAR, x - 1, 0, 14, WALL_BASE_Y);
+  rect(ctx, LAVA_TONES[0], x, 0, 12, WALL_BASE_Y);
+  rect(ctx, LAVA_TONES[1], x + 2, 0, 8, WALL_BASE_Y);
+  const shift = still ? 0 : Math.floor(time * 20);
+  for (let i = 0; i < 9; i++) {
+    const y = (i * 9 + shift) % WALL_BASE_Y;
+    rect(ctx, LAVA_TONES[2], x + 3 + ((i * 5) % 5), y, 2, 5);
+    rect(ctx, LAVA_TONES[3], x + 4 + ((i * 3) % 4), y + 1, 1, 2);
+  }
+  rect(ctx, LAVA_TONES[3], x + 4, WALL_BASE_Y - 3, 4, 3); // the splash where it lands
+};
+
+const animatedB3 = (ctx: Ctx, time: number, still: boolean) => {
+  BRAZIERS.forEach((point, i) => torch(ctx, point, time, still, i));
+  for (const pool of LAVA_POOLS) lightFloorByChannel(ctx, pool, "#ff5a2a");
+  for (const pool of LAVA_POOLS) channel(ctx, pool, LAVA_TONES, time, still, 7 + pool.x0);
+  for (const x of LAVA_FALLS) lavaFall(ctx, x, time, still);
+  // the rubies in the throne's eyes pulse
+  const on = still || Math.floor(time * 2) % 2 === 0;
+  rect(ctx, on ? "#ff3b2a" : "#a8200f", THRONE_X - 3, 13, 2, 2);
+  rect(ctx, on ? "#ff3b2a" : "#a8200f", THRONE_X + 1, 13, 2, 2);
+  // embers rising from the lava cracks in the floor
+  if (still) return;
+  for (let i = 0; i < 10; i++) {
+    const phase = (time * 0.35 + i * 0.1) % 1;
+    const ex = VIEW_X0 + 14 + ((i * 53) % (VIEW_W - 28));
+    rect(
+      ctx,
+      phase < 0.5 ? LAVA_TONES[2] : LAVA_TONES[1],
+      ex + Math.round(Math.sin(phase * 8 + i) * 2),
+      200 - Math.floor(phase * 90),
+      1,
+      1,
+    );
+  }
+};
+
 // ---- caches -----------------------------------------------------------------------------------------------------
-let backLayer: HTMLCanvasElement | null = null;
+const backLayers: (HTMLCanvasElement | null | undefined)[] = [];
 let frontLayer: HTMLCanvasElement | null = null;
 const layer = (build: (ctx: Ctx) => void): HTMLCanvasElement | null => {
   if (typeof document === "undefined") return null;
@@ -573,11 +954,17 @@ const animated = (ctx: Ctx, time: number, still: boolean) => {
   }
 };
 
-export const drawDungeonBack = (ctx: Ctx, time: number, still: boolean) => {
-  if (!backLayer) backLayer = layer(buildBack);
-  if (backLayer) ctx.drawImage(backLayer, VIEW_X0, 0);
-  else buildBack(ctx);
-  animated(ctx, time, still);
+const BACK_BUILDERS = [buildBackB1, buildBackB2, buildBackB3];
+const ANIMATORS = [animated, animatedB2, animatedB3];
+
+/** the static back of a floor (1..3; anything else draws B1) plus its animated pieces */
+export const drawDungeonBack = (ctx: Ctx, time: number, still: boolean, floor = 1) => {
+  const index = Math.min(Math.max(Math.round(floor) || 1, 1), DUNGEON_FLOORS) - 1;
+  if (backLayers[index] === undefined) backLayers[index] = layer(BACK_BUILDERS[index]);
+  const cached = backLayers[index];
+  if (cached) ctx.drawImage(cached, VIEW_X0, 0);
+  else BACK_BUILDERS[index](ctx);
+  ANIMATORS[index](ctx, time, still);
 };
 
 export const drawDungeonFront = (ctx: Ctx, time: number, still: boolean) => {

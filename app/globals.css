@@ -341,6 +341,36 @@ button:active {
 .dungeonback:hover {
   background: var(--color-gold-bright);
 }
+.floortabs {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: flex;
+  gap: 4px;
+}
+.floortab {
+  padding: 4px 10px;
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--color-text);
+  background: var(--color-panel-inset);
+  border: 2px solid var(--color-line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.floortab:hover {
+  border-color: var(--color-gold);
+}
+.floortab--on {
+  color: var(--color-ink-on-gold);
+  background: var(--color-gold);
+  border-color: var(--color-gold-dark);
+}
+.floortab:focus-visible {
+  outline: 2px solid var(--color-gold-bright);
+  outline-offset: 1px;
+}
 .sr-only {
   position: absolute;
   width: 1px;

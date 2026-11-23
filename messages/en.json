@@ -418,5 +418,21 @@
   "quest_board_status_pending": "Pending",
   "quest_board_status_active": "In progress",
   "quest_board_status_done": "Done",
-  "quest_board_left": "left the guild"
+  "quest_board_left": "left the guild",
+  "log_kind_lord": "Dungeon Lord",
+  "dungeon_floor_tabs_label": "Dungeon floors",
+  "dungeon_floor_tab": "B{floor} · {count}",
+  "dungeon_floor_tab_title": "B{floor} {name} — {count} raiding",
+  "dungeon_floor_name_1": "Stone halls",
+  "dungeon_floor_name_2": "Flooded catacombs",
+  "dungeon_floor_name_3": "The Lord's throne cavern",
+  "dungeon_floor_caption": "Dungeon B{floor} · {name} — {count} raiding",
+  "dungeon_floor_caption_empty": "Dungeon B{floor} · {name} — nobody here",
+  "dungeon_floor_row": "Raiders per floor",
+  "dungeon_floor_lord": "Dungeon Lord",
+  "dungeon_floor_lord_alive": "Standing, {hp}% hp",
+  "dungeon_floor_lord_down": "Slain, rising again soon",
+  "dungeon_floor_lord_slain": "{tag} and the raiders of {project} slew the Dungeon Lord!",
+  "dungeon_floor_lord_slain_detail": "Dungeon Lord slain ({count} so far)",
+  "dungeon_floor_lord_count": "Slain {count}x"
 }

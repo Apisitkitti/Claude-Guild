@@ -74,6 +74,7 @@ const OfficeApp = () => {
           dungeon={view.dungeon}
           quests={view.quests ?? []}
           viewScene={view.scene}
+          viewFloor={view.dungeonFloor}
         />
         <SidePanel
           view={view}

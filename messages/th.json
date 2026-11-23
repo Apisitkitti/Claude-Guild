@@ -238,5 +238,21 @@
   "quest_board_status_pending": "รอทำ",
   "quest_board_status_active": "กำลังทำ",
   "quest_board_status_done": "เสร็จแล้ว",
-  "quest_board_left": "ออกจาก guild แล้ว"
+  "quest_board_left": "ออกจาก guild แล้ว",
+  "log_kind_lord": "Dungeon Lord",
+  "dungeon_floor_tabs_label": "ชั้นของ dungeon",
+  "dungeon_floor_tab": "B{floor} · {count}",
+  "dungeon_floor_tab_title": "B{floor} {name} — กำลังบุก {count} คน",
+  "dungeon_floor_name_1": "ห้องโถงหิน",
+  "dungeon_floor_name_2": "สุสานน้ำท่วม",
+  "dungeon_floor_name_3": "ถ้ำบัลลังก์ของ Lord",
+  "dungeon_floor_caption": "Dungeon B{floor} · {name} — กำลังบุก {count} คน",
+  "dungeon_floor_caption_empty": "Dungeon B{floor} · {name} — ไม่มีใครอยู่",
+  "dungeon_floor_row": "คนในแต่ละชั้น",
+  "dungeon_floor_lord": "Dungeon Lord",
+  "dungeon_floor_lord_alive": "ยังยืนอยู่ เหลือ {hp}% hp",
+  "dungeon_floor_lord_down": "ล้มแล้ว เดี๋ยวฟื้นอีกครั้ง",
+  "dungeon_floor_lord_slain": "{tag} กับเหล่านักบุกของ {project} สังหาร Dungeon Lord ได้แล้ว!",
+  "dungeon_floor_lord_slain_detail": "Dungeon Lord ถูกสังหาร (รวม {count} ครั้ง)",
+  "dungeon_floor_lord_count": "สังหารไปแล้ว {count} ครั้ง"
 }
