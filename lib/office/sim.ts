@@ -1,6 +1,7 @@
 import { m } from "@/paraglide/messages";
 
 import type { AttentionMsgRow, Employee, HookEvt, Office, ReceiptMsgRow } from "./engine";
+import type { QuestMsgItem, QuestMsgRow } from "./questNotes";
 
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
 const randInt = (min: number, max: number) => Math.floor(rand(min, max + 1));
@@ -73,6 +74,24 @@ const RECEIPT_SEED_STEP_MIN = 17;
 const MS_PER_MIN = 60_000;
 const RECEIPT_INTERVAL: Range = { min: 14, max: 24 };
 const RECEIPT_KEEP = 12;
+
+// ---- demo pacing: quest board (todo lists) ----
+const COIN = 0.5;
+const QUEST_START_DELAY: Range = { min: 2, max: 4 };
+const QUEST_STEP: Range = { min: 5, max: 9 };
+const QUEST_LIST_SIZE: Range = { min: 3, max: 6 };
+const QUEST_TASKS: readonly [string, string][] = [
+  ["Read the existing code", "Reading the existing code"],
+  ["Write the failing test", "Writing the failing test"],
+  ["Implement the feature", "Implementing the feature"],
+  ["Fix the lint errors", "Fixing the lint errors"],
+  ["Update the docs", "Updating the docs"],
+  ["Refactor the helper", "Refactoring the helper"],
+  ["Run the test suite", "Running the test suite"],
+  ["Review the diff", "Reviewing the diff"],
+  ["Wire up the route", "Wiring up the route"],
+  ["Add the translations", "Adding the translations"],
+];
 
 // ---- demo pacing: a session's life ----
 const CONTEXT_LIMIT = 200_000;
@@ -196,6 +215,7 @@ export class Simulator {
     this.spawn(this.attention());
     this.spawn(this.attentionSync());
     this.spawn(this.receipts());
+    this.spawn(this.quests());
     this.spawn(this.ally());
   }
 
@@ -391,6 +411,7 @@ export class Simulator {
   }
 
   private demoReceipts: ReceiptMsgRow[] = [];
+  private demoQuests = new Map<string, { project: string; items: QuestMsgItem[]; at: number }>();
   private receiptN = 0;
   private makeReceipt(sid: string, closedAt: number): ReceiptMsgRow {
     const roll = Math.random();
@@ -445,6 +466,48 @@ export class Simulator {
       this.demoReceipts = [this.makeReceipt(pick(live).id, Date.now()), ...this.demoReceipts].slice(0, RECEIPT_KEEP);
       this.o.setReceipts(this.demoReceipts);
     }
+  }
+
+  /** demo-only: every session keeps a todo list on the quest board and works through it */
+  private *quests(): Gen {
+    yield span(QUEST_START_DELAY);
+    for (;;) {
+      for (const sid of [...this.demoQuests.keys()]) if (!this.active.has(sid)) this.demoQuests.delete(sid);
+      for (const [sid, project] of this.active) {
+        if (!this.demoQuests.has(sid)) this.demoQuests.set(sid, { project, items: this.newTodoList(), at: Date.now() });
+      }
+      const lists = [...this.demoQuests.values()];
+      if (lists.length) this.advanceTodos(pick(lists));
+      this.o.setQuests(this.questRows());
+      yield span(QUEST_STEP);
+    }
+  }
+  private newTodoList(): QuestMsgItem[] {
+    const picks = [...QUEST_TASKS].sort(() => Math.random() - COIN).slice(0, spanInt(QUEST_LIST_SIZE));
+    return picks.map(([text, active], index) =>
+      index === 0 ? { text, status: "in_progress", active } : { text, status: "pending" },
+    );
+  }
+  /** finish the task in progress and start the next; a finished list is replaced by a fresh one */
+  private advanceTodos(list: { items: QuestMsgItem[]; at: number }) {
+    const current = list.items.findIndex((item) => item.status === "in_progress");
+    if (current >= 0) list.items[current] = { text: list.items[current].text, status: "completed" };
+    const next = list.items.findIndex((item) => item.status === "pending");
+    if (next >= 0) {
+      const task = QUEST_TASKS.find(([text]) => text === list.items[next].text);
+      list.items[next] = { text: list.items[next].text, status: "in_progress", ...(task ? { active: task[1] } : {}) };
+    } else if (current < 0) list.items = this.newTodoList();
+    list.at = Date.now();
+  }
+  private questRows(): QuestMsgRow[] {
+    return [...this.demoQuests.entries()]
+      .map(([sid, list]) => ({
+        sid,
+        project: list.project,
+        updatedAt: list.at,
+        items: list.items.map((item) => ({ ...item })),
+      }))
+      .sort((first, second) => second.updatedAt - first.updatedAt);
   }
 
   private spawn(gen: Gen) {

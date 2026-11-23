@@ -67,6 +67,7 @@ import {
 import { monsterSprite } from "./monsterSprites";
 import { bardSprite, chefSprite, guildMasterSprite, innkeeperSprite } from "./npcSprites";
 import { MONSTER_KINDS } from "./palette";
+import { drawQuestBoard } from "./questBoardDraw";
 import { butterflySprite, charSprite, internSprite, prop, type Pose } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
@@ -503,17 +504,7 @@ const drawHallDecor = (ctx: Ctx) => {
   // legs / posts
   rect(ctx, WD.dark, 8, 46, 3, 6);
   rect(ctx, WD.dark, 33, 46, 3, 6);
-  for (const [nx, ny] of [
-    [14, 22],
-    [24, 21],
-    [32, 23],
-    [15, 34],
-    [25, 35],
-    [32, 36],
-  ] as const) {
-    blitC(ctx, "quest_note", nx, ny);
-    rect(ctx, "#d95763", nx - 1, ny - 4, 1, 1);
-  }
+  // the notes themselves are live (todo lists): see questBoardDraw.ts
 
   // hearth
   const hx = HEARTH.x;
@@ -3048,6 +3039,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   }
   ctx.drawImage(bg, VIEW_X0, 0);
   drawEnvAnim(ctx, time);
+  drawQuestBoard(ctx, office, time);
   drawGate(ctx, office, time);
   drawAllyGate(ctx, office.allyDoorsUntil > time, time, office.reducedMotion);
   // Lighting tints only the environment; characters, monsters and emissive things stay solid and full-colour.

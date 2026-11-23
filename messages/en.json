@@ -232,5 +232,14 @@
   "dungeon_enter": "Enter the dungeon",
   "dungeon_back": "Back to the guild",
   "dungeon_scene_raiders": "Dungeon — {count} raiding",
-  "dungeon_scene_empty": "Dungeon — empty… only sleeping monsters"
+  "dungeon_scene_empty": "Dungeon — empty… only sleeping monsters",
+  "quest_board_hit_label": "Open the quest board (each session's todo list)",
+  "quest_board_title": "📋 Quest board",
+  "quest_board_close": "Close the quest board",
+  "quest_board_empty": "No todo lists yet. When a session writes one, it is pinned here.",
+  "quest_board_progress": "{done}/{total} done",
+  "quest_board_status_pending": "Pending",
+  "quest_board_status_active": "In progress",
+  "quest_board_status_done": "Done",
+  "quest_board_left": "left the guild"
 }

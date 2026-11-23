@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import type { DungeonStats } from "@/lib/office/dungeon";
-import { DUNGEON_HIT, VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
+import type { QuestView } from "@/lib/office/engine";
+import { BOARD_HIT, DUNGEON_HIT, VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
 import { m } from "@/paraglide/messages";
 
 import { DungeonCard } from "./DungeonCard";
+import { QuestBoardCard } from "./QuestBoardCard";
 import type { OfficeRef } from "./types";
 
 /** canvas border (see `.frame canvas` in globals.css): the overlay's origin is inside it */
@@ -17,6 +19,7 @@ export const Stage = ({
   scale,
   officeRef,
   dungeon,
+  quests,
   viewScene,
 }: {
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -24,16 +27,20 @@ export const Stage = ({
   scale: number;
   officeRef: OfficeRef;
   dungeon: DungeonStats;
+  /** Quest Board: every session's todo list */
+  quests: QuestView[];
   /** the engine's scene from the view snapshot: selecting a raider (or a field adventurer) switches it from outside */
   viewScene: "guild" | "dungeon";
 }) => {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
   /** screen-reader text, set once when the dungeon scene is entered (the visible caption is not a live region) */
   const [entered, setEntered] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
   const captionRef = useRef("");
   const gateRef = useRef<HTMLButtonElement>(null);
+  const boardRef = useRef<HTMLButtonElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   /** the scene the focus was last moved for: focus follows only a real switch, not the first render */
   const focusedScene = useRef<"guild" | "dungeon">("guild");
@@ -50,6 +57,10 @@ export const Stage = ({
       y: ((ev.clientY - rect.top - canvas.clientTop) * WORLD_H) / canvas.clientHeight,
     };
   };
+  const closeBoard = useCallback(() => {
+    setBoardOpen(false);
+    boardRef.current?.focus({ preventScroll: true });
+  }, []);
   const closeCard = () => {
     setOpen(false);
     gateRef.current?.focus({ preventScroll: true });
@@ -151,12 +162,44 @@ export const Stage = ({
                 width: DUNGEON_HIT.w * scale,
                 height: DUNGEON_HIT.h * scale,
               }}
-              onClick={() => setOpen((was) => !was)}
+              onClick={() => {
+                setBoardOpen(false);
+                setOpen((was) => !was);
+              }}
               onDoubleClick={enterDungeon}
               onMouseEnter={() => setHover(true)}
               onMouseLeave={() => setHover(false)}
               onFocus={() => setHover(true)}
               onBlur={() => setHover(false)}
+            />
+          )}
+          {!inDungeon && (
+            <button
+              type="button"
+              ref={boardRef}
+              className="gatehit"
+              aria-label={m.quest_board_hit_label()}
+              title={m.quest_board_hit_label()}
+              aria-expanded={boardOpen}
+              style={{
+                left: (BOARD_HIT.x - VIEW_X0) * scale + CANVAS_BORDER,
+                top: BOARD_HIT.y * scale + CANVAS_BORDER,
+                width: BOARD_HIT.w * scale,
+                height: BOARD_HIT.h * scale,
+              }}
+              onClick={() => {
+                setOpen(false);
+                setBoardOpen((was) => !was);
+              }}
+            />
+          )}
+          {boardOpen && !inDungeon && (
+            <QuestBoardCard
+              quests={quests}
+              left={(BOARD_HIT.x + BOARD_HIT.w - VIEW_X0) * scale + CANVAS_BORDER + CARD_GAP}
+              top={BOARD_HIT.y * scale + CANVAS_BORDER}
+              anchorRef={boardRef}
+              onClose={closeBoard}
             />
           )}
           {open && !inDungeon && (

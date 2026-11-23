@@ -178,5 +178,14 @@
   "dungeon_enter": "เข้า dungeon",
   "dungeon_back": "กลับ guild",
   "dungeon_scene_raiders": "Dungeon — กำลังบุก {count} คน",
-  "dungeon_scene_empty": "Dungeon — ว่างเปล่า… มีแต่ monster หลับ"
+  "dungeon_scene_empty": "Dungeon — ว่างเปล่า… มีแต่ monster หลับ",
+  "quest_board_hit_label": "เปิด quest board (todo ของแต่ละ session)",
+  "quest_board_title": "📋 Quest board",
+  "quest_board_close": "ปิด quest board",
+  "quest_board_empty": "ยังไม่มี todo เมื่อ session ไหนเขียน todo ก็จะถูกปักไว้ที่นี่",
+  "quest_board_progress": "เสร็จ {done}/{total}",
+  "quest_board_status_pending": "รอทำ",
+  "quest_board_status_active": "กำลังทำ",
+  "quest_board_status_done": "เสร็จแล้ว",
+  "quest_board_left": "ออกจาก guild แล้ว"
 }

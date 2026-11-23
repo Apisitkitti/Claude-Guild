@@ -29,6 +29,8 @@ const DOOR_INSET = 6;
 export const DOOR: Pt = { x: VIEW_X0 + DOOR_INSET, y: 176 };
 export const DOOR_IN: Pt = { x: 30, y: 176 };
 export const BOARD: Pt = { x: 30, y: 68 };
+/** Click / hover area of the quest board on the back wall (frame + posts), logical px. */
+export const BOARD_HIT: Rect = { x: 5, y: 5, w: 34, h: 47 };
 export const COUNTER: Pt = { x: 98, y: 80 };
 export const GATE_Y = 124;
 export const GATE_IN: Pt = { x: 112, y: GATE_Y };

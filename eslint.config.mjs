@@ -75,6 +75,7 @@ const eslintConfig = defineConfig([
       "lib/office/bossSprites.ts",
       "lib/office/monsterSprites.ts",
       "lib/office/render.ts",
+      "lib/office/questBoardDraw.ts",
       "lib/office/dungeonScene.ts",
       "tests/**",
     ],

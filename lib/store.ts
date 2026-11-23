@@ -1,5 +1,6 @@
 import { AttentionTracker, type AttentionRow } from "@/lib/attention";
 import { MS_PER_MINUTE, MS_PER_SECOND } from "@/lib/constants";
+import { QuestBoardTracker, type QuestRow } from "@/lib/questBoard";
 import { ReceiptTracker, type ReceiptRow } from "@/lib/receipts";
 import { redactDeep } from "@/lib/redact";
 import { TerritoryTracker } from "@/lib/territory";
@@ -66,9 +67,11 @@ type Store = {
   attentionJson: string;
   receipts: ReceiptTracker;
   receiptsJson: string;
+  quests: QuestBoardTracker;
+  questsJson: string;
 };
 
-const STORE_VERSION = 13; // bump when Store shape changes so dev HMR rebuilds it
+const STORE_VERSION = 14; // bump when Store shape changes so dev HMR rebuilds it
 
 const globalStore = globalThis as typeof globalThis & { __claudeOffice?: Store & { version?: number } };
 
@@ -88,6 +91,8 @@ const createStore = (): Store & { version: number; timers: Timers } => {
     attentionJson: "[]",
     receipts: new ReceiptTracker(),
     receiptsJson: "[]",
+    quests: new QuestBoardTracker(),
+    questsJson: "[]",
     startedAt: Date.now(),
     version: STORE_VERSION,
   } as unknown as Store & {
@@ -105,6 +110,7 @@ const createStore = (): Store & { version: number; timers: Timers } => {
     refreshAttention(store);
     store.receipts.sweep(Date.now());
     refreshReceipts(store);
+    if (store.quests.sweep(Date.now())) refreshQuests(store);
   }, SWEEP_INTERVAL_MS);
   ping.unref?.();
   sweep.unref?.();
@@ -162,7 +168,19 @@ const refreshReceipts = (target: Store) => {
   broadcastRaw(target, `event: receipts\ndata: ${json}\n\n`);
 };
 
+const questRows = (target: Store): QuestRow[] => target.quests.rows();
+
+/** recompute the Quest Board (todo lists); broadcast iff it changed. Redacted text, never persisted. */
+const refreshQuests = (target: Store) => {
+  const json = JSON.stringify(questRows(target));
+  if (json === target.questsJson) return;
+  target.questsJson = json;
+  broadcastRaw(target, `event: quests\ndata: ${json}\n\n`);
+};
+
 const dropSession = (id: string) => {
+  store.quests.dropSession(id, Date.now()); // the board stays a few minutes (grace), then sweep drops it
+  refreshQuests(store);
   store.attention.dropSession(id);
   refreshAttention(store);
   store.receipts.dropSession(id, Date.now()); // closed receipts outlive the session
@@ -396,6 +414,9 @@ export const addEvent = (rawIn: Record<string, unknown>) => {
     try {
       store.receipts.ingest(raw, evt.receivedAt);
     } catch {}
+    try {
+      store.quests.ingest(raw, evt.receivedAt);
+    } catch {}
   }
   updateSessions(evt);
   try {
@@ -404,6 +425,7 @@ export const addEvent = (rawIn: Record<string, unknown>) => {
     if (sid && sess) store.attention.setWaiting(sid, sess.waiting ? sess.waitingSince : null);
     refreshAttention(store);
     refreshReceipts(store);
+    refreshQuests(store);
   } catch {}
   logEvent(evt);
   broadcastRaw(store, `data: ${JSON.stringify(evt)}\n\n`);
@@ -419,6 +441,7 @@ export const snapshot = () => {
     territory: store.territory.snapshot(),
     attention: attentionQueue(store),
     receipts: receiptRows(store),
+    quests: questRows(store),
   };
 };
 

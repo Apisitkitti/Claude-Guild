@@ -14,6 +14,7 @@ export interface LiveHandlers {
   onTerritory?(m: TerritoryMsg): void;
   onAttention?(rows: AttentionMsgRow[]): void;
   onReceipts?(rows: ReceiptMsgRow[]): void;
+  onQuests?(rows: unknown): void;
   onStatus(s: "open" | "error"): void;
 }
 
@@ -74,6 +75,13 @@ export const connectLive = (handlers: LiveHandlers): { close(): void } => {
     src.addEventListener("receipts", (ev) => {
       try {
         handlers.onReceipts?.(JSON.parse((ev as MessageEvent).data));
+      } catch {
+        /* ignore bad frame */
+      }
+    });
+    src.addEventListener("quests", (ev) => {
+      try {
+        handlers.onQuests?.(JSON.parse((ev as MessageEvent).data));
       } catch {
         /* ignore bad frame */
       }
