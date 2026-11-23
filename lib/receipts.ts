@@ -40,7 +40,7 @@ export const MAX_TASK_IDS = 200;
 export const LATE_GRACE_MS = 5000;
 export const PROJECT_CHARS = 40;
 
-const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+export const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 export type ReceiptVerdict = "done" | "red" | "none";
 /** a closed receipt as sent to the client (counts only) */
@@ -79,7 +79,7 @@ export type ReceiptEvent = {
 };
 
 // ---- command analysis (exported for tests) ----
-const fnv = (text: string): string => {
+export const fnv = (text: string): string => {
   let hash = FNV_OFFSET_BASIS;
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i);
@@ -213,8 +213,8 @@ export const commitKind = (segments: string[]): "commit" | "amend" | null => {
   return null;
 };
 
-const str = (value: unknown): string => (typeof value === "string" ? value : "");
-const obj = (value: unknown): Record<string, unknown> =>
+export const str = (value: unknown): string => (typeof value === "string" ? value : "");
+export const obj = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 
 type Receipt = {
@@ -253,7 +253,7 @@ type SessionState = {
 const outcomes = (receipt: Receipt) =>
   receipt.files.size + receipt.recovered + receipt.commits + receipt.amends + receipt.tasks;
 
-const projectOf = (cwd: string): string => {
+export const projectOf = (cwd: string): string => {
   const segments = cwd.split("/").filter(Boolean);
   const name = segments[segments.length - 1] ?? "";
   return (name.length > PROJECT_CHARS ? name.slice(0, PROJECT_CHARS - 1) + "…" : name) || "unknown";

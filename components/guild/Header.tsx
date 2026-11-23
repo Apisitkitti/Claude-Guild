@@ -1,6 +1,9 @@
+import { useRef, useState } from "react";
+
 import { m } from "@/paraglide/messages";
 import { getLocale, setLocale, type Locale } from "@/paraglide/runtime";
 
+import { ChronicleCard } from "./ChronicleCard";
 import { isNum } from "./format";
 import type { Notify } from "./hooks/useNotifications";
 import { useTreasuryBump } from "./hooks/useRpgEffects";
@@ -48,6 +51,8 @@ export const Header = ({
   onToggleCollapsed: () => void;
 }) => {
   const bump = useTreasuryBump(treasury);
+  const [chronicleOpen, setChronicleOpen] = useState(false);
+  const chronicleBtnRef = useRef<HTMLButtonElement>(null);
   const { perm: notifyPerm, on: notifyOn, toggle: toggleNotify } = notify;
   const locale = getLocale();
   const bellOn = notifyOn && notifyPerm === "granted";
@@ -57,6 +62,10 @@ export const Header = ({
       : conn === "connected"
         ? { cls: "ok", text: m.header_pill_connected() }
         : { cls: "warn", text: conn === "reconnecting" ? m.header_pill_reconnecting() : m.header_pill_connecting() };
+  const closeChronicle = () => {
+    setChronicleOpen(false);
+    chronicleBtnRef.current?.focus({ preventScroll: true });
+  };
   return (
     <header className="bar">
       <h1>
@@ -98,6 +107,16 @@ export const Header = ({
       )}
       {note && <span className="note">{note}</span>}
       <span className="spacer" />
+      <button
+        type="button"
+        ref={chronicleBtnRef}
+        onClick={() => setChronicleOpen(true)}
+        aria-haspopup="dialog"
+        title={m.chronicle_button_title()}
+      >
+        {m.chronicle_button()}
+      </button>
+      {chronicleOpen && <ChronicleCard officeRef={officeRef} onClose={closeChronicle} />}
       {(notifyPerm === "default" || notifyPerm === "granted") && (
         <button
           className={`bell${bellOn ? " on" : ""}`}

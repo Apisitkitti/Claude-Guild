@@ -232,5 +232,248 @@
   "dungeon_enter": "Enter the dungeon",
   "dungeon_back": "Back to the guild",
   "dungeon_scene_raiders": "Dungeon — {count} raiding",
-  "dungeon_scene_empty": "Dungeon — empty… only sleeping monsters"
+  "dungeon_scene_empty": "Dungeon — empty… only sleeping monsters",
+  "chronicle_button": "📜 Chronicle",
+  "chronicle_button_title": "Open the guild chronicle: a recap of today and yesterday",
+  "chronicle_title": "📜 Guild chronicle",
+  "chronicle_close": "Close the chronicle",
+  "chronicle_tabs_label": "Choose a day",
+  "chronicle_tab_today": "Today",
+  "chronicle_tab_yesterday": "Yesterday",
+  "chronicle_copy": "📋 Copy as standup",
+  "chronicle_copied": "Copied ✓",
+  "chronicle_copy_failed": "Could not copy — select the text yourself",
+  "chronicle_empty": "The ledger is blank — no quests were recorded this day",
+  "chronicle_intro_today": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Today the guild took on {count} quest",
+        "countPlural=*": "Today the guild took on {count} quests"
+      }
+    }
+  ],
+  "chronicle_intro_yesterday": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Yesterday the guild took on {count} quest",
+        "countPlural=*": "Yesterday the guild took on {count} quests"
+      }
+    }
+  ],
+  "chronicle_s_projects": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "They ranged across {count} project: {names}",
+        "countPlural=*": "They ranged across {count} projects: {names}"
+      }
+    }
+  ],
+  "chronicle_s_orders": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "The party received {count} order",
+        "countPlural=*": "The party received {count} orders"
+      }
+    }
+  ],
+  "chronicle_s_calls": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "The party cast {count} spell, mostly {tool}",
+        "countPlural=*": "The party cast {count} spells, mostly {tool}"
+      }
+    }
+  ],
+  "chronicle_s_files": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} file was rewritten",
+        "countPlural=*": "{count} files were rewritten"
+      }
+    }
+  ],
+  "chronicle_s_commits": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} commit was sealed in the archives",
+        "countPlural=*": "{count} commits were sealed in the archives"
+      }
+    }
+  ],
+  "chronicle_s_tests": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} failing test was slain and now stands green",
+        "countPlural=*": "{count} failing tests were slain and now stand green"
+      }
+    }
+  ],
+  "chronicle_s_tasks": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} task was struck off the board",
+        "countPlural=*": "{count} tasks were struck off the board"
+      }
+    }
+  ],
+  "chronicle_s_loops": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} loop trapped an adventurer in a curse",
+        "countPlural=*": "{count} loops trapped adventurers in a curse"
+      }
+    }
+  ],
+  "chronicle_s_longest": "The longest session lasted {duration}",
+  "chronicle_s_busiest": "The busiest hour was {hour}",
+  "chronicle_s_monsters": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} monster was slain",
+        "countPlural=*": "{count} monsters were slain"
+      }
+    }
+  ],
+  "chronicle_s_bosses": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} boss fell",
+        "countPlural=*": "{count} bosses fell"
+      }
+    }
+  ],
+  "chronicle_s_raids": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} raid entered the dungeon",
+        "countPlural=*": "{count} raids entered the dungeon"
+      }
+    }
+  ],
+  "chronicle_s_levels": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} level was gained",
+        "countPlural=*": "{count} levels were gained"
+      }
+    }
+  ],
+  "chronicle_local_note": "Monsters, bosses, raids and levels count since this page opened (today only)",
+  "chronicle_f_sessions": "Sessions",
+  "chronicle_f_projects": "Projects",
+  "chronicle_f_prompts": "Prompts",
+  "chronicle_f_calls": "Tool calls",
+  "chronicle_f_files": "Files edited",
+  "chronicle_f_commits": "Commits",
+  "chronicle_f_tests": "Tests fixed",
+  "chronicle_f_tasks": "Tasks done",
+  "chronicle_f_loops": "Loops caught",
+  "chronicle_f_longest": "Longest session",
+  "chronicle_f_busiest": "Busiest hour",
+  "chronicle_f_monsters": "Monsters slain",
+  "chronicle_f_bosses": "Bosses defeated",
+  "chronicle_f_raids": "Dungeon raids",
+  "chronicle_f_levels": "Levels gained",
+  "chronicle_md_title": "Standup",
+  "chronicle_md_yesterday": "Yesterday",
+  "chronicle_md_today": "Today",
+  "chronicle_md_nothing": "Nothing recorded"
 }

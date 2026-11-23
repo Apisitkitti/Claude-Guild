@@ -1,3 +1,4 @@
+import { dayKey, type ChronicleDay, type ChronicleSnapshot } from "@/lib/chronicle";
 import { m } from "@/paraglide/messages";
 
 import type { AttentionMsgRow, Employee, HookEvt, Office, ReceiptMsgRow } from "./engine";
@@ -181,6 +182,57 @@ const toolInput = (tool: string, project: string, cwd: string): Record<string, u
   }
 };
 
+// ---- demo: a plausible daily chronicle (fictional projects) ----
+const DEMO_DAY_MS = 86_400_000;
+const DEMO_MIN_MS = 60_000;
+const DEMO_LONGEST_TODAY_MIN = 94;
+const DEMO_LONGEST_YESTERDAY_MIN = 52;
+const DEMO_TODAY: Omit<ChronicleDay, "date"> = {
+  sessions: 7,
+  projects: ["portfolio", "shop-api", "docs-site"],
+  prompts: 31,
+  toolCalls: 412,
+  tools: [
+    { tool: "Read", count: 118 },
+    { tool: "Edit", count: 87 },
+    { tool: "Bash", count: 74 },
+    { tool: "Grep", count: 52 },
+    { tool: "Write", count: 21 },
+  ],
+  files: 19,
+  recovered: 3,
+  commits: 5,
+  tasks: 8,
+  loops: 1,
+  longestSessionMs: DEMO_LONGEST_TODAY_MIN * DEMO_MIN_MS,
+  busiestHour: 14,
+};
+const DEMO_YESTERDAY: Omit<ChronicleDay, "date"> = {
+  sessions: 4,
+  projects: ["shop-api", "design-kit"],
+  prompts: 18,
+  toolCalls: 233,
+  tools: [
+    { tool: "Read", count: 80 },
+    { tool: "Edit", count: 61 },
+    { tool: "Bash", count: 40 },
+  ],
+  files: 11,
+  recovered: 2,
+  commits: 3,
+  tasks: 5,
+  loops: 0,
+  longestSessionMs: DEMO_LONGEST_YESTERDAY_MIN * DEMO_MIN_MS,
+  busiestHour: 11,
+};
+const demoChronicle = (): ChronicleSnapshot => {
+  const now = Date.now();
+  return {
+    today: { date: dayKey(now), ...DEMO_TODAY },
+    yesterday: { date: dayKey(now - DEMO_DAY_MS), ...DEMO_YESTERDAY },
+  };
+};
+
 type Gen = Generator<number, void, void>;
 
 export class Simulator {
@@ -197,6 +249,7 @@ export class Simulator {
     this.spawn(this.attentionSync());
     this.spawn(this.receipts());
     this.spawn(this.ally());
+    o.setChronicle(demoChronicle());
   }
 
   /** demo-only: now and then a calm adventurer calls a few squires out of the ally gate, or sends a calm one to the tavern for a beer (compact) */
