@@ -426,7 +426,7 @@ describe("xp and levels", () => {
     office.event(post(id, "Read"));
     expect(employee.lv).toBe(2);
     expect(employee.xp).toBe(1);
-    expect(office.flash).toBeGreaterThan(0);
+    expect(office.flash).toBe(0); // no full-screen flash: it was translucent over every character
     expect(employee.lvlTo).toBe(2);
   });
 

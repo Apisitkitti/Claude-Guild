@@ -3760,8 +3760,9 @@ export class Office {
   }
 
   // ---------- effects ----------
+  /** shake: take the strongest pending hit instead of summing, so many adventurers hitting at once don't pin it at max */
   addTrauma(amount: number) {
-    this.trauma = Math.min(1, this.trauma + amount);
+    this.trauma = Math.min(1, Math.max(this.trauma, amount));
   }
 
   private emitP(
@@ -5804,7 +5805,6 @@ export class Office {
           FX_LEVELUP_RING.life,
         ),
       );
-      if (!emp.inDungeon) this.flash = 0.3; // a raider's level-up happens out of sight: no full-screen flash
       if (gearTier(emp.lv) > tierBefore) this.tierUp(emp, gearTier(emp.lv));
     }
     this.touch(emp);
