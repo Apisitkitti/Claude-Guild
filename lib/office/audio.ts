@@ -20,7 +20,13 @@ export type SfxCue =
   | "lordSummon"
   | "lordEnrage"
   | "lordDeath"
-  | "limit";
+  | "limit"
+  | "tierUp"
+  | "skillCleave"
+  | "skillFire"
+  | "skillStab"
+  | "skillSmite"
+  | "skillVolley";
 
 export type AmbientKind = "tavern" | "dungeon" | null;
 
@@ -161,6 +167,58 @@ const CUES: Record<Exclude<SfxCue, "hit">, Tone[]> = {
   lordDeath: [
     { at: 0, freq: midi(48), dur: 1.4, wave: "sawtooth", gain: 0.5, slideTo: midi(30) },
     { at: 0.6, freq: midi(72), dur: 0.9, wave: "square", gain: 0.2, slideTo: midi(84) },
+  ],
+  tierUp: [
+    { at: 0, freq: midi(67), dur: 0.1, wave: "square", gain: 0.5 },
+    { at: 0.1, freq: midi(72), dur: 0.1, wave: "square", gain: 0.5 },
+    { at: 0.2, freq: midi(76), dur: 0.1, wave: "square", gain: 0.5 },
+    { at: 0.3, freq: midi(79), dur: 0.1, wave: "square", gain: 0.5 },
+    { at: 0.4, freq: midi(84), dur: 0.7, wave: "square", gain: 0.55 },
+    { at: 0.4, freq: midi(72), dur: 0.7, wave: "triangle", gain: 0.5 },
+    { at: 0.4, freq: midi(55), dur: 0.7, wave: "sawtooth", gain: 0.3 },
+    { at: 0.55, freq: midi(91), dur: 0.5, wave: "sine", gain: 0.35 },
+    { at: 0.75, freq: midi(96), dur: 0.35, wave: "triangle", gain: 0.3, slideTo: midi(103) },
+  ],
+  skillCleave: [
+    { at: 0, freq: midi(40), dur: 0.1, wave: "square", gain: 0.45 },
+    { at: 0, freq: midi(80), dur: 0.22, wave: "sawtooth", gain: 0.45, slideTo: midi(48) },
+    { at: 0.1, freq: midi(36), dur: 0.2, wave: "sawtooth", gain: 0.5, slideTo: midi(24) },
+    { at: 0.12, freq: midi(60), dur: 0.14, wave: "square", gain: 0.35, slideTo: midi(40) },
+    { at: 0.2, freq: midi(24), dur: 0.35, wave: "triangle", gain: 0.55, slideTo: midi(18) },
+  ],
+  skillFire: [
+    { at: 0, freq: midi(50), dur: 0.4, wave: "sawtooth", gain: 0.4, slideTo: midi(81) },
+    { at: 0, freq: midi(62), dur: 0.4, wave: "square", gain: 0.2, slideTo: midi(86) },
+    { at: 0.4, freq: midi(43), dur: 0.35, wave: "square", gain: 0.55, slideTo: midi(26) },
+    { at: 0.4, freq: midi(31), dur: 0.5, wave: "sawtooth", gain: 0.55, slideTo: midi(19) },
+    { at: 0.48, freq: midi(67), dur: 0.3, wave: "sawtooth", gain: 0.25, slideTo: midi(48) },
+    { at: 0.6, freq: midi(74), dur: 0.2, wave: "square", gain: 0.2, slideTo: midi(55) },
+  ],
+  skillStab: [
+    { at: 0, freq: midi(70), dur: 0.2, wave: "sawtooth", gain: 0.3, slideTo: midi(95) },
+    { at: 0.18, freq: midi(100), dur: 0.06, wave: "square", gain: 0.45, slideTo: midi(80) },
+    { at: 0.26, freq: midi(104), dur: 0.08, wave: "square", gain: 0.5, slideTo: midi(84) },
+    { at: 0.26, freq: midi(52), dur: 0.2, wave: "sawtooth", gain: 0.5, slideTo: midi(36) },
+    { at: 0.34, freq: midi(96), dur: 0.2, wave: "triangle", gain: 0.3, slideTo: midi(108) },
+  ],
+  skillSmite: [
+    { at: 0, freq: midi(72), dur: 0.14, wave: "triangle", gain: 0.6 },
+    { at: 0.08, freq: midi(79), dur: 0.14, wave: "triangle", gain: 0.6 },
+    { at: 0.16, freq: midi(84), dur: 0.14, wave: "triangle", gain: 0.6 },
+    { at: 0.12, freq: midi(36), dur: 0.5, wave: "sawtooth", gain: 0.45, slideTo: midi(24) },
+    { at: 0.24, freq: midi(91), dur: 0.55, wave: "sine", gain: 0.6 },
+    { at: 0.24, freq: midi(76), dur: 0.55, wave: "triangle", gain: 0.4 },
+    { at: 0.5, freq: midi(96), dur: 0.35, wave: "sine", gain: 0.3 },
+  ],
+  skillVolley: [
+    { at: 0, freq: midi(80), dur: 0.1, wave: "sawtooth", gain: 0.3, slideTo: midi(96) },
+    { at: 0.14, freq: midi(98), dur: 0.12, wave: "square", gain: 0.3, slideTo: midi(62) },
+    { at: 0.22, freq: midi(98), dur: 0.12, wave: "square", gain: 0.3, slideTo: midi(62) },
+    { at: 0.3, freq: midi(98), dur: 0.12, wave: "square", gain: 0.3, slideTo: midi(62) },
+    { at: 0.36, freq: midi(98), dur: 0.12, wave: "square", gain: 0.3, slideTo: midi(62) },
+    { at: 0.28, freq: midi(48), dur: 0.12, wave: "square", gain: 0.45, slideTo: midi(36) },
+    { at: 0.36, freq: midi(45), dur: 0.12, wave: "square", gain: 0.45, slideTo: midi(34) },
+    { at: 0.44, freq: midi(50), dur: 0.14, wave: "square", gain: 0.45, slideTo: midi(38) },
   ],
   door: [{ at: 0, freq: 180, dur: 0.35, wave: "sawtooth", gain: 0.3, slideTo: 110 }],
   enterDungeon: [

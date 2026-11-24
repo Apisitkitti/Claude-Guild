@@ -140,6 +140,11 @@
     }
   ],
   "card_clash_label": "Clash",
+  "tier_novice": "Novice",
+  "tier_adept": "Adept",
+  "tier_veteran": "Veteran",
+  "tier_elite": "Elite",
+  "tier_legend": "Legend",
   "card_limit_label": "😴 limit",
   "card_limit_title": "Out of stamina · resets {time}",
   "card_limit_title_unknown": "Out of stamina (usage limit)",
@@ -475,5 +480,6 @@
   "gm_report_reason_loop": "🔁 Stuck in a loop",
   "gm_report_reason_stuck": "⏳ Tool is hanging",
   "gm_report_reason_idle": "💤 Waiting for a prompt",
-  "gm_report_reason_compact": "📦 Compacting"
+  "gm_report_reason_compact": "📦 Compacting",
+  "card_doing_title": "Now: {doing}"
 }

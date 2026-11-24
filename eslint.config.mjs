@@ -85,6 +85,7 @@ const eslintConfig = defineConfig([
       "lib/office/gateAura.ts",
       "lib/office/dungeonLordSprite.ts",
       "lib/office/lordFx.ts",
+      "lib/office/tierAura.ts",
       "lib/office/petSprites.ts",
       "lib/office/patronSprites.ts",
       "lib/office/hallRender.ts",

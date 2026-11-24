@@ -5,6 +5,7 @@ import { aiInfo, isAiSource, type AiInfo, type AiSource } from "./aiLabel";
 import type { SfxCue } from "./audio";
 import { bossCenterX, BOSS_H, BOSS_W } from "./bossSprites";
 import { CRYPT_KINDS, type CryptKind } from "./cryptSprites";
+import { doingLine, type Doing } from "./doingText";
 import { ToolTally, type DungeonStats } from "./dungeon";
 import { LORD_H } from "./dungeonLordSprite";
 import {
@@ -14,6 +15,7 @@ import {
   dungeonSpotOf,
   dungeonStairsPoint,
 } from "./dungeonScene";
+import { GEAR_TIER_LEVELS, gearTier } from "./gearTier";
 import type { GmIconId } from "./gmIcons";
 import { HallLife } from "./hallLife";
 import {
@@ -96,7 +98,15 @@ import {
   type DungeonLord,
 } from "./lordFight";
 import { MON_H, MON_W } from "./monsterSprites";
-import { BOSS_KINDS, lookFor, MONSTER_KINDS, type BossKind, type Look, type MonsterKind } from "./palette";
+import {
+  BOSS_KINDS,
+  lookFor,
+  MONSTER_KINDS,
+  type AdvClass,
+  type BossKind,
+  type Look,
+  type MonsterKind,
+} from "./palette";
 import { BoardNotes, sanitizeQuests, type QuestMsgRow } from "./questNotes";
 import { drawScene } from "./render";
 
@@ -165,6 +175,122 @@ const GOLD_ROLL_MAX = 3;
 const KILL_XP = 5;
 const BOSS_XP = 25;
 const CRIT_CHANCE = 0.1;
+
+// -- level tiers (gearTier.ts): crit chance, flat damage and the class skill every few hits
+const CRIT_PER_TIER = 0.03;
+/** flat bonus damage = floor(tier / this): T2 +1, T4 +2 */
+const BONUS_TIER_DIV = 2;
+const SKILL_MIN_TIER = 1;
+/** a hit is the class skill every N hits: 6 at the low tiers, 4 from the elite tier up */
+const SKILL_EVERY_LOW = 6;
+const SKILL_EVERY_HIGH = 4;
+const SKILL_HIGH_FROM_TIER = 3;
+const LEGEND_TIER = 4;
+const SKILL_DAMAGE_MULT = 2;
+const SMITE_BONUS = 1;
+const VOLLEY_ARROWS = 3;
+const SMITE_HEAL = 1;
+/** seconds each skill effect lives (its popup name floats the whole time) */
+const SKILL_FX_S = 1;
+const SKILL_FX_S_LEGEND = 1.25;
+/** impact: the caster and target freeze this long (not under reduced motion) */
+const SKILL_HITSTOP_S = 0.08;
+const TRAUMA_SKILL = 0.3;
+const TRAUMA_SKILL_LEGEND = 0.45;
+const SKILL_FX_MAX = 16;
+/** a cleave knocks a field monster back this many times longer than a normal hit */
+const CLEAVE_KNOCK_MULT = 3;
+const SKILL_BURST = { n: 10, speed: 70, gravity: 80, life: 0.45 };
+const SKILL_BURST_LEGEND_N = 18;
+const TIER_RING_N = 36;
+const TIER_RING_SPEED = 80;
+const TIER_RING_LIFE = 1;
+const DEMO_LV_NOVICE = 3;
+const DEMO_LV_ADEPT = 7;
+const DEMO_LV_VETERAN = 12;
+const DEMO_LV_ELITE = 17;
+const DEMO_LV_LEGEND = 22;
+/** demo adventurers cycle through these levels so every tier's gear and skills show up */
+const DEMO_LEVELS: readonly number[] = [DEMO_LV_NOVICE, DEMO_LV_ADEPT, DEMO_LV_VETERAN, DEMO_LV_ELITE, DEMO_LV_LEGEND];
+
+export type SkillKind = "cleave" | "fireball" | "backstab" | "smite" | "volley";
+/** the class skill each adventurer class unlocks at the adept tier */
+export const CLASS_SKILL: Record<AdvClass, SkillKind> = {
+  warrior: "cleave",
+  mage: "fireball",
+  rogue: "backstab",
+  cleric: "smite",
+  ranger: "volley",
+};
+const SKILL_SFX: Record<SkillKind, SfxCue> = {
+  cleave: "skillCleave",
+  fireball: "skillFire",
+  backstab: "skillStab",
+  smite: "skillSmite",
+  volley: "skillVolley",
+};
+const SKILL_NAME: Record<SkillKind, string> = {
+  cleave: "CLEAVE!",
+  fireball: "FIREBALL!",
+  backstab: "BACKSTAB!",
+  smite: "SMITE!",
+  volley: "VOLLEY!",
+};
+/** banner / overhead text when an adventurer crosses into a tier (index = tier; novice never fires) */
+const TIER_UP_TEXT: readonly string[] = ["", "ADEPT!", "VETERAN!", "ELITE!", "LEGEND!"];
+/** what the guild master says when he walks over to congratulate a tier-up (by class) */
+const TIER_PRAISE_TEXT: Record<AdvClass, string> = {
+  warrior: "WELL FOUGHT",
+  mage: "WELL CAST",
+  rogue: "SMOOTH WORK",
+  cleric: "BLESSED",
+  ranger: "TRUE AIM",
+};
+
+export interface TierStats {
+  /** crit chance per hit */
+  crit: number;
+  /** flat damage added to every hit (before the crit doubles it) */
+  bonus: number;
+  /** every Nth hit is the class skill (0 = no skill yet) */
+  every: number;
+}
+/** combat stats per gear tier (0 novice .. 4 legend): tier 0 is exactly the old 10% crit, +0 damage, no skill */
+export const TIER_STATS: readonly TierStats[] = GEAR_TIER_LEVELS.map((_, tier) => ({
+  crit: CRIT_CHANCE + CRIT_PER_TIER * tier,
+  bonus: Math.floor(tier / BONUS_TIER_DIV),
+  every: tier < SKILL_MIN_TIER ? 0 : tier >= SKILL_HIGH_FROM_TIER ? SKILL_EVERY_HIGH : SKILL_EVERY_LOW,
+}));
+export const tierStats = (level: number): TierStats => TIER_STATS[gearTier(level)];
+
+/** one class-skill or tier-up visual (opaque pixels, drawn by lordFx.drawSkillFx); the damage is already applied */
+export interface SkillFx {
+  kind: SkillKind;
+  /** pixel-font text floating over the caster */
+  text: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  born: number;
+  dur: number;
+  /** legend tier: the bigger, gold variant */
+  gold: boolean;
+  /** cleric healed a heart */
+  heal: boolean;
+  /** id of the adventurer who cast it (one name plate at a time per adventurer) */
+  owner: string;
+  /** a newer skill of the same owner took over the name plate: this one draws no text any more */
+  noText: boolean;
+  /** dungeon floor the effect lives on (0 = the field) */
+  dungeon: number;
+}
+/** the result of one hit roll */
+export interface HitRoll {
+  dmg: number;
+  crit: boolean;
+  skill: SkillKind | null;
+}
 const COIN_FLIP = 0.5;
 
 // -- duel script (seconds unless noted)
@@ -477,6 +603,8 @@ const GM_EVENING_HOUR = 18;
 const GM_QUIET_S = 300;
 const GM_PRAISE_FRESH_S = 60;
 const GM_PRAISE_MAX = 4;
+/** tier-up praise rides in front of the receipt praise, so the whole queue may hold twice as many */
+const GM_PRAISE_CAP = GM_PRAISE_MAX * 2;
 /** dispatcher: he talks to a raid-ready adventurer this long; the raid never waits longer than DISPATCH_MAX_S for him */
 const GM_DISPATCH_TALK_S = 1.5;
 const GM_DISPATCH_MAX_S = 9;
@@ -1131,10 +1259,18 @@ export interface Employee {
   windupUntil: number;
   hsUntil: number;
   hsAt: number;
+  /** clock time of the last tier-up (-99 = never); the rise / pillar / gear-pop animation reads it */
+  tierUpAt: number;
   lungeUntil: number;
   flashUntil: number;
   monLungeUntil: number;
   monKnockUntil: number;
+  /** a cleave knocks the field monster back further until then */
+  monFarKnockUntil: number;
+  /** hits landed since the last class skill */
+  skillHits: number;
+  /** rogue backstab dash started at (clock; -99 = never) */
+  dashAt: number;
   redUntil: number;
   slashUntil: number;
   lvlAt: number;
@@ -1152,6 +1288,8 @@ export interface Employee {
   known: boolean;
   /** name of the last tool this session started (for the guild master's report) */
   lastTool: string;
+  /** main agent's current/last tool (squire tools never land here); null once the turn ends */
+  doing: Doing | null;
   /** PreCompact seen: the next context reading is the post-compact one (mana bar flashes when it lands) */
   compactPending: boolean;
   /** seated overflow adventurer that has arrived inside the dungeon (hidden on the field, drawn in the dungeon scene) */
@@ -1229,6 +1367,13 @@ export interface GmReportRow {
 }
 /** Office.hit() returns this when the pointer is over the guild master on the guild scene */
 export const GM_HIT_ID = "__guild_master__";
+/** one planned trip of the guild master (`text` = what he says on a praise visit, "" = just the thumbs-up) */
+interface GmPlan {
+  mission: GmMission;
+  emp: Employee | null;
+  reason: GmReason | null;
+  text?: string;
+}
 export type GmMission = "none" | "visit" | "praise" | "gate" | "door" | "announce" | "dispatch" | "escort";
 /** the guild master: stands at his post, walks out to an adventurer (the Lookout Bell's first), talks, walks back */
 export interface GuildMaster {
@@ -1293,7 +1438,7 @@ export interface Popup {
   dungeon: number;
 }
 export interface Banner {
-  kind: "quest" | "boss";
+  kind: "quest" | "boss" | "tier";
   text: string;
   /** drawn in the bitmap font (when it can draw the text) */
   pixel?: boolean;
@@ -1480,6 +1625,8 @@ export interface RosterRow {
   ai: AiInfo;
   /** plan usage limit the session is stuck behind (null = none) */
   rateLimit: RateLimitInfo | null;
+  /** "now doing" line of the main agent ("Edit engine.ts"), null when idle or the turn is over */
+  doing: string | null;
 }
 export interface OfficeView {
   roster: RosterRow[];
@@ -1786,7 +1933,9 @@ export class Office {
   private readonly gmSeen = new Map<string, number>();
   private readonly gmCool = new Map<string, number>();
   private gmDispatch: { sid: string; deadline: number } | null = null;
-  private gmPraise: { sid: string; at: number }[] = [];
+  private gmPraise: { sid: string; at: number; text?: string }[] = [];
+  /** what his bubble says during the current praise visit */
+  private gmSayText = "";
   private gmDay = dayKey(new Date());
   private gmActiveDay = false;
   private gmEveningDay = "";
@@ -1865,6 +2014,8 @@ export class Office {
   /** while > 0, emitted particles / popups are tagged as effects of that dungeon floor (set by raider effect helpers) */
   private fxDungeon = 0;
   popups: Popup[] = [];
+  /** class-skill and tier-up visuals (capped; render draws them with the popups) */
+  skillFx: SkillFx[] = [];
   banners: Banner[] = [];
   trauma = 0;
   /** full-screen flash request (render draws one frame and clears it) */
@@ -2369,6 +2520,7 @@ export class Office {
     this.editFailAt.clear();
     for (const particle of this.particles) particle.on = false;
     this.popups = [];
+    this.skillFx = [];
     this.banners = [];
     this.trauma = 0;
     this.flash = 0;
@@ -3258,7 +3410,7 @@ export class Office {
         continue;
       }
       const cf = this.ctxFrac(emp.id);
-      sig += `;${emp.id}${cf === null ? "" : "c" + Math.round(cf * PERCENT) + (this.ctxMap.get(emp.id)!.guessed ? "g" : "")},${this.statusOf(emp)},${emp.interns.size},${emp.deskIdx},${emp.lv}:${emp.xp}:${emp.gold}:${emp.kills}:${emp.hearts},${emp.source}:${emp.model ?? ""}:${emp.rateLimit ? emp.rateLimit.since : 0}`;
+      sig += `;${emp.id}${cf === null ? "" : "c" + Math.round(cf * PERCENT) + (this.ctxMap.get(emp.id)!.guessed ? "g" : "")},${this.statusOf(emp)},${emp.interns.size},${emp.deskIdx},${emp.lv}:${emp.xp}:${emp.gold}:${emp.kills}:${emp.hearts},${emp.source}:${emp.model ?? ""}:${emp.rateLimit ? emp.rateLimit.since : 0}|${this.doingText(emp) ?? ""}`;
       for (const intern of emp.interns.values())
         sig += `,${intern.id}:${intern.label}:${intern.act}:${intern.detail ?? ""}:${intern.count}:${intern.failed ? 1 : 0}`;
     }
@@ -3335,6 +3487,7 @@ export class Office {
           hpMax: MAX_HEARTS,
           ai: aiInfo(emp.source, emp.model),
           rateLimit: emp.rateLimit,
+          doing: this.doingText(emp),
         };
       });
     return {
@@ -3444,6 +3597,26 @@ export class Office {
       default:
         return false;
     }
+  }
+
+  /** formatted "now doing" line, null while on a break / leaving, after the turn ended or when it went stale */
+  doingText(emp: Employee): string | null {
+    if (emp.state === "LEAVING" || emp.state === "ENTERING" || this.onBreak(emp)) return null;
+    return doingLine(emp.doing, this.clock, emp.pending.size > 0);
+  }
+
+  /** remember the main agent's tool (PreToolUse, or the tool a PermissionRequest asks for) */
+  private noteDoing(emp: Employee, evt: HookEvt) {
+    const tool = str(evt.tool_name);
+    if (!tool) return;
+    // a permission request keeps the detail of the tool call it belongs to (the quest log row shows no detail for it)
+    const detail =
+      evt.hook_event_name === "PermissionRequest"
+        ? emp.doing?.tool === tool
+          ? emp.doing.detail
+          : ""
+        : toolDetail(evt);
+    emp.doing = { tool, detail, at: this.clock };
   }
 
   statusOf(emp: Employee): string {
@@ -3710,6 +3883,8 @@ export class Office {
     }
     for (let i = this.popups.length - 1; i >= 0; i--)
       if (this.clock - this.popups[i].born > this.popups[i].dur) this.popups.splice(i, 1);
+    for (let i = this.skillFx.length - 1; i >= 0; i--)
+      if (this.clock - this.skillFx[i].born > this.skillFx[i].dur) this.skillFx.splice(i, 1);
   }
 
   private updateAmbient(dt: number) {
@@ -4058,6 +4233,8 @@ export class Office {
     this.sendSquiresHome(emp);
     emp.duel = null;
     emp.coffeeAfter = false; // updateDuels() sends the opponent home
+    emp.doing = null;
+    this.resetSkillState(emp);
     const path: Pt[] = routeLeave(emp.x, emp.y);
     emp.state = "LEAVING";
     emp.returning = false;
@@ -4283,6 +4460,7 @@ export class Office {
     emp.floor = 1; // every raid starts on B1 and a promotion starts the next one from scratch
     emp.floorKills = 0;
     emp.stairsAt = -1;
+    this.resetSkillState(emp);
     if (inside) {
       this.chronLocal.raids++;
       this.newRaidFoe(emp);
@@ -4342,6 +4520,14 @@ export class Office {
     return out;
   }
 
+  /** average gear tier of the raiders standing on B3 (the Lord's pool takes it once, when the fight starts) */
+  private lordTierAvg(): number {
+    const fighters = this.lordFighters();
+    let total = 0;
+    for (const fighter of fighters) total += gearTier(fighter.lv);
+    return fighters.length ? total / fighters.length : 0;
+  }
+
   /** the Lord's fight runs while raiders stand on B3, he rises again after his rest, and a fall plays out its sequence */
   private updateDungeon() {
     const lord = this.lord;
@@ -4359,7 +4545,7 @@ export class Office {
       stopAttacks(lord);
     }
     if (fighting) {
-      if (growPool(lord, fighting)) this.bumpStats();
+      if (growPool(lord, fighting, this.lordTierAvg())) this.bumpStats();
       this.updateLordFight();
     }
     const pip = this.lordPip();
@@ -4620,7 +4806,7 @@ export class Office {
     let standing = 0;
     for (const other of this.employees.values())
       if (other.inDungeon && other.floor >= DUNGEON_FLOORS && other.stairsAt < 0) standing++;
-    if (growPool(lord, standing)) this.bumpStats();
+    if (growPool(lord, standing, this.lordTierAvg())) this.bumpStats();
     lord.hp = Math.max(0, lord.hp - dmg / lord.maxHp);
     if (lord.hp < LORD_HP_EPSILON) lord.hp = 0; // float residue of many small hits
     lord.hitAt = this.clock;
@@ -4790,18 +4976,33 @@ export class Office {
   /** a tool finished inside the dungeon: the same damage rules as a field monster, scaled to the foe's hp */
   private raidHit(emp: Employee, tool: string) {
     if (emp.stairsAt >= 0) return; // on the stairs: no fighting
-    let dmg = HEAVY_TOOLS.has(tool) ? 2 : 1;
-    const crit = Math.random() < CRIT_CHANCE;
-    if (crit) dmg *= 2;
     emp.lungeUntil = this.clock + LUNGE_S;
     emp.hsUntil = this.clock + HITSTOP_S;
     emp.hsAt = this.clock;
     if (emp.floor >= DUNGEON_FLOORS) {
-      this.lordHit(emp, dmg, crit);
+      if (this.lord.hp <= 0) return;
+      const lordRoll = this.rollHit(emp, tool);
+      this.lordHit(emp, lordRoll.dmg, lordRoll.crit);
+      const body = dungeonLordPoint();
+      if (lordRoll.skill) {
+        this.castSkill(emp, lordRoll.skill, this.raiderPoint(emp), {
+          x: body.x - LORD_HIT_SPARK_DX,
+          y: body.y - LORD_H / 2,
+        });
+        if (!this.reducedMotion) {
+          this.lord.hsAt = this.clock; // the Lord freezes with the caster for the impact
+          this.lord.hsUntil = Math.max(this.lord.hsUntil, this.clock + SKILL_HITSTOP_S);
+        }
+      }
       return;
     }
     const foe = emp.raid;
     if (!foe || foe.hp <= 0) return;
+    const { dmg, skill } = this.rollHit(emp, tool);
+    if (skill) {
+      const target = dungeonMonsterPoint(dungeonSpotOf(this.raidSpotIndex(emp), emp.floor));
+      this.castSkill(emp, skill, this.raiderPoint(emp), { x: target.x, y: target.y - MON_HIT_LIFT });
+    }
     foe.hp = Math.max(
       0,
       foe.hp - dmg / (foe.crypt ? CRYPT_HP[CRYPT_KINDS[foe.kind]] : MON_HP[MONSTER_KINDS[foe.kind]]),
@@ -4925,11 +5126,15 @@ export class Office {
       windupUntil: 0,
       hsUntil: 0,
       hsAt: 0,
+      tierUpAt: -99,
       lungeUntil: 0,
       dodgeAt: -99,
       flashUntil: 0,
       monLungeUntil: 0,
       monKnockUntil: 0,
+      monFarKnockUntil: 0,
+      skillHits: 0,
+      dashAt: -99,
       redUntil: 0,
       slashUntil: 0,
       lvlAt: -99,
@@ -4942,6 +5147,7 @@ export class Office {
       known: false,
       compactPending: false,
       lastTool: "",
+      doing: null,
       inDungeon: false,
       raidIn: false,
       raidSlot: -1,
@@ -4966,6 +5172,7 @@ export class Office {
       this.applySessionMeta(emp, early);
     }
     const sv = this.demo ? undefined : this.progress[id];
+    if (this.demo) emp.lv = DEMO_LEVELS[this.stats.entered % DEMO_LEVELS.length]; // demo only: show every tier's gear and skills
     if (sv) {
       emp.lv = sv.lv;
       emp.xp = sv.xp;
@@ -5166,6 +5373,7 @@ export class Office {
 
     // a hand going up is shown at once, even mid-walk (tavern or ally gate): the walk turns back, the rest queues as before
     if (this.isHandupEvt(evt) && this.cutTrip(emp)) {
+      if (name === "PermissionRequest") this.noteDoing(emp, evt);
       this.setAct(emp, "handup", "❗");
       return;
     }
@@ -5277,6 +5485,7 @@ export class Office {
         const tool = str(evt.tool_name);
         this.tools.add(tool);
         emp.lastTool = tool.slice(0, GM_REPORT_DETAIL_MAX);
+        this.noteDoing(emp, evt);
         this.bumpStats();
         if (!AGENT_TOOLS.has(tool) && !USER_WAIT_TOOLS.has(tool)) {
           const id = str(evt.tool_use_id) || `#${this.pendSeq++}`;
@@ -5315,6 +5524,7 @@ export class Office {
         this.onFail(emp);
         break;
       case "PermissionRequest":
+        this.noteDoing(emp, evt);
         this.setAct(emp, "handup", "❗");
         break;
       case "PreCompact":
@@ -5332,6 +5542,7 @@ export class Office {
       }
       case "Stop":
       case "StopFailure":
+        emp.doing = null;
         emp.hasPaper = false;
         this.setAct(emp, "thinking");
         this.clearPending(emp);
@@ -5391,6 +5602,110 @@ export class Office {
   }
 
   // ---------- combat / progression ----------
+  /** one landed hit: tier crit chance, flat damage, and (every Nth hit from the adept tier) the class skill's damage */
+  private rollHit(emp: Employee, tool: string): HitRoll {
+    const stats = tierStats(emp.lv);
+    let crit = Math.random() < stats.crit;
+    let dmg = (HEAVY_TOOLS.has(tool) ? 2 : 1) + stats.bonus;
+    if (crit) dmg *= 2;
+    let skill: SkillKind | null = null;
+    if (stats.every > 0 && ++emp.skillHits >= stats.every) {
+      emp.skillHits = 0;
+      skill = CLASS_SKILL[emp.look.cls];
+      if (skill === "cleave" || skill === "fireball") dmg *= SKILL_DAMAGE_MULT;
+      else if (skill === "backstab") {
+        if (!crit) dmg *= 2; // a guaranteed crit
+        crit = true;
+        dmg += 1;
+      } else if (skill === "smite") dmg += SMITE_BONUS;
+      else dmg += VOLLEY_ARROWS; // volley: three arrows, +1 each
+    }
+    return { dmg, crit, skill };
+  }
+
+  /** the skill's look (opaque pixels, drawn by lordFx.drawSkillFx), sound and side effects; the damage was rolled already */
+  private castSkill(emp: Employee, skill: SkillKind, from: Pt, to: Pt) {
+    const gold = gearTier(emp.lv) >= LEGEND_TIER;
+    let heal = false;
+    if (skill === "smite" && emp.hearts > 0 && emp.hearts < MAX_HEARTS) {
+      emp.hearts = Math.min(MAX_HEARTS, emp.hearts + SMITE_HEAL);
+      heal = true;
+    }
+    this.pushSkillFx({
+      kind: skill,
+      text: SKILL_NAME[skill],
+      x0: from.x,
+      y0: from.y,
+      x1: to.x,
+      y1: to.y,
+      born: this.clock,
+      dur: gold ? SKILL_FX_S_LEGEND : SKILL_FX_S,
+      gold,
+      heal,
+      owner: emp.id,
+      noText: false,
+      dungeon: emp.inDungeon ? emp.floor : 0,
+    });
+    this.sfx(SKILL_SFX[skill]);
+    if (this.reducedMotion) return;
+    emp.hsUntil = Math.max(emp.hsUntil, this.clock + SKILL_HITSTOP_S);
+    emp.hsAt = this.clock;
+    if (!emp.inDungeon && !this.isHidden(emp) && this.scene === "guild")
+      this.addTrauma(gold ? TRAUMA_SKILL_LEGEND : TRAUMA_SKILL);
+    if (skill === "backstab") emp.dashAt = this.clock;
+    if (skill === "cleave" && !emp.inDungeon) emp.monFarKnockUntil = this.clock + MON_KNOCK_S * CLEAVE_KNOCK_MULT;
+    if (skill === "cleave" || skill === "smite" || skill === "backstab")
+      this.fxFor(emp, () =>
+        this.burst(
+          to.x,
+          to.y,
+          gold ? SKILL_BURST_LEGEND_N : SKILL_BURST.n,
+          gold ? ["#ffffff", "#ffe14a", "#f2c14e"] : ["#ffffff", "#ffd070", "#ffb870"],
+          SKILL_BURST.speed,
+          SKILL_BURST.gravity,
+          SKILL_BURST.life,
+        ),
+      );
+  }
+
+  /** skill hit counter and skill-only animation state start fresh with every raid and when leaving */
+  private resetSkillState(emp: Employee) {
+    emp.skillHits = 0;
+    emp.dashAt = -99;
+    emp.monFarKnockUntil = 0;
+  }
+
+  private pushSkillFx(fx: SkillFx) {
+    for (const old of this.skillFx) if (old.owner === fx.owner) old.noText = true; // one name plate at a time
+    this.skillFx.push(fx);
+    if (this.skillFx.length > SKILL_FX_MAX) this.skillFx.splice(0, this.skillFx.length - SKILL_FX_MAX);
+  }
+
+  /** crossing into adept / veteran / elite / legend: a bigger celebration than a plain level-up */
+  private tierUp(emp: Employee, tier: number) {
+    const text = TIER_UP_TEXT[tier];
+    const at = emp.inDungeon ? this.raiderPoint(emp) : emp;
+    this.addBanner("tier", `LV.${emp.lv} ${text}`, true);
+    this.sfx("tierUp");
+    emp.tierUpAt = this.clock;
+    // the guild master walks over to congratulate (first in line; he skips it while he is on an urgent report)
+    if (!emp.inDungeon && !emp.raidIn) {
+      this.gmPraise.unshift({ sid: emp.id, at: this.clock, text: TIER_PRAISE_TEXT[emp.look.cls] });
+      if (this.gmPraise.length > GM_PRAISE_CAP) this.gmPraise.length = GM_PRAISE_CAP;
+    }
+    if (!this.reducedMotion)
+      this.fxFor(emp, () =>
+        this.ring(
+          at.x,
+          at.y - FX_LEVELUP_RING.lift,
+          TIER_RING_N,
+          ["#ffe14a", "#ffffff", "#f2c14e"],
+          TIER_RING_SPEED,
+          TIER_RING_LIFE,
+        ),
+      );
+  }
+
   private onHit(emp: Employee, tool: string) {
     const clock = this.clock;
     if (emp.boss) {
@@ -5401,9 +5716,7 @@ export class Office {
     const xp = 1 + Math.floor(Math.random() * XP_ROLL_MAX);
     if (emp.inDungeon) this.raidHit(emp, tool);
     if (mp && emp.deskIdx >= 0 && !emp.raidIn && !emp.monDead && clock - emp.monAppearAt > MON_HITTABLE_AFTER_S) {
-      const crit = Math.random() < CRIT_CHANCE;
-      let dmg = HEAVY_TOOLS.has(tool) ? 2 : 1;
-      if (crit) dmg *= 2;
+      const { dmg, crit, skill } = this.rollHit(emp, tool);
       emp.monHp -= dmg;
       this.sfx("hit");
       emp.flashUntil = clock + FLASH_S;
@@ -5430,6 +5743,7 @@ export class Office {
         crit ? HIT_SPARK_SPEED_CRIT : HIT_SPARK_SPEED,
       );
       if (crit) this.addTrauma(TRAUMA_CRIT);
+      if (skill) this.castSkill(emp, skill, emp, { x: hx, y: hy });
       if (emp.monHp <= 0) this.killMonster(emp);
     }
     this.gainXp(emp, xp);
@@ -5467,6 +5781,7 @@ export class Office {
 
   private gainXp(emp: Employee, amount: number) {
     emp.xp += amount;
+    const tierBefore = gearTier(emp.lv);
     let up = false;
     while (emp.xp >= xpNeed(emp.lv)) {
       emp.xp -= xpNeed(emp.lv);
@@ -5490,6 +5805,7 @@ export class Office {
         ),
       );
       if (!emp.inDungeon) this.flash = 0.3; // a raider's level-up happens out of sight: no full-screen flash
+      if (gearTier(emp.lv) > tierBefore) this.tierUp(emp, gearTier(emp.lv));
     }
     this.touch(emp);
   }
@@ -5687,6 +6003,7 @@ export class Office {
   private onCompact(emp: Employee, canWalk: boolean) {
     const walk = canWalk && !this.reducedMotion && this.compactReady(emp);
     emp.compactPending = true;
+    emp.doing = null;
     this.setAct(emp, "thinking");
     if (!walk) {
       emp.tempBubble = { e: "🍺", until: this.clock + COMPACT_BUBBLE_S };
@@ -6100,11 +6417,11 @@ export class Office {
     this.gmAnnouncePending = true;
     this.gmAnnounceAt = this.clock;
   }
-  private gmPlanVisit(emp: Employee, mission: GmMission, reason: GmReason | null) {
-    return { mission, emp, reason };
+  private gmPlanVisit(emp: Employee, mission: GmMission, reason: GmReason | null, text = ""): GmPlan {
+    return { mission, emp, reason, text };
   }
   /** what he does next, or null to stay home */
-  private gmPlan(): { mission: GmMission; emp: Employee | null; reason: GmReason | null } | null {
+  private gmPlan(): GmPlan | null {
     const master = this.guildMaster;
     if (this.gmBellDue) return { mission: "door", emp: null, reason: "permission" };
     for (const row of this.gmRows) {
@@ -6122,30 +6439,31 @@ export class Office {
     }
     if (this.clock < master.until) return null;
     if (this.gmAnnouncePending) return { mission: "announce", emp: null, reason: null };
-    while (this.gmPraise.length) {
-      const praise = this.gmPraise[0];
+    for (let idx = 0; idx < this.gmPraise.length;) {
+      const praise = this.gmPraise[idx];
       const emp = this.employees.get(praise.sid);
       if (!emp || this.clock - praise.at > GM_PRAISE_FRESH_S) {
-        this.gmPraise.shift();
+        this.gmPraise.splice(idx, 1);
         continue;
       }
       if (this.canVisit(emp)) {
-        this.gmPraise.shift();
-        return this.gmPlanVisit(emp, "praise", null);
+        this.gmPraise.splice(idx, 1);
+        return this.gmPlanVisit(emp, "praise", null, praise.text ?? "");
       }
-      break;
+      idx++; // not visitable right now (away, busy, hidden): it waits, the others go first
     }
     const calm: Employee[] = [];
     for (const emp of this.employees.values()) if (this.canVisit(emp)) calm.push(emp);
     if (!calm.length) return null;
     return this.gmPlanVisit(calm[Math.floor(Math.random() * calm.length)], "visit", null);
   }
-  private gmStart(plan: { mission: GmMission; emp: Employee | null; reason: GmReason | null }) {
+  private gmStart(plan: GmPlan) {
     const master = this.guildMaster;
     master.mission = plan.mission;
     master.reason = plan.reason;
     master.icon = null;
     master.text = "";
+    this.gmSayText = plan.text ?? "";
     master.phase = "out";
     master.alert = plan.reason !== null && GM_RANK[plan.reason] <= GM_LAST_URGENT;
     master.targetId = plan.emp ? plan.emp.id : "";
@@ -6329,6 +6647,7 @@ export class Office {
       master.face = mission === "door" || mission === "gate" ? -1 : 1;
       master.icon = this.gmIconOf(master.reason, mission);
       if (mission === "announce") master.text = GM_ANNOUNCE_TEXT;
+      else if (mission === "praise") master.text = this.gmSayText;
       master.until =
         this.clock + (mission === "announce" ? GM_ANNOUNCE_S : mission === "dispatch" ? GM_DISPATCH_TALK_S : GM_TALK_S);
       if (mission === "door") this.gmRing(true);

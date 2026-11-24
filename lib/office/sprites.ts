@@ -1,3 +1,4 @@
+import type { GearTier } from "./gearTier";
 import { ADV_CLASSES, INTERN_LOOK, SPRITE_COLORS, fnv1a, type AdvClass, type Look } from "./palette";
 
 const cache = new Map<string, HTMLCanvasElement>();
@@ -791,7 +792,7 @@ const drawHead = (grid: Grid, palette: Pal, cls: AdvClass, expr: Expr, mouth: Mo
 
 type Dir = "up" | "fwd";
 
-const drawWeapon = (
+const drawBaseWeapon = (
   grid: Grid,
   palette: Pal,
   cls: AdvClass,
@@ -923,7 +924,7 @@ const drawWeapon = (
 };
 
 /** What the left hand carries: the warrior's heater shield, the cleric's holy book. */
-const drawOffhand = (grid: Grid, palette: Pal, cls: AdvClass) => {
+const drawBaseOffhand = (grid: Grid, palette: Pal, cls: AdvClass) => {
   grid.dx = 0;
   grid.dy = 0;
   if (cls === "warrior") {
@@ -963,16 +964,593 @@ const drawOffhand = (grid: Grid, palette: Pal, cls: AdvClass) => {
   }
 };
 
-const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => {
+// ---------------------------------------------------------------- level gear (tiers 1-4, tier 0 = the plain look)
+// Everything below is opaque pixels only. Tier 1 adds a cloak and a small detail, tier 2 better weapon/armour with
+// metal trim, tier 3 a longer patterned cloak with gold and a gem, tier 4 a gold headpiece and sparkle pixels.
+const CAPE_COLOR: Record<AdvClass, string> = {
+  warrior: "#a8323c",
+  mage: "#4b3f9e",
+  rogue: "#3a2f4f",
+  cleric: "#b9a8e6",
+  ranger: "#2f6b3a",
+};
+/** the last row of the cloak per tier (rogue and ranger already wear one, theirs just grows longer) */
+const CAPE_END = [0, 19, 19, 21, 22];
+const CAPE_END_HOODED = [0, 21, 21, 22, 22];
+const CAPE_TOP = 11;
+
+/** the cloak hangs behind the body on the back (left) side; drawn first so body, arms and legs cover its middle */
+const drawCape = (grid: Grid, palette: Pal, cls: AdvClass, tier: GearTier, opt: BodyOpt) => {
+  if (tier < 1) return;
+  grid.dx = 0;
+  grid.dy = 0;
+  const hooded = cls === "rogue" || cls === "ranger";
+  const base = hooded ? palette.main : tier >= 4 ? lighten(CAPE_COLOR[cls], 0.2) : CAPE_COLOR[cls];
+  const hi = lighten(base, 0.3);
+  const sh = darken(base, 0.3);
+  const end = Math.min(hooded ? CAPE_END_HOODED[tier] : CAPE_END[tier], opt.seated ? 17 : 22);
+  const sway = swayOf(opt.wf);
+  const start = hooded ? (cls === "rogue" ? 21 : 20) : CAPE_TOP;
+  for (let y = start; y <= end; y++) {
+    const shift = y >= 18 ? sway : 0;
+    const left = (y < 15 ? 3 : isRobe(cls) && y >= 16 ? 1 : 2) + shift;
+    const right = 4 + shift;
+    for (let x = left; x <= right; x++) {
+      let color = x === left ? sh : x === right ? hi : base;
+      if (tier >= 3 && y % 2 === 0 && x === left + 1 && y < end) color = tier >= 4 ? GOLD : GOLD_SH;
+      if (y === end && tier >= 2) color = tier >= 4 ? GOLD_HI : tier >= 3 ? GOLD : GOLD_SH;
+      grid.set(x, y, color);
+    }
+  }
+  if (tier >= 3 && !opt.seated) grid.set(3 + sway, Math.min(end, 22) - 1, tier >= 4 ? GEM : GOLD);
+};
+
+/** a dithered pair of sparkle pixels (opaque, never alpha) */
+const sparkle = (grid: Grid, x: number, y: number) => {
+  grid.set(x, y, WHITE);
+  grid.set(x + 1, y - 1, GOLD_HI);
+};
+
+const gearWarriorBody = (grid: Grid, tier: GearTier) => {
+  if (tier >= 1) {
+    grid.set(5, 17, GOLD_SH);
+    grid.set(10, 17, GOLD_SH);
+    grid.set(5, 18, GOLD_SH);
+  }
+  if (tier >= 2) {
+    // steel pauldrons grow outwards, gold-rimmed breastplate
+    grid.rect(2, 11, 2, 13, STEEL);
+    grid.set(2, 11, STEEL_HI);
+    grid.set(2, 13, STEEL_SH);
+    grid.set(3, 13, STEEL_SH);
+    grid.rect(13, 11, 13, 12, STEEL);
+    grid.set(13, 12, STEEL_SH);
+    grid.set(12, 13, STEEL_SH);
+    grid.set(5, 11, GOLD);
+    grid.set(10, 11, GOLD);
+    grid.row(16, 5, 10, GOLD_SH);
+  }
+  if (tier >= 3) {
+    grid.set(7, 12, GOLD);
+    grid.set(8, 12, GEM);
+    grid.set(9, 12, GOLD);
+    grid.set(2, 12, GOLD);
+    grid.set(13, 11, GOLD);
+    grid.row(17, 6, 9, GOLD_SH);
+    grid.set(8, 17, GOLD_HI);
+  }
+  if (tier >= 4) {
+    grid.row(16, 5, 10, GOLD);
+    grid.row(11, 2, 5, GOLD_HI);
+    grid.set(8, 12, GEM_HI);
+    grid.set(4, 12, GOLD_HI);
+    grid.set(5, 18, GOLD);
+    grid.set(10, 18, GOLD);
+  }
+};
+
+const gearMageBody = (grid: Grid, palette: Pal, tier: GearTier, opt: BodyOpt) => {
+  const sway = swayOf(opt.wf);
+  if (tier >= 1) grid.set(8, 16, GEM);
+  if (tier >= 2) {
+    // gold-capped mantle over the shoulders
+    grid.set(4, 11, GOLD);
+    grid.set(4, 12, palette.mHi);
+    grid.set(11, 11, GOLD);
+    grid.set(11, 12, palette.mSh);
+    grid.set(6, 15, GOLD_HI);
+    grid.set(9, 13, GOLD_HI);
+  }
+  if (tier >= 3) {
+    grid.set(8, 12, GEM);
+    grid.row(11, 5, 10, GOLD_SH);
+    if (!opt.seated) {
+      grid.set(5, 19, GOLD);
+      grid.set(10, 18, GOLD);
+      grid.set(8, 20, GOLD_HI);
+      grid.set(6, 18, GOLD_SH);
+    }
+  }
+  if (tier >= 4) {
+    grid.row(11, 5, 10, GOLD);
+    grid.set(4, 11, GOLD_HI);
+    grid.set(11, 11, GOLD_HI);
+    if (!opt.seated) grid.row(21, 3 + sway, 12 + sway, GOLD_HI);
+    grid.set(8, 16, GEM_HI);
+  }
+};
+
+const gearRogueBody = (grid: Grid, tier: GearTier) => {
+  if (tier >= 1) {
+    // gold clasp and chain on the cloak (shows seated too)
+    grid.set(5, 11, GOLD_SH);
+    grid.set(5, 12, GOLD_SH);
+    grid.set(4, 13, GOLD_SH);
+    grid.set(6, 17, GOLD_SH);
+    grid.set(9, 17, GOLD_SH);
+  }
+  if (tier >= 2) {
+    // a second bandolier crosses the first
+    for (let i = 0; i <= 5; i++) grid.set(9 - Math.floor((i * 4) / 6), 11 + i, LEATHER);
+    grid.set(8, 13, GOLD_SH);
+    grid.set(5, 11, GOLD);
+  }
+  if (tier >= 3) {
+    grid.set(7, 12, GOLD);
+    grid.set(8, 15, GOLD);
+    grid.set(6, 16, GOLD_SH);
+    grid.set(9, 16, GOLD_SH);
+    grid.set(8, 14, GEM);
+  }
+  if (tier >= 4) {
+    grid.row(17, 6, 9, GOLD_SH);
+    grid.set(7, 17, GOLD_HI);
+    grid.set(8, 14, GEM_HI);
+  }
+};
+
+const gearClericBody = (grid: Grid, tier: GearTier, opt: BodyOpt) => {
+  const sway = swayOf(opt.wf);
+  if (tier >= 1) {
+    grid.set(6, 11, GOLD);
+    grid.set(9, 11, GOLD);
+  }
+  if (tier >= 2) {
+    // a big holy symbol on the chest and gold shoulder caps
+    grid.set(8, 14, GEM);
+    grid.set(7, 14, GOLD_HI);
+    grid.set(9, 14, GOLD_HI);
+    grid.set(8, 13, GOLD_HI);
+    grid.set(8, 15, GOLD_HI);
+    grid.set(4, 11, GOLD_HI);
+    grid.set(11, 11, GOLD_HI);
+    grid.set(4, 12, GOLD);
+    grid.set(11, 12, GOLD);
+  }
+  if (tier >= 3) {
+    for (let x = 5; x <= 10; x += 2) grid.set(x, 11, GOLD);
+    grid.row(17, 5, 10, GOLD);
+    if (!opt.seated) grid.row(21, 4 + sway, 11 + sway, GOLD);
+    grid.set(8, 14, GEM_HI);
+  }
+  if (tier >= 4) {
+    grid.rect(8, 13, 8, 16, GOLD_HI);
+    grid.row(14, 7, 9, GOLD_HI);
+    grid.set(8, 14, GEM_HI);
+    grid.set(5, 12, GOLD_HI);
+  }
+};
+
+const gearRangerBody = (grid: Grid, tier: GearTier) => {
+  if (tier >= 1) {
+    grid.set(5, 11, GOLD_SH);
+    grid.set(5, 12, GOLD_SH);
+    grid.set(4, 13, GOLD_SH);
+    grid.set(5, 17, GOLD_SH);
+    grid.set(8, 17, GOLD_SH);
+  }
+  if (tier >= 2) {
+    // leather shoulder guard and a gold-studded quiver
+    grid.rect(11, 11, 12, 11, LEATHER);
+    grid.set(12, 11, WOOD_HI);
+    grid.set(11, 12, WOOD_HI);
+    grid.set(2, 10, GOLD_SH);
+    grid.set(2, 13, GOLD_SH);
+  }
+  if (tier >= 3) {
+    for (let i = 0; i <= 4; i += 2) grid.set(6 + i, 12 + i, GOLD_SH);
+    grid.set(2, 5, GOLD_HI);
+    grid.set(2, 6, GOLD_HI);
+    grid.set(3, 6, GOLD);
+    grid.set(1, 7, GOLD_HI);
+    grid.set(8, 13, GEM);
+  }
+  if (tier >= 4) {
+    grid.set(4, 11, GOLD);
+    grid.set(5, 11, GOLD_HI);
+    grid.set(10, 11, GOLD);
+    grid.set(8, 13, GEM_HI);
+    grid.row(17, 5, 8, GOLD_SH);
+  }
+};
+
+const drawBodyGear = (grid: Grid, palette: Pal, cls: AdvClass, tier: GearTier, opt: BodyOpt) => {
+  if (tier < 1) return;
+  grid.dx = 0;
+  grid.dy = 0;
+  switch (cls) {
+    case "warrior":
+      return gearWarriorBody(grid, tier);
+    case "mage":
+      return gearMageBody(grid, palette, tier, opt);
+    case "rogue":
+      return gearRogueBody(grid, tier);
+    case "cleric":
+      return gearClericBody(grid, tier, opt);
+    case "ranger":
+      return gearRangerBody(grid, tier);
+  }
+};
+
+const gearWarriorHead = (grid: Grid, tier: GearTier) => {
+  if (tier >= 1) grid.set(4, 5, GOLD_SH);
+  if (tier >= 2) {
+    grid.row(3, 6, 9, STEEL_HI);
+    grid.row(6, 4, 7, GOLD_SH);
+    grid.set(4, 6, GOLD);
+  }
+  if (tier >= 3) {
+    grid.set(8, 5, GEM);
+    grid.set(6, 1, GOLD);
+    grid.set(9, 1, GOLD);
+    grid.row(6, 4, 7, GOLD);
+  }
+  if (tier >= 4) {
+    // a golden crown around the helm
+    grid.row(4, 4, 11, GOLD);
+    grid.row(4, 4, 6, GOLD_HI);
+    for (const x of [5, 7, 9]) grid.set(x, 3, GOLD_HI);
+    grid.set(8, 4, GEM_HI);
+  }
+};
+
+const gearMageHead = (grid: Grid, palette: Pal, tier: GearTier) => {
+  if (tier >= 1) grid.set(8, 3, GEM);
+  if (tier >= 2) {
+    // gem-set hat band and gold brim edges
+    grid.row(3, 5, 10, GOLD_HI);
+    grid.set(8, 3, GEM);
+    grid.set(7, 3, GOLD_SH);
+    grid.set(2, 4, GOLD_SH);
+    grid.set(12, 4, GOLD_SH);
+  }
+  if (tier >= 3) {
+    grid.set(6, 3, GEM_HI);
+    grid.set(9, 3, GEM);
+    grid.set(2, 4, GOLD);
+    grid.set(12, 4, GOLD);
+    grid.set(9, 1, GOLD);
+  }
+  if (tier >= 4) {
+    // a golden pointed crown-hat
+    grid.row(1, 7, 9, GOLD);
+    grid.set(8, 1, GOLD_HI);
+    grid.row(2, 6, 9, GOLD_SH);
+    grid.row(2, 6, 7, palette.main);
+    grid.set(9, 2, GOLD);
+    grid.set(5, 3, GEM);
+    grid.set(11, 4, GOLD_HI);
+    grid.set(3, 4, GOLD_HI);
+  }
+};
+
+const gearRogueHead = (grid: Grid, tier: GearTier) => {
+  if (tier >= 2) grid.set(8, 2, GOLD_SH);
+  if (tier >= 3) {
+    grid.set(8, 2, GOLD);
+    grid.set(5, 3, GOLD_SH);
+    grid.set(10, 3, GOLD_SH);
+  }
+  if (tier >= 4) {
+    // a gold circlet over the hood
+    grid.row(4, 4, 11, GOLD);
+    grid.set(8, 4, GEM);
+    grid.set(4, 4, GOLD_HI);
+  }
+};
+
+const gearClericHead = (grid: Grid, palette: Pal, tier: GearTier) => {
+  const mitre = palette.style !== 2;
+  if (tier >= 1) grid.set(7, mitre ? 4 : 5, GOLD_HI);
+  if (tier >= 2) {
+    if (mitre) {
+      grid.set(6, 4, GEM);
+      grid.set(10, 4, GEM);
+    } else {
+      grid.row(1, 5, 10, GOLD_HI);
+    }
+  }
+  if (tier >= 3) {
+    if (mitre) {
+      grid.set(5, 1, GOLD);
+      grid.set(6, 1, GOLD);
+      grid.set(9, 1, GOLD);
+      grid.set(10, 1, GOLD_HI);
+    } else {
+      grid.set(6, 5, GEM);
+      grid.set(10, 5, GEM_HI);
+    }
+  }
+  if (tier >= 4) {
+    if (mitre) {
+      grid.row(2, 5, 10, GOLD_HI);
+      grid.row(3, 4, 11, GOLD);
+      grid.set(8, 3, GEM_HI);
+    } else {
+      grid.set(4, 1, GOLD);
+      grid.set(11, 1, GOLD);
+      grid.set(4, 2, GOLD_SH);
+      grid.set(11, 2, GOLD_SH);
+    }
+  }
+};
+
+const gearRangerHead = (grid: Grid, tier: GearTier) => {
+  if (tier >= 2) {
+    grid.set(4, 1, GOLD_SH);
+    grid.set(5, 1, GOLD_SH);
+  }
+  if (tier >= 3) {
+    grid.set(11, 3, GOLD);
+    grid.set(12, 3, GOLD_HI);
+    grid.set(12, 2, GOLD);
+    grid.set(13, 2, GOLD_HI);
+  }
+  if (tier >= 4) {
+    // a gold circlet on the hood brim
+    grid.row(4, 4, 11, GOLD);
+    grid.set(8, 4, GEM);
+    grid.set(4, 4, GOLD_HI);
+  }
+};
+
+const drawHeadGear = (grid: Grid, palette: Pal, cls: AdvClass, tier: GearTier) => {
+  if (tier < 1) return;
+  switch (cls) {
+    case "warrior":
+      return gearWarriorHead(grid, tier);
+    case "mage":
+      return gearMageHead(grid, palette, tier);
+    case "rogue":
+      return gearRogueHead(grid, tier);
+    case "cleric":
+      return gearClericHead(grid, palette, tier);
+    case "ranger":
+      return gearRangerHead(grid, tier);
+  }
+};
+
+/** upgrades drawn over the plain weapon; never touches the hand cell (hx, hy) */
+const gearWeaponUp = (grid: Grid, cls: AdvClass, tier: GearTier, hx: number, hy: number, len: number) => {
+  const ax = hx + 1;
+  switch (cls) {
+    case "warrior":
+      if (tier >= 2) {
+        grid.row(hy - 1, hx - 1, hx + 3, GOLD);
+        grid.set(ax, hy - 8, STEEL_HI);
+        grid.set(ax + 1, hy - 8, STEEL_SH);
+        grid.set(ax, hy - 9, WHITE);
+        grid.set(ax, hy + 1, GOLD);
+      }
+      if (tier >= 3) {
+        grid.set(ax, hy - 1, GEM);
+        grid.set(hx - 1, hy - 1, GOLD_HI);
+        grid.set(hx + 3, hy - 1, GOLD_HI);
+      }
+      if (tier >= 4) {
+        sparkle(grid, ax - 1, hy - 6);
+        sparkle(grid, ax + 1, hy - 9);
+      }
+      break;
+    case "mage":
+      if (tier >= 2) {
+        grid.set(ax - 1, hy - len - 1, GOLD);
+        grid.set(ax + 2, hy - len - 1, GOLD);
+        grid.set(ax, hy - len, GOLD);
+        grid.set(ax + 1, hy - len, GOLD_SH);
+      }
+      if (tier >= 3) {
+        for (let y = hy - len + 2; y <= hy + 5; y += 4) grid.set(ax, y, GOLD_SH);
+        grid.set(ax - 1, hy - len - 2, GEM);
+        grid.set(ax + 2, hy - len - 2, GEM);
+      }
+      if (tier >= 4) {
+        sparkle(grid, ax - 2, hy - len - 2);
+        sparkle(grid, ax + 2, hy - len + 1);
+      }
+      break;
+    case "rogue":
+      if (tier >= 2) {
+        for (let y = hy - 7; y <= hy - 5; y++) {
+          grid.set(ax, y, STEEL_HI);
+          grid.set(ax + 1, y, STEEL_SH);
+        }
+        grid.set(ax, hy - 8, WHITE);
+        grid.set(hx, hy - 1, GOLD_SH);
+        grid.set(hx + 2, hy - 1, GOLD_SH);
+      }
+      if (tier >= 3) {
+        grid.set(ax, hy, GEM);
+        grid.set(ax, hy - 1, GOLD);
+      }
+      if (tier >= 4) {
+        sparkle(grid, ax - 1, hy - 6);
+        sparkle(grid, ax + 1, hy - 8);
+      }
+      break;
+    case "cleric":
+      if (tier >= 2) {
+        // the staff's cross becomes a studded mace head
+        grid.rect(ax - 1, hy - 9, ax + 1, hy - 7, GOLD);
+        grid.set(ax - 1, hy - 9, GOLD_HI);
+        grid.set(ax + 1, hy - 9, GOLD_SH);
+        grid.set(ax - 1, hy - 7, GOLD_SH);
+        grid.set(ax + 1, hy - 7, GOLD_SH);
+        grid.set(ax, hy - 8, GOLD_SH);
+        grid.set(ax, hy - 10, GOLD_HI);
+      }
+      if (tier >= 3) {
+        grid.set(ax, hy - 8, GEM);
+        grid.set(ax, hy - 6, GOLD);
+      }
+      if (tier >= 4) {
+        grid.set(ax, hy - 8, GEM_HI);
+        sparkle(grid, ax - 2, hy - 8);
+        sparkle(grid, ax + 1, hy - 10);
+      }
+      break;
+    case "ranger":
+      if (tier >= 2) {
+        grid.set(ax - 1, hy - 9, WOOD_SH);
+        grid.set(ax - 1, hy + 6, WOOD_SH);
+        grid.set(ax, hy - 8, WOOD_SH);
+        grid.set(ax, hy + 5, WOOD_SH);
+        grid.set(ax + 1, hy + 5, WOOD_HI);
+      }
+      if (tier >= 3) {
+        grid.set(ax - 1, hy - 9, GOLD);
+        grid.set(ax - 1, hy + 6, GOLD);
+        grid.set(ax + 1, hy - 1, GOLD_SH);
+      }
+      if (tier >= 4) {
+        grid.set(ax + 1, hy + 1, GEM);
+        sparkle(grid, ax - 2, hy - 7);
+      }
+      break;
+  }
+};
+
+const gearWeaponFwd = (grid: Grid, cls: AdvClass, tier: GearTier, hx: number, hy: number) => {
+  switch (cls) {
+    case "warrior":
+      if (tier >= 2) {
+        grid.row(hy, hx + 2, hx + 4, STEEL_HI);
+        grid.row(hy + 1, hx + 2, hx + 4, STEEL_SH);
+        grid.set(hx + 4, hy, WHITE);
+        grid.set(hx + 1, hy - 2, GOLD);
+        grid.set(hx + 1, hy + 3, GOLD);
+      }
+      if (tier >= 3) grid.set(hx + 1, hy + 1, GEM);
+      if (tier >= 4) {
+        sparkle(grid, hx + 3, hy - 2);
+        sparkle(grid, hx + 4, hy + 3);
+      }
+      break;
+    case "mage":
+      if (tier >= 2) {
+        grid.set(hx + 1, hy - 1, GOLD);
+        grid.set(hx + 2, hy + 1, GOLD);
+        grid.set(hx + 4, hy, GEM);
+      }
+      if (tier >= 3) grid.set(hx + 3, hy + 1, GOLD_SH);
+      if (tier >= 4) sparkle(grid, hx + 3, hy - 2);
+      break;
+    case "rogue":
+      if (tier >= 2) {
+        grid.row(hy, hx + 2, hx + 4, STEEL_HI);
+        grid.row(hy + 1, hx + 2, hx + 3, STEEL_SH);
+        grid.set(hx + 4, hy, WHITE);
+      }
+      if (tier >= 3) grid.set(hx + 1, hy, GEM);
+      if (tier >= 4) sparkle(grid, hx + 3, hy - 2);
+      break;
+    case "cleric":
+      if (tier >= 2) {
+        grid.rect(hx + 2, hy - 1, hx + 4, hy + 1, GOLD);
+        grid.set(hx + 2, hy - 1, GOLD_HI);
+        grid.set(hx + 3, hy, GOLD_SH);
+        grid.set(hx + 4, hy + 1, GOLD_SH);
+      }
+      if (tier >= 3) grid.set(hx + 3, hy, GEM);
+      if (tier >= 4) {
+        grid.set(hx + 3, hy, GEM_HI);
+        sparkle(grid, hx + 3, hy - 3);
+      }
+      break;
+    case "ranger":
+      // a longer bow: one extra stave pixel at each end, gold tips from tier 3
+      if (tier >= 2) {
+        grid.set(hx + 3, hy - 4, WOOD_HI);
+        grid.set(hx + 3, hy + 4, WOOD_HI);
+      }
+      if (tier >= 3) {
+        grid.set(hx + 3, hy - 4, GOLD);
+        grid.set(hx + 3, hy + 4, GOLD);
+      }
+      if (tier >= 4) sparkle(grid, hx + 2, hy - 5);
+      break;
+  }
+};
+
+const drawWeapon = (
+  grid: Grid,
+  palette: Pal,
+  cls: AdvClass,
+  tier: GearTier,
+  hx: number,
+  hy: number,
+  dir: Dir,
+  opt: { pulled?: boolean; glow?: boolean; len?: number } = {},
+) => {
+  drawBaseWeapon(grid, palette, cls, hx, hy, dir, opt);
+  if (tier < 1) return;
+  if (dir === "up") gearWeaponUp(grid, cls, tier, hx, hy, opt.len ?? 8);
+  else gearWeaponFwd(grid, cls, tier, hx, hy);
+};
+
+const drawOffhand = (grid: Grid, palette: Pal, cls: AdvClass, tier: GearTier) => {
+  drawBaseOffhand(grid, palette, cls);
+  if (tier < 2) return;
+  if (cls === "warrior") {
+    // a gold cross-bar on the shield; rim and boss turn gold with the tier
+    grid.rect(3, 13, 3, 16, GOLD);
+    if (tier >= 3) {
+      grid.rect(1, 13, 1, 16, GOLD_SH);
+      grid.row(12, 2, 5, GOLD_SH);
+    }
+    if (tier >= 4) {
+      grid.rect(1, 13, 1, 16, GOLD);
+      grid.row(12, 2, 5, GOLD_HI);
+      grid.set(3, 14, GEM);
+    }
+  } else if (cls === "cleric") {
+    grid.set(1, 14, GOLD);
+    grid.set(1, 17, GOLD);
+    if (tier >= 3) grid.set(2, 15, GEM);
+    if (tier >= 4) sparkle(grid, 0, 14);
+  } else if (cls === "rogue") {
+    // twin daggers: a second blade in the off hand
+    grid.rect(3, 12, 3, 14, STEEL_HI);
+    grid.set(3, 11, WHITE);
+    grid.set(3, 15, GOLD_SH);
+    grid.set(2, 15, WOOD_SH);
+    if (tier >= 3) grid.set(3, 16, GEM);
+    if (tier >= 4) sparkle(grid, 1, 11);
+  }
+};
+
+const buildChar = (look: Look, pose: Pose, frame: number, tier: GearTier): HTMLCanvasElement => {
   const cls: AdvClass = (ADV_CLASSES as string[]).includes(look.cls) ? look.cls : "warrior";
   const palette = mkPal(look, cls);
   const frameIdx = normFrame(frame, pose === "walk" ? 4 : 2);
-  if (pose === "rest") return buildRest(palette, cls, frameIdx);
+  if (pose === "rest") return buildRest(palette, cls, frameIdx, tier);
   const grid = new Grid(16, 24);
   const walkFrame = pose === "walk" ? frameIdx : -1;
 
+  drawCape(grid, palette, cls, tier, { wf: walkFrame, seated: false });
   drawLegs(grid, palette, walkFrame, cls);
   drawBody(grid, palette, cls, { wf: walkFrame, seated: false });
+  drawBodyGear(grid, palette, cls, tier, { wf: walkFrame, seated: false });
 
   let expr: Expr = "normal",
     mouth: MouthT = "smile",
@@ -987,8 +1565,8 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
       draw = () => {
         arm(grid, palette, 4, 12, 4, 15);
         arm(grid, palette, 11, 12, 12, 15);
-        drawWeapon(grid, palette, cls, 12, 15, "up");
-        drawOffhand(grid, palette, cls);
+        drawWeapon(grid, palette, cls, tier, 12, 15, "up");
+        drawOffhand(grid, palette, cls, tier);
       };
       break;
     case "walk": {
@@ -998,8 +1576,8 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
       draw = () => {
         arm(grid, palette, 4, 12, 4, ly);
         arm(grid, palette, 11, 12, 12, ry);
-        drawWeapon(grid, palette, cls, 12, ry, "up");
-        drawOffhand(grid, palette, cls);
+        drawWeapon(grid, palette, cls, tier, 12, ry, "up");
+        drawOffhand(grid, palette, cls, tier);
       };
       break;
     }
@@ -1010,12 +1588,12 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
           arm(grid, palette, 4, 12, 4, 15);
           if (cls === "ranger") {
             arm(grid, palette, 11, 12, 11, 13);
-            drawWeapon(grid, palette, cls, 11, 13, "fwd", { pulled: true });
+            drawWeapon(grid, palette, cls, tier, 11, 13, "fwd", { pulled: true });
           } else {
             arm(grid, palette, 11, 12, 12, 10);
-            drawWeapon(grid, palette, cls, 12, 10, "up");
+            drawWeapon(grid, palette, cls, tier, 12, 10, "up");
           }
-          drawOffhand(grid, palette, cls);
+          drawOffhand(grid, palette, cls, tier);
         };
       } else {
         mouth = "open";
@@ -1024,12 +1602,12 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
           arm(grid, palette, 4, 12, 4, 15);
           if (cls === "ranger") {
             arm(grid, palette, 11, 12, 11, 13);
-            drawWeapon(grid, palette, cls, 11, 13, "fwd");
+            drawWeapon(grid, palette, cls, tier, 11, 13, "fwd");
           } else {
             arm(grid, palette, 11, 12, 11, 14);
-            drawWeapon(grid, palette, cls, 11, 14, "fwd", { glow: true });
+            drawWeapon(grid, palette, cls, tier, 11, 14, "fwd", { glow: true });
           }
-          drawOffhand(grid, palette, cls);
+          drawOffhand(grid, palette, cls, tier);
         };
       }
       break;
@@ -1040,7 +1618,7 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
       draw = () => {
         arm(grid, palette, 4, 12, 3, frameIdx === 0 ? 10 : 9);
         arm(grid, palette, 11, 12, 12, ry);
-        drawWeapon(grid, palette, cls, 12, ry, "up", { glow: frameIdx === 1, len: 7 });
+        drawWeapon(grid, palette, cls, tier, 12, ry, "up", { glow: frameIdx === 1, len: 7 });
         if (frameIdx === 1) {
           grid.set(1, 8, GEM);
           grid.set(2, 7, GEM_HI);
@@ -1100,7 +1678,7 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
       draw = () => {
         arm(grid, palette, 4, 12, 2, 13 + frameIdx);
         arm(grid, palette, 11, 12, 13, 13 + frameIdx);
-        drawOffhand(grid, palette, cls);
+        drawOffhand(grid, palette, cls, tier);
         grid.set(13, 5, GEM_HI);
         grid.set(14, 6, GEM);
       };
@@ -1144,6 +1722,7 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
   grid.dx = hdx;
   grid.dy = hdy;
   drawHead(grid, palette, cls, expr, mouth);
+  drawHeadGear(grid, palette, cls, tier);
   grid.dx = 0;
   grid.dy = 0;
   draw();
@@ -1154,12 +1733,14 @@ const buildChar = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => 
 };
 
 /** Sitting cross-legged on the ground; frame 1 = eyes closed + slow breath. */
-const buildRest = (palette: Pal, cls: AdvClass, frame: number): HTMLCanvasElement => {
+const buildRest = (palette: Pal, cls: AdvClass, frame: number, tier: GearTier): HTMLCanvasElement => {
   const grid = new Grid(16, 24);
   const robe = isRobe(cls);
   // standing torso drawn in a scratch grid, then dropped 3 rows (legs are replaced by a crossed sit)
   const scratch = new Grid(16, 24);
+  drawCape(scratch, palette, cls, tier, { wf: -1, seated: true });
   drawBody(scratch, palette, cls, { wf: -1, seated: true });
+  drawBodyGear(scratch, palette, cls, tier, { wf: -1, seated: true });
   const SH = 3;
   for (let y = 0; y < 24 - SH; y++) {
     for (let x = 0; x < 16; x++) {
@@ -1194,18 +1775,19 @@ const buildRest = (palette: Pal, cls: AdvClass, frame: number): HTMLCanvasElemen
   arm(grid, palette, 11, 12, 12, 17);
   grid.dy = SH + frame;
   drawHead(grid, palette, cls, frame === 1 ? "blink" : "normal", "smile");
+  drawHeadGear(grid, palette, cls, tier);
   grid.dx = 0;
   grid.dy = 0;
   grid.outline();
   return grid.toCanvas();
 };
 
-export const charSprite = (look: Look, pose: Pose, frame: number): HTMLCanvasElement => {
+export const charSprite = (look: Look, pose: Pose, frame: number, tier: GearTier = 0): HTMLCanvasElement => {
   const frameCount = pose === "walk" ? 4 : 2;
-  const key = `c|${look.cls}|${look.hair}|${look.shirt}|${look.skin}|${pose}|${normFrame(frame, frameCount)}`;
+  const key = `c|${look.cls}|${look.hair}|${look.shirt}|${look.skin}|${pose}|${normFrame(frame, frameCount)}|t${tier}`;
   let sprite = cache.get(key);
   if (!sprite) {
-    sprite = buildChar(look, pose, frame);
+    sprite = buildChar(look, pose, frame, tier);
     cache.set(key, sprite);
   }
   return sprite;

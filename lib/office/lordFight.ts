@@ -11,8 +11,17 @@ export const LORD_HP_BASE = 60;
 /** extra damage points for every further raider who has stood on floor 3 this fight */
 export const LORD_HP_PER_EXTRA = 30;
 /** hp pool for `raiders` raiders on floor 3 this fight */
-export const lordMaxHp = (raiders: number): number =>
-  LORD_HP_BASE + LORD_HP_PER_EXTRA * (Math.max(1, Math.floor(raiders)) - 1);
+/**
+ * Higher-level raiders hit much harder (tier crit, flat damage, class skills: roughly 2.5x the damage per hit at the
+ * legend tier), so the pool grows by this fraction per average gear tier of the raiders. A lone novice is unchanged.
+ */
+export const LORD_HP_PER_TIER = 0.4;
+/** the average tier is compared in steps of 1/this, so a tiny drift never regrows the pool */
+export const TIER_STEPS = 4;
+export const lordMaxHp = (raiders: number, avgTier = 0): number =>
+  Math.round(
+    (LORD_HP_BASE + LORD_HP_PER_EXTRA * (Math.max(1, Math.floor(raiders)) - 1)) * (1 + LORD_HP_PER_TIER * avgTier),
+  );
 
 // ---- enrage ------------------------------------------------------------------------------------------------------
 /** below this fraction of hp the Lord is enraged */
@@ -202,6 +211,8 @@ export interface DungeonLord {
   maxHp: number;
   /** most raiders on floor 3 at once this fight */
   peak: number;
+  /** highest average raider gear tier (in 1/TIER_STEPS) seen this fight */
+  peakTier: number;
   /** clock time its intro started (-99 = none yet this fight) and which taunt it shouts */
   introAt: number;
   taunt: number;
@@ -240,6 +251,7 @@ export const freshLord = (): DungeonLord => ({
   nextStrikeAt: 0,
   maxHp: LORD_HP_BASE,
   peak: 0,
+  peakTier: 0,
   introAt: -99,
   taunt: 0,
   intros: 0,
@@ -272,6 +284,7 @@ export const freshLord = (): DungeonLord => ({
 export const resetFight = (lord: DungeonLord) => {
   lord.maxHp = LORD_HP_BASE;
   lord.peak = 0;
+  lord.peakTier = 0;
   lord.introAt = -99;
   lord.enragedAt = -1;
   lord.finaleAt = -1;
@@ -292,13 +305,16 @@ export const stopAttacks = (lord: DungeonLord) => {
   for (const meteor of lord.meteors) meteor.on = false;
 };
 
-/** the hp pool grows when more raiders stand on floor 3: the damage already dealt stays, so the bar rises a little */
+/** the hp pool grows when more raiders stand on floor 3: the damage already dealt stays, so the bar rises a little. `avgTier` counts only for the first raiders of a fight */
 /** a hit pool that grew never leaves the Lord at exactly 0 hp */
 const MIN_HP_LEFT = 1e-6;
-export const growPool = (lord: DungeonLord, raiders: number): boolean => {
+export const growPool = (lord: DungeonLord, raiders: number, avgTier = 0): boolean => {
   if (raiders <= lord.peak) return false;
+  // the tier factor is locked when the fight starts: raiders levelling up mid-fight never grow the pool (that would
+  // heal him); later arrivals only grow it by raider count
+  if (lord.peak === 0) lord.peakTier = Math.round(avgTier * TIER_STEPS);
   lord.peak = raiders;
-  const next = lordMaxHp(raiders);
+  const next = lordMaxHp(lord.peak, lord.peakTier / TIER_STEPS);
   if (next !== lord.maxHp) {
     const dealt = (1 - lord.hp) * lord.maxHp;
     lord.hp = lord.hp > 0 ? Math.max(MIN_HP_LEFT, 1 - dealt / next) : 0;

@@ -1,5 +1,6 @@
 import { AI_ACCENT_INK, aiAccent, aiLabel } from "@/lib/office/aiLabel";
 import type { RosterAct, RosterRow } from "@/lib/office/engine";
+import { gearTier, gearTierName } from "@/lib/office/gearTier";
 import { classLabel } from "@/lib/office/palette";
 import { m } from "@/paraglide/messages";
 
@@ -26,6 +27,20 @@ const ACT_CHIP: Record<RosterAct, { cls: string; label: () => string }> = {
   enter: { cls: "c-grey", label: () => m.act_enter() },
   leave: { cls: "c-grey", label: () => m.act_leave() },
 };
+
+/** tiny tool glyph in front of the "now doing" line, matching the activity chip */
+const DOING_GLYPH: Partial<Record<RosterAct, string>> = {
+  typing: "✨",
+  reading: "📜",
+  bash: "⚔️",
+  phone: "🦉",
+  mcp: "🌀",
+  sticky: "📝",
+  handup: "❗",
+};
+
+const TIER_LABEL = [m.tier_novice, m.tier_adept, m.tier_veteran, m.tier_elite, m.tier_legend];
+const tierLabel = (level: number) => TIER_LABEL[gearTier(level)]();
 
 export const RosterCard = ({
   row,
@@ -64,7 +79,7 @@ export const RosterCard = ({
         aria-label={`${row.tag} ${row.project}: ${row.status} (${row.ai.label})`}
         title={`${row.status} · ${aiTitle}`}
       >
-        <Avatar look={row.look} />
+        <Avatar look={row.look} level={isNum(rpg.level) ? rpg.level : 1} />
         <span className="who">
           <b>
             {row.tag}
@@ -81,9 +96,21 @@ export const RosterCard = ({
                 {m.card_limit_label()}
               </span>
             ) : null}
-            {isNum(rpg.level) ? <span className="lv">Lv.{rpg.level}</span> : null}
+            {isNum(rpg.level) ? (
+              <span className={`lv tier-${gearTierName(rpg.level)}`} title={tierLabel(rpg.level)}>
+                Lv.{rpg.level}
+              </span>
+            ) : null}
           </b>
           <span className="proj">{row.project}</span>
+          {row.doing ? (
+            <span className="doing" title={m.card_doing_title({ doing: row.doing })}>
+              <span className="doing-glyph" aria-hidden="true">
+                {DOING_GLYPH[row.act] ?? ""}
+              </span>
+              {row.doing}
+            </span>
+          ) : null}
         </span>
         <span className={`chip ${chip.cls}`} title={chip.label()}>
           {chip.label()}

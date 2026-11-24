@@ -162,7 +162,7 @@ describe("demo mode (attachSim)", () => {
     expect(office.treasury).toBe(0);
     seat(office, id);
     const employee = emp(office, id);
-    expect(employee.lv).toBe(1); // saved progress ignored in demo
+    expect(employee.lv).toBe(3); // saved progress (Lv7) ignored in demo; demo adventurers get seeded levels (3, 7, 12, ...)
     earn(office, id);
     employee.xp = 9999;
     tick(office, 10);

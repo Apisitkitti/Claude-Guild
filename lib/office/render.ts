@@ -43,6 +43,7 @@ import {
   type Office,
 } from "./engine";
 import { drawGateAuraGround, drawGateAuraSky, drawGateAuraTop } from "./gateAura";
+import { gearTier, type GearTier } from "./gearTier";
 import { drawGmIcon } from "./gmIcons";
 import { drawHallLifeDecor, drawHallLifeLights, hallEntities } from "./hallRender";
 import {
@@ -98,6 +99,7 @@ import {
   drawLordFloorFx,
   drawMeteor,
   drawMinion,
+  drawSkillFx,
   drawSlashes,
   drawTaunt,
   eyePoints,
@@ -108,6 +110,19 @@ import { MONSTER_KINDS } from "./palette";
 import { GLYPH_H, drawPixelText, measurePixelText } from "./pixelFont";
 import { drawQuestBoard } from "./questBoardDraw";
 import { butterflySprite, charSprite, internSprite, prop, type Pose } from "./sprites";
+import { drawCrest, drawGroundMark, drawTierBack, drawTierUpBack, drawTrail } from "./tierAura";
+import {
+  clampMessageX,
+  clampMessageY,
+  crestOrigin,
+  crestVisible,
+  overlayFor,
+  shownTier,
+  tierMessage,
+  tierUpAge,
+  tierUpPhase,
+  type TierUpPhase,
+} from "./tierAuraLogic";
 
 type Ctx = CanvasRenderingContext2D;
 const rect = (ctx: Ctx, color: string, x: number, y: number, width: number, height: number) => {
@@ -2229,6 +2244,7 @@ const drawBannerQ = (ctx: Ctx, office: Office) => {
   const elapsed = office.realTime - banner.start;
   const slide = Math.min(1, elapsed / 0.25, Math.max(0, (banner.dur - elapsed) / 0.25));
   const boss = banner.kind === "boss";
+  const tier = banner.kind === "tier";
   ctx.font = boss ? "800 8px ui-sans-serif, system-ui, sans-serif" : WORLD_FONT;
   const bitmap = !!banner.pixel && measurePixelText(banner.text, BANNER_PIXEL_SCALE) > 0;
   const width =
@@ -2241,21 +2257,21 @@ const drawBannerQ = (ctx: Ctx, office: Office) => {
     );
   rect(ctx, "rgba(0,0,0,0.3)", x + 1, y + 2, width, height);
   rect(ctx, INK, x - 3, y - 1, width + 6, height + 2);
-  rect(ctx, boss ? "#5a1a22" : "#ecd9a2", x, y, width, height);
-  rect(ctx, boss ? "#8a2a34" : "#f6e8bf", x, y, width, 2);
-  rect(ctx, boss ? "#3a0f16" : "#c9a45e", x - 2, y, 3, height);
-  rect(ctx, boss ? "#3a0f16" : "#c9a45e", x + width - 1, y, 3, height);
+  rect(ctx, boss ? "#5a1a22" : tier ? "#1f2a5a" : "#ecd9a2", x, y, width, height);
+  rect(ctx, boss ? "#8a2a34" : tier ? "#f2c14e" : "#f6e8bf", x, y, width, 2);
+  rect(ctx, boss ? "#3a0f16" : tier ? "#f2c14e" : "#c9a45e", x - 2, y, 3, height);
+  rect(ctx, boss ? "#3a0f16" : tier ? "#f2c14e" : "#c9a45e", x + width - 1, y, 3, height);
   if (bitmap) {
     drawPixelText(
       ctx,
       banner.text,
       VIEW_W / 2,
       y + Math.floor((height - GLYPH_H * BANNER_PIXEL_SCALE) / 2),
-      "#ffdede",
+      tier ? "#ffe14a" : "#ffdede",
       {
         scale: BANNER_PIXEL_SCALE,
         align: "center",
-        shadow: "#3a0f16",
+        shadow: tier ? "#0b1030" : "#3a0f16",
       },
     );
     return;
@@ -2496,11 +2512,68 @@ const poseFor = (emp: Employee, time: number, raidFoe = false): { pose: Pose; fr
   }
 };
 
-const drawAdventurer = (ctx: Ctx, emp: Employee, time: number, raidFoe = false) => {
+/** the rogue's backstab dash: seconds and how far the sprite slides (through the foe and back) */
+const DASH_S = 0.45;
+const DASH_PX = 26; // the foe stands about 22px ahead: this ends just behind it
+/** the lift (px) of a raider hopping clear of a Lord attack; set by the dungeon scene around the draw calls */
+let hopDy = 0;
+/** one adventurer's frame, computed once per call and shared by the tier pre-pass and the sprite pass (no allocation) */
+const AF = {
+  pose: "idle" as Pose,
+  frame: 0,
+  tier: 0 as GearTier,
+  shown: 0 as GearTier,
+  phase: { active: false, rise: 0, oldGear: false, pillar: 0, ring: null } as TierUpPhase,
+  hurt: false,
+  dx: 0,
+  px: 0,
+  py: 0,
+};
+const adventurerFrame = (emp: Employee, time: number, raidFoe: boolean) => {
   const { pose, frame } = poseFor(emp, time, raidFoe);
-  const sprite = charSprite(emp.look, pose, frame);
+  AF.pose = pose;
+  AF.frame = frame;
+  AF.tier = gearTier(emp.lv);
+  AF.phase = tierUpPhase(tierUpAge(emp, time), STILL);
+  AF.shown = shownTier(AF.tier, AF.phase); // the gear on the sprite: every tier overlay follows it
+  AF.hurt = emp.state === "SEATED" && emp.hurtUntil > time;
+  const bob = pose === "walk" && frame % 2 === 1 ? -1 : 0;
+  let dx = 0;
+  const fighting = emp.state === "SEATED" && emp.deskIdx >= 0 && !emp.resting;
+  if (emp.state === "SEATED" && pose === "attack" && frame === 1) dx = 3;
+  if (fighting && emp.windupUntil > time) dx = -2; // anticipation: lean back before the strike
+  if (fighting && emp.lungeUntil > time) dx = 3;
+  const dashAge = time - emp.dashAt;
+  if ((fighting || raidFoe) && dashAge >= 0 && dashAge < DASH_S)
+    // rogue backstab: dash through the foe (never farther than its reach) and back, in the facing direction
+    dx = Math.round(DASH_PX * Math.sin((dashAge / DASH_S) * Math.PI) * (emp.facing < 0 ? -1 : 1));
+  if (AF.hurt) dx = -2;
+  if (duelDxNow) dx = duelDxNow;
+  AF.dx = dx;
+  AF.px = Math.round(emp.x - CH_W / 2 + dx);
+  AF.py = Math.round(emp.y - CH_H + bob + duelDyNow - hopDy - AF.phase.rise);
+};
+
+/**
+ * Tier presence, drawn in a pre-pass BEFORE the depth-sorted entities so it sits behind every character (feast-table
+ * neighbours, squires and stacked raiders are never covered): ground mark, tier-up pillar and ring, trail, cape, pads,
+ * bigger weapon, legend back piece and orbiting sparkles.
+ */
+const drawTierLayers = (ctx: Ctx, emp: Employee, time: number, raidFoe = false) => {
+  adventurerFrame(emp, time, raidFoe);
+  const cls = emp.look.cls;
+  drawGroundMark(ctx, AF.shown, emp.x + duelDxNow, emp.y, time, STILL);
+  drawTierUpBack(ctx, AF.phase, Math.round(emp.x + AF.dx), Math.round(emp.y));
+  if (AF.pose === "walk" && overlayFor(cls, AF.shown).trail) drawTrail(ctx, emp.x, emp.y, emp.facing, time, STILL);
+  drawTierBack(ctx, cls, AF.shown, AF.pose, AF.px, AF.py, emp.facing, time, STILL);
+};
+
+const RED_CUE = "#ff2a2a";
+const drawAdventurer = (ctx: Ctx, emp: Employee, time: number, raidFoe = false) => {
+  adventurerFrame(emp, time, raidFoe);
+  const { pose, frame, shown, hurt, px, py } = AF;
+  const sprite = charSprite(emp.look, pose, frame, shown);
   shadow(ctx, emp.x + duelDxNow, emp.y, 11);
-  const hurt = emp.state === "SEATED" && emp.hurtUntil > time;
   if (hurt) {
     // red flash behind the (opaque) sprite
     ctx.globalAlpha = 0.18 + 0.22 * Math.abs(Math.sin(time * 16));
@@ -2510,30 +2583,25 @@ const drawAdventurer = (ctx: Ctx, emp: Employee, time: number, raidFoe = false) 
     ctx.fill();
     ctx.globalAlpha = 1;
   }
-  const bob = pose === "walk" && frame % 2 === 1 ? -1 : 0;
-  let dx = 0;
-  const fighting = emp.state === "SEATED" && emp.deskIdx >= 0 && !emp.resting;
-  if (emp.state === "SEATED" && pose === "attack" && frame === 1) dx = 3;
-  if (fighting && emp.windupUntil > time) dx = -2; // anticipation: lean back before the strike
-  if (fighting && emp.lungeUntil > time) dx = 3;
-  if (hurt) dx = -2;
-  if (duelDxNow) dx = duelDxNow;
-  const px = Math.round(emp.x - CH_W / 2 + dx),
-    py = Math.round(emp.y - CH_H + bob + duelDyNow);
   const red = emp.redUntil > time && emp.state === "SEATED";
-  const put = (img: HTMLCanvasElement, alpha: number) => {
-    ctx.globalAlpha = alpha;
+  const put = (img: HTMLCanvasElement, ox: number, oy: number) => {
     if (emp.facing < 0) {
       ctx.save();
-      ctx.translate(px + CH_W, py);
+      ctx.translate(px + CH_W + ox, py + oy);
       ctx.scale(-1, 1);
       ctx.drawImage(img, 0, 0);
       ctx.restore();
-    } else ctx.drawImage(img, px, py);
-    ctx.globalAlpha = 1;
+    } else ctx.drawImage(img, px + ox, py + oy);
   };
-  put(sprite, 1);
-  if (red) put(tinted(sprite, "#ff2a2a"), 0.4 + 0.2 * Math.sin(time * 40));
+  // "red" cue: an opaque 1px red outline blinking BEHIND the sprite (the sprite itself is never tinted or covered)
+  if (red && (STILL || Math.floor(time * 12) % 2 === 0)) {
+    const outline = tinted(sprite, RED_CUE);
+    put(outline, -1, 0);
+    put(outline, 1, 0);
+    put(outline, 0, -1);
+    put(outline, 0, 1);
+  }
+  put(sprite, 0, 0);
 };
 
 const drawMonster = (ctx: Ctx, emp: Employee, time: number) => {
@@ -2563,7 +2631,9 @@ const drawMonster = (ctx: Ctx, emp: Employee, time: number) => {
       const reach = Math.max(0, Math.min(9, Math.round(cx - sprite.width / 2 - (emp.x + CH_W / 2))));
       lunge = -Math.round(reach * Math.sin(Math.min(1, 1 - (emp.monLungeUntil - time) / 0.4) * Math.PI));
     } else if (emp.hurtUntil > time) lunge = -3;
-    if (emp.monKnockUntil > time) lunge += 2;
+    if (emp.monFarKnockUntil > time)
+      lunge += 7; // a cleave knocks it back further
+    else if (emp.monKnockUntil > time) lunge += 2;
     shadow(ctx, cx, pos.y, Math.min(boss ? 26 : 14, sprite.width));
     const bob = asleep || Math.floor(time * 2 + emp.order) % 2 === 0 ? 0 : -1;
     const sx = Math.round(cx - sprite.width / 2 + lunge + (hit ? 1 : 0)),
@@ -2745,6 +2815,11 @@ const drawFx = (ctx: Ctx, emp: Employee, time: number, office: Office, raidFoe =
 
 /** sessions in a failure loop this frame (set once per render from the engine) */
 let LOOPING: ReadonlySet<string> = new Set();
+/** reduced motion for the adventurer drawing helpers (set by drawScene) */
+let STILL = false;
+/** the x range a floating message may use in the current scene (the field, or a dungeon floor) */
+let MSG_MIN_X = VIEW_X0 + 1;
+let MSG_MAX_X = WORLD_W - 1;
 
 /** drawn for a looping adventurer this frame (🔁 badge + berserk marks) */
 const isLooping = (emp: Employee): boolean => {
@@ -2840,7 +2915,31 @@ const internTagLine = (emp: Employee): string => {
   return parts.join("  ");
 };
 
-const drawTag = (ctx: Ctx, emp: Employee, topY: number, dx = 0): { bx: number; by: number; width: number } => {
+/** one opaque plate centred on the tag (sub-lines above the name tag: "now doing", squires) */
+const drawTagLine = (ctx: Ctx, text: string, centerX: number, top: number, height: number, color: string) => {
+  const shortText = text.length > 44 ? text.slice(0, 43) + "…" : text;
+  const lineW = Math.ceil(ctx.measureText(shortText).width) + 7;
+  const left = Math.max(VIEW_X0 + 1, Math.min(WORLD_W - lineW - 1, centerX - lineW / 2));
+  ctx.fillStyle = "#23253a";
+  roundRect(ctx, left, top, lineW, height, 2.5);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(244,227,193,0.35)";
+  ctx.lineWidth = 0.5;
+  roundRect(ctx, left + 0.25, top + 0.25, lineW - 0.5, height - 0.5, 2.3);
+  ctx.stroke();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = color;
+  ctx.fillText(shortText, left + 3.5, top + height / 2 + 0.3);
+};
+
+const drawTag = (
+  ctx: Ctx,
+  emp: Employee,
+  topY: number,
+  dx = 0,
+  doing: string | null = null,
+): { bx: number; by: number; width: number } => {
   const text = `${emp.project} ${emp.tag}`;
   ctx.font = TAG_FONT;
   const width = Math.ceil(ctx.measureText(text).width) + 7,
@@ -2861,21 +2960,19 @@ const drawTag = (ctx: Ctx, emp: Employee, topY: number, dx = 0): { bx: number; b
   ctx.textBaseline = "middle";
   ctx.fillStyle = CREAM;
   ctx.fillText(text, bx + 3.5, by + height / 2 + 0.3);
+  // sub-lines stack upwards (never over the head): "now doing" right above the tag, squires above that
+  let lineTop = by - height - 1;
   const subLine = internTagLine(emp);
-  if (subLine) {
-    const shortText = subLine.length > 44 ? subLine.slice(0, 43) + "…" : subLine;
-    const w2 = Math.ceil(ctx.measureText(shortText).width) + 7;
-    const bx2 = Math.max(VIEW_X0 + 1, Math.min(WORLD_W - w2 - 1, emp.x + dx - w2 / 2)),
-      by2 = Math.max(1, by - height - 1);
-    ctx.fillStyle = "#23253a";
-    roundRect(ctx, bx2, by2, w2, height, 2.5);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(244,227,193,0.35)";
-    ctx.lineWidth = 0.5;
-    roundRect(ctx, bx2 + 0.25, by2 + 0.25, w2 - 0.5, height - 0.5, 2.3);
-    ctx.stroke();
-    ctx.fillStyle = "#bfe3ff";
-    ctx.fillText(shortText, bx2 + 3.5, by2 + height / 2 + 0.3);
+  let drawn = 0;
+  for (const line of [
+    { text: doing, color: CREAM },
+    { text: subLine, color: "#bfe3ff" },
+  ]) {
+    if (!line.text) continue;
+    if (lineTop < 1 && drawn > 0) break; // no room above: clamp the first line, drop the farthest rather than overlap
+    drawTagLine(ctx, line.text, emp.x + dx, Math.max(1, lineTop), height, line.color);
+    lineTop -= height + 1;
+    drawn++;
   }
   return { bx, by, width };
 };
@@ -2991,6 +3088,44 @@ const drawAmbientAbove = (ctx: Ctx, office: Office, night: number) => {
   }
 };
 
+const TIER_MSG_GOLD = "#ffe14a";
+const TIER_MSG_BOTTOM = 14;
+const TIER_MSG_GAP = 2;
+const TIER_MSG_RISE = 6;
+const TIER_TITLE_SCALE = 2;
+/** height of the stacked message: the big tier name, a gap, and the small level line */
+const TIER_MSG_H = GLYPH_H * TIER_TITLE_SCALE + TIER_MSG_GAP + GLYPH_H;
+/** the selection arrow sits this far above the feet; its AI plate (with its 5px gap) sits above that */
+const SELECT_ARROW_LIFT = 28;
+const PLATE_GAP = 5;
+/** how far the selected AI plate must lift to clear the whole tier message (top of the message + a 1px margin) */
+const TIER_PLATE_LIFT = CH_H + TIER_MSG_BOTTOM + TIER_MSG_H + TIER_MSG_RISE + 1 - SELECT_ARROW_LIFT + PLATE_GAP;
+/** the one overhead message of a tier-up: the tier name big, "LV.20" small under it, clamped inside the scene */
+const drawTierMessage = (ctx: Ctx, emp: Employee, age: number, lift: number) => {
+  const { title, sub } = tierMessage(emp.lvlTo);
+  const titleW = measurePixelText(title, TIER_TITLE_SCALE),
+    subW = measurePixelText(sub);
+  const centerX = clampMessageX(emp.x, Math.max(titleW, subW), MSG_MIN_X, MSG_MAX_X);
+  const rise = STILL ? 0 : eob(Math.min(1, age * 2)) * TIER_MSG_RISE;
+  const bottom = Math.round(emp.y - CH_H - TIER_MSG_BOTTOM - lift - rise);
+  const top = clampMessageY(bottom - TIER_MSG_H);
+  drawPixelText(ctx, title, centerX, top, TIER_MSG_GOLD, {
+    scale: TIER_TITLE_SCALE,
+    shadow: INK,
+    outline: true,
+    align: "center",
+  });
+  drawPixelText(ctx, sub, centerX, top + GLYPH_H * TIER_TITLE_SCALE + TIER_MSG_GAP, "#ffffff", {
+    shadow: INK,
+    outline: true,
+    align: "center",
+  });
+};
+
+/** a wind-up, lunge or backstab dash slides the sprite sideways: the crest hides until it settles */
+const crestMoves = (emp: Employee, time: number): boolean =>
+  emp.windupUntil > time || emp.lungeUntil > time || (time - emp.dashAt >= 0 && time - emp.dashAt < DASH_S);
+
 /** bubbles, level-up banner and the selection arrow over one adventurer at (emp.x, emp.y) */
 const drawOverhead = (ctx: Ctx, office: Office, emp: Employee, time: number) => {
   if (waitsOnYou(emp) && !emp.tempBubble) {
@@ -3006,7 +3141,10 @@ const drawOverhead = (ctx: Ctx, office: Office, emp: Employee, time: number) => 
   }
   if (isLooping(emp)) drawBerserk(ctx, emp, time, office.reducedMotion);
   const sinceLevelUp = time - emp.lvlAt;
-  if (sinceLevelUp >= 0 && sinceLevelUp < 2.2 && emp.state !== "LEAVING") {
+  const tierAge = emp.state === "LEAVING" ? null : tierUpAge(emp, time);
+  const crowded = limitLift(emp) || (bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp) ? 15 : 0);
+  if (tierAge !== null) drawTierMessage(ctx, emp, tierAge, crowded);
+  else if (sinceLevelUp >= 0 && sinceLevelUp < 2.2 && emp.state !== "LEAVING") {
     const progress = sinceLevelUp / 2.2;
     ctx.globalAlpha = progress > 0.75 ? (1 - progress) / 0.25 : 1;
     ctx.font = "800 7.5px ui-sans-serif, system-ui, sans-serif";
@@ -3022,11 +3160,31 @@ const drawOverhead = (ctx: Ctx, office: Office, emp: Employee, time: number) => 
     outlined(
       ctx,
       `LEVEL UP! Lv.${emp.lvlTo}`,
-      Math.max(VIEW_X0 + 34, Math.min(WORLD_W - 34, Math.round(emp.x))),
+      Math.max(MSG_MIN_X + 34, Math.min(MSG_MAX_X - 34, Math.round(emp.x))),
       ly,
       "#ffe14a",
     );
     ctx.globalAlpha = 1;
+  }
+  const tier = gearTier(emp.lv);
+  const crestShows = crestVisible(tier, {
+    limitSign: showsLimit(emp),
+    bubble: waitsOnYou(emp) || !!bubbleOf(emp, time) || emp.act === "handup" || isLooping(emp),
+    hovered: office.hoverId === emp.id,
+    selected: office.selectedId === emp.id,
+    tierUp: tierAge !== null,
+    lunging: crestMoves(emp, time),
+  });
+  if (crestShows && emp.state !== "LEAVING") {
+    duelOffsetInto(emp, time);
+    const spot = crestOrigin(
+      emp.x + DP.dx,
+      emp.y + DP.dy,
+      time,
+      office.reducedMotion,
+      dodgeLift(time, emp.dodgeAt, office.reducedMotion),
+    );
+    drawCrest(ctx, tier, spot.x, spot.y);
   }
   if (office.selectedId === emp.id) {
     const bounce = Math.floor(office.realTime * 4) % 2;
@@ -3068,6 +3226,7 @@ const drawHover = (ctx: Ctx, office: Office, hovered: Employee, time: number) =>
       3 -
       (limitLift(hovered) || (bubbleOf(hovered, time) || waitsOnYou(hovered) || isLooping(hovered) ? 17 : 0)),
     DP.dx,
+    office.doingText(hovered),
   );
   drawAiPlate(ctx, hovered, hovered.x + DP.dx, 0, tag);
 };
@@ -3081,7 +3240,8 @@ const drawSelectedPlate = (ctx: Ctx, office: Office, selected: Employee, time: n
     28 -
     (limitLift(selected) || (bubbleOf(selected, time) || selected.act === "handup" || isLooping(selected) ? 16 : 0));
   const leveling = time - selected.lvlAt >= 0 && time - selected.lvlAt < LEVEL_UP_S && selected.state !== "LEAVING";
-  const top = arrowY - AI_PLATE_H - 5 - (leveling ? LEVEL_UP_LIFT : 0);
+  const top =
+    arrowY - AI_PLATE_H - 5 - (leveling ? (tierUpAge(selected, time) === null ? LEVEL_UP_LIFT : TIER_PLATE_LIFT) : 0);
   if (top >= 2) {
     drawAiPlate(ctx, selected, selected.x + DP.dx, top);
     return;
@@ -3456,15 +3616,19 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
     const foePos = dungeonMonsterPoint(home);
     const fighting = emp.stairsAt < 0 && (onLordFloor ? office.lord.hp > 0 : !!emp.raid && emp.raid.hp > 0);
     const heldTime = frozenTime(emp, time);
+    atSpot(emp, spot, () => {
+      hopDy = onLordFloor ? dodgeLift(time, emp.dodgeAt, still) : 0;
+      drawTierLayers(ctx, emp, heldTime, fighting); // pre-pass: tier presence behind every character
+      hopDy = 0;
+    });
     ents.push({
       y: spot.y,
       fn: () =>
         atSpot(emp, spot, () => {
           // a raider hops clear when a Lord attack reaches them
-          const prevDy = duelDyNow;
-          duelDyNow = onLordFloor ? -dodgeLift(time, emp.dodgeAt, still) : prevDy;
+          hopDy = onLordFloor ? dodgeLift(time, emp.dodgeAt, still) : 0;
           drawAdventurer(ctx, emp, heldTime, fighting);
-          duelDyNow = prevDy;
+          hopDy = 0;
         }),
     });
     if (!onLordFloor) ents.push({ y: home.y, fn: () => drawRaidFoe(ctx, emp, time, still, foePos) });
@@ -3490,6 +3654,7 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
     drawTaunt(ctx, lord, time, lordAt.x - LORD_TAUNT_DX, lordAt.y - LORD_TAUNT_DY, mini ? 2 : 1);
   }
   drawPopups(ctx, office, floor);
+  drawSkillFx(ctx, office, floor, still, 0, VIEW_W);
   if (shaken) ctx.restore();
   if (mini) return;
   if (onLordFloor) drawLordBar(ctx, office, time);
@@ -3622,6 +3787,9 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   ctx.translate(WING_W, 0); // world coordinates from here on: the west wing is at negative x
   if (office.scene === "dungeon") {
     LOOPING = office.loopIds;
+    STILL = office.reducedMotion;
+    MSG_MIN_X = 1;
+    MSG_MAX_X = VIEW_W - 1;
     drawDungeonScene(ctx, office, time);
     ctx.restore();
     drawScreenOverlays(ctx, office);
@@ -3672,6 +3840,9 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   drawAmbientAbove(ctx, office, night);
   drawNpc(ctx, time, office);
   LOOPING = office.loopIds;
+  STILL = office.reducedMotion;
+  MSG_MIN_X = VIEW_X0 + 1;
+  MSG_MAX_X = WORLD_W - 1;
 
   // resting campfire glow + rain go under every entity so characters stay crisp
   for (const emp of office.employees.values()) {
@@ -3712,6 +3883,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
       continue;
     }
     const heldTime = frozenTime(emp, time);
+    drawTierLayers(ctx, emp, heldTime); // pre-pass: tier presence behind every character
     ents.push({ y: emp.y, fn: () => drawAdventurer(ctx, emp, heldTime) });
     ents.push({ y: emp.y + 0.4, fn: () => drawFx(ctx, emp, heldTime, office) });
     if (emp.monPos) {
@@ -3754,6 +3926,7 @@ export const drawScene = (ctx: Ctx, office: Office) => {
   drawLinkIcons(ctx, nLinks, time, office); // after entities: the opaque badge is never hidden
   drawParticles(ctx, office, false);
   drawPopups(ctx, office);
+  drawSkillFx(ctx, office, 0, office.reducedMotion, VIEW_X0 + 1, WORLD_W - 1);
   drawCheers(ctx, office, time);
   if (raidersInside > 0) drawRaidBadge(ctx, raidersByFloor, office.lord.hp > 0);
   if (lordPipUp) drawLordPip(ctx, office, time);

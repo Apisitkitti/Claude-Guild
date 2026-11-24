@@ -65,6 +65,19 @@
   --color-danger-tint: #b3262b1f;
   --color-on-danger: #fff3d0;
 
+  /* Level tiers (Lv badge): bronze, silver, gold, platinum-violet */
+  --color-tier-adept: #8a4a1c;
+  --color-tier-adept-edge: #5c3010;
+  --color-tier-veteran: #c9d3e0;
+  --color-tier-veteran-edge: #7d8aa0;
+  --color-tier-veteran-ink: #1b1410;
+  --color-tier-elite: #e0b04a;
+  --color-tier-elite-edge: #9a7420;
+  --color-tier-elite-ink: #2b1a0c;
+  --color-tier-legend: #5b2a9e;
+  --color-tier-legend-edge: #e8c9ff;
+  --color-tier-legend-ink: #f6ecff;
+
   /* Success */
   --color-success: #6fb36a;
   --color-success-dark: #4f9a5a;
@@ -778,6 +791,19 @@ button:active {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.card .doing {
+  display: block;
+  margin-top: 1px;
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card .doing-glyph {
+  margin-right: 4px;
+}
 .chip {
   grid-area: chip;
   justify-self: end;
@@ -1037,6 +1063,25 @@ button:active {
   border-radius: var(--radius-sm);
   padding: 0 5px;
   vertical-align: 1px;
+}
+.card .lv.tier-adept {
+  background: var(--color-tier-adept);
+  border-color: var(--color-tier-adept-edge);
+}
+.card .lv.tier-veteran {
+  background: var(--color-tier-veteran);
+  border-color: var(--color-tier-veteran-edge);
+  color: var(--color-tier-veteran-ink);
+}
+.card .lv.tier-elite {
+  background: var(--color-tier-elite);
+  border-color: var(--color-tier-elite-edge);
+  color: var(--color-tier-elite-ink);
+}
+.card .lv.tier-legend {
+  background: var(--color-tier-legend);
+  border-color: var(--color-tier-legend-edge);
+  color: var(--color-tier-legend-ink);
 }
 .card .stats {
   grid-area: stats;

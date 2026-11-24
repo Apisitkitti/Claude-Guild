@@ -95,6 +95,11 @@
   "class_ranger": "นักธนู",
   "card_claims_title": "ถือครอง {count} file",
   "card_clash_label": "ชนกัน",
+  "tier_novice": "มือใหม่",
+  "tier_adept": "ชำนาญ",
+  "tier_veteran": "เก๋า",
+  "tier_elite": "ชั้นยอด",
+  "tier_legend": "ตำนาน",
   "card_limit_label": "😴 limit",
   "card_limit_title": "ติด limit · reset {time}",
   "card_limit_title_unknown": "ติด limit",
@@ -286,5 +291,6 @@
   "gm_report_reason_loop": "🔁 ติด loop",
   "gm_report_reason_stuck": "⏳ tool ค้าง",
   "gm_report_reason_idle": "💤 รอ prompt",
-  "gm_report_reason_compact": "📦 กำลัง compact"
+  "gm_report_reason_compact": "📦 กำลัง compact",
+  "card_doing_title": "กำลังทำ: {doing}"
 }
