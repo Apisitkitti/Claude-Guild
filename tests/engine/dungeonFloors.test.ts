@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CRYPT_KINDS } from "@/lib/office/cryptSprites";
-import { dungeonSpotOf, dungeonStairsPoint, LORD_SPOTS } from "@/lib/office/dungeonScene";
+import { DUNGEON_FLOORS, dungeonSpotOf, dungeonStairsPoint, LORD_SPOTS } from "@/lib/office/dungeonScene";
 import {
   KIND_LORD,
   LORD_GOLD,
@@ -243,6 +243,7 @@ describe("the Dungeon Lord", () => {
 
   it("falls to the pooled hits, rewards everyone on floor 3 and writes a log entry", () => {
     const { office, raiderIds, ids } = withRaiders(3);
+    office.voidEnabled = false; // the Lord's own death sequence
     const [first, second, third] = raiderIds.map((id) => emp(office, id));
     sendToLord(first);
     sendToLord(second); // third stays on B1
@@ -289,6 +290,9 @@ describe("the Dungeon Lord", () => {
     expect(office.lord.hp).toBe(1);
     expect(office.dungeonStats().lordAlive).toBe(true);
     expect(office.lord.slain).toBe(1);
+    // the party was pulled into the Void Sanctum; its session went quiet, so the boss gave up and sent it back to B3
+    expect(office.voidActive()).toBe(false);
+    expect(raider.floor).toBe(DUNGEON_FLOORS);
     strike(office, raider.id, "Read");
     expect(office.lord.hp).toBeLessThan(1);
   });
@@ -371,6 +375,7 @@ describe("the floor on screen", () => {
 
   it("queues sound cues for raid hits, kills, the stair descent and the Lord's fall", () => {
     const { office, raiderIds } = withRaiders(1);
+    office.voidEnabled = false; // the Lord's own death sequence
     const raider = emp(office, raiderIds[0]);
     office.sfxQueue.length = 0;
     killFoe(office, raider);

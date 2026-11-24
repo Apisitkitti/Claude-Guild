@@ -109,7 +109,7 @@ const targetOf = (office: Office, lord: DungeonLord): Employee | null =>
 /** the point the flame stream aims at: the raider's feet when he is still there, else where the telegraph saw him */
 const aimPoint = (office: Office, lord: DungeonLord, out: { x: number; y: number }) => {
   const target = targetOf(office, lord);
-  if (target && target.inDungeon && target.floor >= DUNGEON_FLOORS && target.stairsAt < 0) {
+  if (target && target.inDungeon && target.floor === DUNGEON_FLOORS && target.stairsAt < 0) {
     const at = office.raiderPoint(target);
     out.x = at.x;
     out.y = at.y;

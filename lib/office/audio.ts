@@ -26,7 +26,17 @@ export type SfxCue =
   | "skillFire"
   | "skillStab"
   | "skillSmite"
-  | "skillVolley";
+  | "skillVolley"
+  | "voidShatter"
+  | "voidWipe"
+  | "voidReveal"
+  | "voidBeam"
+  | "voidBlink"
+  | "voidPhase2"
+  | "voidTrueForm"
+  | "voidEclipse"
+  | "voidDeath"
+  | "voidVictory";
 
 export type AmbientKind = "tavern" | "dungeon" | null;
 
@@ -219,6 +229,85 @@ const CUES: Record<Exclude<SfxCue, "hit">, Tone[]> = {
     { at: 0.28, freq: midi(48), dur: 0.12, wave: "square", gain: 0.45, slideTo: midi(36) },
     { at: 0.36, freq: midi(45), dur: 0.12, wave: "square", gain: 0.45, slideTo: midi(34) },
     { at: 0.44, freq: midi(50), dur: 0.14, wave: "square", gain: 0.45, slideTo: midi(38) },
+  ],
+  voidShatter: [
+    { at: 0, freq: midi(40), dur: 0.9, wave: "sawtooth", gain: 0.6, slideTo: midi(22) },
+    { at: 0, freq: midi(96), dur: 0.5, wave: "square", gain: 0.3, slideTo: midi(60) },
+    { at: 0.2, freq: midi(88), dur: 0.4, wave: "square", gain: 0.25, slideTo: midi(52) },
+    { at: 0.5, freq: midi(100), dur: 0.5, wave: "triangle", gain: 0.25, slideTo: midi(70) },
+    { at: 0.9, freq: midi(28), dur: 0.8, wave: "triangle", gain: 0.5, slideTo: midi(20) },
+  ],
+  voidWipe: [
+    { at: 0, freq: midi(38), dur: 0.7, wave: "sawtooth", gain: 0.45, slideTo: midi(74) },
+    { at: 0.7, freq: midi(74), dur: 0.7, wave: "sawtooth", gain: 0.4, slideTo: midi(30) },
+    { at: 0.6, freq: midi(26), dur: 0.5, wave: "triangle", gain: 0.55 },
+  ],
+  voidReveal: [
+    { at: 0, freq: midi(24), dur: 2.6, wave: "sawtooth", gain: 0.55, slideTo: midi(21) },
+    { at: 0, freq: midi(36), dur: 2.6, wave: "triangle", gain: 0.5, slideTo: midi(33) },
+    { at: 0.5, freq: midi(60), dur: 2.2, wave: "sine", gain: 0.4 },
+    { at: 0.6, freq: midi(63), dur: 2.1, wave: "sine", gain: 0.4 },
+    { at: 0.7, freq: midi(67), dur: 2, wave: "sine", gain: 0.4 },
+    { at: 0.8, freq: midi(72), dur: 1.9, wave: "sine", gain: 0.35 },
+    { at: 1.4, freq: midi(75), dur: 1.3, wave: "triangle", gain: 0.25, slideTo: midi(74) },
+  ],
+  voidBeam: [
+    { at: 0, freq: midi(48), dur: 0.5, wave: "sawtooth", gain: 0.5, slideTo: midi(84) },
+    { at: 0.05, freq: midi(60), dur: 0.45, wave: "square", gain: 0.25, slideTo: midi(90) },
+    { at: 0.5, freq: midi(36), dur: 0.3, wave: "triangle", gain: 0.4, slideTo: midi(26) },
+  ],
+  voidBlink: [
+    { at: 0, freq: midi(96), dur: 0.12, wave: "square", gain: 0.35, slideTo: midi(60) },
+    { at: 0.1, freq: midi(60), dur: 0.14, wave: "square", gain: 0.35, slideTo: midi(98) },
+    { at: 0.12, freq: midi(40), dur: 0.2, wave: "sawtooth", gain: 0.35, slideTo: midi(30) },
+  ],
+  voidPhase2: [
+    { at: 0, freq: midi(30), dur: 1.2, wave: "sawtooth", gain: 0.7, slideTo: midi(22) },
+    { at: 0.05, freq: midi(31), dur: 1.1, wave: "square", gain: 0.35, slideTo: midi(20) },
+    { at: 0.3, freq: midi(58), dur: 0.9, wave: "sawtooth", gain: 0.3, slideTo: midi(70) },
+    { at: 0.6, freq: midi(62), dur: 0.6, wave: "sine", gain: 0.4 },
+    { at: 0.6, freq: midi(65), dur: 0.6, wave: "sine", gain: 0.4 },
+  ],
+  voidTrueForm: [
+    { at: 0, freq: midi(22), dur: 2.6, wave: "sawtooth", gain: 0.7, slideTo: midi(17) },
+    { at: 0, freq: midi(34), dur: 2.6, wave: "triangle", gain: 0.55, slideTo: midi(29) },
+    { at: 0.4, freq: midi(48), dur: 2.1, wave: "sawtooth", gain: 0.3, slideTo: midi(72) },
+    { at: 0.9, freq: midi(63), dur: 1.6, wave: "sine", gain: 0.4 },
+    { at: 1, freq: midi(70), dur: 1.5, wave: "sine", gain: 0.4 },
+    { at: 1.1, freq: midi(75), dur: 1.4, wave: "sine", gain: 0.4 },
+    { at: 1.7, freq: midi(87), dur: 0.8, wave: "square", gain: 0.25, slideTo: midi(99) },
+  ],
+  voidEclipse: [
+    { at: 0, freq: midi(28), dur: 2.6, wave: "sawtooth", gain: 0.55, slideTo: midi(45) },
+    { at: 0.4, freq: midi(52), dur: 2.2, wave: "triangle", gain: 0.35, slideTo: midi(76) },
+    { at: 2.4, freq: midi(34), dur: 0.7, wave: "sawtooth", gain: 0.7, slideTo: midi(18) },
+    { at: 2.4, freq: midi(70), dur: 0.5, wave: "square", gain: 0.35, slideTo: midi(40) },
+  ],
+  voidDeath: [
+    { at: 0, freq: midi(60), dur: 2.4, wave: "sawtooth", gain: 0.5, slideTo: midi(28) },
+    { at: 0.4, freq: midi(84), dur: 1.8, wave: "sine", gain: 0.3, slideTo: midi(48) },
+    { at: 1.6, freq: midi(24), dur: 1.4, wave: "triangle", gain: 0.6, slideTo: midi(60) },
+    { at: 3.2, freq: midi(96), dur: 0.6, wave: "square", gain: 0.4, slideTo: midi(108) },
+    { at: 3.2, freq: midi(36), dur: 0.8, wave: "sawtooth", gain: 0.6, slideTo: midi(18) },
+  ],
+  voidVictory: [
+    ...[60, 64, 67, 72, 76, 79, 84].map((note, index) => ({
+      at: index * 0.12,
+      freq: midi(note),
+      dur: 0.16,
+      wave: "square" as Wave,
+      gain: 0.5,
+    })),
+    { at: 0.9, freq: midi(84), dur: 0.5, wave: "square", gain: 0.55 },
+    { at: 0.9, freq: midi(72), dur: 0.5, wave: "triangle", gain: 0.5 },
+    { at: 1.5, freq: midi(79), dur: 0.2, wave: "square", gain: 0.5 },
+    { at: 1.7, freq: midi(84), dur: 0.2, wave: "square", gain: 0.5 },
+    { at: 1.9, freq: midi(88), dur: 0.2, wave: "square", gain: 0.5 },
+    { at: 2.1, freq: midi(91), dur: 1.4, wave: "square", gain: 0.6 },
+    { at: 2.1, freq: midi(79), dur: 1.4, wave: "triangle", gain: 0.5 },
+    { at: 2.1, freq: midi(60), dur: 1.4, wave: "sawtooth", gain: 0.3 },
+    { at: 2.4, freq: midi(96), dur: 1.1, wave: "sine", gain: 0.4 },
+    { at: 3, freq: midi(100), dur: 0.8, wave: "triangle", gain: 0.3, slideTo: midi(108) },
   ],
   door: [{ at: 0, freq: 180, dur: 0.35, wave: "sawtooth", gain: 0.3, slideTo: 110 }],
   enterDungeon: [

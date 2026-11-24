@@ -3,7 +3,7 @@
 # Payloads are derived from lib/store.ts, lib/attention.ts, lib/receipts.ts, lib/territory.ts, lib/office/engine.ts.
 # Only bash + curl + node (node just to parse the snapshot in `status`). Never kills anything.
 #
-# Scenarios: spawn boss boss-kill loop receipt duel compact squire cheers feast lord limit ais status cleanup help
+# Scenarios: spawn boss boss-kill loop receipt duel compact squire cheers feast lord void limit ais status cleanup help
 # Session ids: 9401-<scenario>[-<suffix>][-a|-b|-c]   cwd: /Users/demo/<name> (fictional)
 # Created ids are recorded in $TMPDIR/guild-sim/ids so `cleanup` removes every one of them.
 set -u
@@ -216,6 +216,31 @@ lord)
     sleep "${LORD_PACE:-0.5}"
   done
   note "sent $n calls. Watch: B1 -> B3, banner 'Raid on the Dungeon Lord', the live inset on the guild scene, the Lord rising from the throne, then 'Dungeon Lord has fallen' and the walk home. Stop sending events and it walks home after ~75 s."
+  ;;
+
+void)
+  # The secret final boss. Same walk-in as `lord`, but the session keeps hitting after the Dungeon Lord falls: the Lord's
+  # corpse shatters, the wipe drops the raider into the Void Sanctum (floor 4), the Veiled One (3x the Lord's hp, 3 phases:
+  # <60% phase 2, <25% TRUE FORM) fights back, and falls to a victory banner + gold + a level.
+  # Needs enough calls to beat BOTH bosses: 40 Reads (raid-ready), ~50 to descend, ~30 for the Lord, ~180 hp for the
+  # Veiled One (less as the raider levels up; calls during the invulnerable roar / TRUE FORM do nothing).
+  # VOID_CALLS = total tool calls (default 420), VOID_PACE = seconds between calls after the walk-in (default 0.4).
+  need_server
+  A="$(sid a)"
+  start "$A" void-raider
+  prompt "$A"
+  note "waiting 4s to sit..."; sleep 4
+  n=0
+  while [ "$n" -lt 40 ]; do
+    tool "$A" Read '{"file_path":"/Users/demo/void-raider/src/a.ts"}'; n=$((n + 1))
+  done
+  note "40 calls sent: the adventurer leaves its battle spot for the dungeon gate; waiting 14s for the walk..."; sleep 14
+  total="${VOID_CALLS:-420}"
+  while [ "$n" -lt "$total" ]; do
+    tool "$A" Bash '{"command":"npm test"}'; n=$((n + 1))
+    sleep "${VOID_PACE:-0.4}"
+  done
+  note "sent $n calls. Watch: B1 -> B3, the Dungeon Lord falls, 'FOOLS... HE WAS ONLY MY PUPPET.', the pixel wipe to floor 4 (the camera follows if you watch B3), 'The Veiled One' reveal + hp bar, beam / eyes / blink, phase 2 at 60% (collapse), TRUE FORM at 25% (screen shake, eclipse), the death, the victory banner, then the raider walks home. If it is still fighting, rerun with a bigger VOID_CALLS. Stop sending events and the raider walks home after ~75 s (the boss fades out laughing)."
   ;;
 
 limit)

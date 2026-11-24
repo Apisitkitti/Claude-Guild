@@ -4,6 +4,7 @@ import type { DungeonStats } from "@/lib/office/dungeon";
 import { DUNGEON_FLOORS } from "@/lib/office/dungeonScene";
 import { GM_HIT_ID, type QuestView } from "@/lib/office/engine";
 import { BOARD_HIT, DUNGEON_HIT, LORD_PIP, VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
+import { VOID_FLOOR } from "@/lib/office/voidTypes";
 import { m } from "@/paraglide/messages";
 
 import { DungeonCard } from "./DungeonCard";
@@ -13,10 +14,24 @@ import type { OfficeRef } from "./types";
 /** canvas border (see `.frame canvas` in globals.css): the overlay's origin is inside it */
 const CANVAS_BORDER = 3;
 const CARD_GAP = 4;
+const VOID_POLL_MS = 400;
+/** with four floor tabs the caption gets less room: it clips with an ellipsis instead of running under them */
+const CAPTION_NARROW = {
+  maxWidth: "calc(100% - 600px)",
+  minWidth: 120,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+} as const;
 const FLOORS = Array.from({ length: DUNGEON_FLOORS }, (_, i) => i + 1);
-const FLOOR_NAMES = [m.dungeon_floor_name_1, m.dungeon_floor_name_2, m.dungeon_floor_name_3];
+const FLOOR_NAMES = [m.dungeon_floor_name_1, m.dungeon_floor_name_2, m.dungeon_floor_name_3, m.dungeon_floor_name_4];
 /** caption of a floor while nobody raids anywhere in the dungeon */
-const FLOOR_QUIET = [m.dungeon_floor_quiet_1, m.dungeon_floor_quiet_2, m.dungeon_floor_quiet_3];
+const FLOOR_QUIET = [
+  m.dungeon_floor_quiet_1,
+  m.dungeon_floor_quiet_2,
+  m.dungeon_floor_quiet_3,
+  m.dungeon_floor_quiet_4,
+];
 
 export const Stage = ({
   canvasRef,
@@ -50,6 +65,10 @@ export const Stage = ({
   const [gmTip, setGmTip] = useState<{ x: number; y: number } | null>(null);
   /** screen-reader text, set once when the dungeon scene is entered (the visible caption is not a live region) */
   const [entered, setEntered] = useState("");
+  /** the Veiled One's fight has moved onto the Sanctum: B4 gets a tab (polled: the view snapshot does not carry it) */
+  const [voidOn, setVoidOn] = useState(false);
+  /** raiders fighting in the Sanctum (the stats count them with B3) */
+  const [voidCount, setVoidCount] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
   const captionRef = useRef("");
   const gateRef = useRef<HTMLButtonElement>(null);
@@ -60,7 +79,20 @@ export const Stage = ({
   const gateTop = DUNGEON_HIT.y * scale + CANVAS_BORDER;
   const scene = viewScene; // the engine owns the scene; the view snapshot mirrors it (selection can change it too)
   const inDungeon = scene === "dungeon";
-  const floorCount = dungeon.floorRaiders[viewFloor - 1] ?? 0;
+  const voidOpen = viewFloor === VOID_FLOOR || voidOn;
+  const tabFloors = voidOpen ? [...FLOORS, VOID_FLOOR] : FLOORS;
+  // the stats count the Sanctum's raiders with B3: split them back out while B4 is open
+  const counts: Record<number, number> = Object.fromEntries(
+    tabFloors.map((floor) => {
+      const merged = dungeon.floorRaiders[Math.min(floor, DUNGEON_FLOORS) - 1] ?? 0;
+      if (!voidOpen) return [floor, merged];
+      return [
+        floor,
+        floor === VOID_FLOOR ? voidCount : floor === DUNGEON_FLOORS ? Math.max(0, merged - voidCount) : merged,
+      ];
+    }),
+  );
+  const floorCount = counts[viewFloor] ?? 0;
   const floorName = FLOOR_NAMES[viewFloor - 1]?.() ?? "";
   const caption =
     floorCount > 0
@@ -91,7 +123,7 @@ export const Stage = ({
   };
   const watchLord = () => {
     officeRef.current?.setScene("dungeon");
-    officeRef.current?.setDungeonFloor(DUNGEON_FLOORS);
+    officeRef.current?.setDungeonFloor(officeRef.current.pipFloor()); // the inset shows B4 while the Veiled One fights
     setOpen(false);
     setHover(false);
   };
@@ -99,6 +131,16 @@ export const Stage = ({
   const backToGuild = () => {
     officeRef.current?.setScene("guild");
   };
+  useEffect(() => {
+    if (!inDungeon && !dungeon.lordFight) return; // only a view of the Sanctum (the dungeon or the live inset) needs it
+    const read = () => {
+      setVoidOn(officeRef.current?.voidOnFloor() ?? false);
+      setVoidCount(officeRef.current?.voidFighters().length ?? 0);
+    };
+    read();
+    const timer = setInterval(read, VOID_POLL_MS);
+    return () => clearInterval(timer);
+  }, [officeRef, inDungeon, dungeon.lordFight]);
   useEffect(() => {
     captionRef.current = caption;
   }, [caption]);
@@ -190,9 +232,15 @@ export const Stage = ({
               <button type="button" ref={backRef} className="dungeonback" onClick={backToGuild}>
                 <span aria-hidden="true">⬅</span> {m.dungeon_back()}
               </button>
-              <p className="dungeoncap">{caption}</p>
+              <p
+                className="dungeoncap"
+                style={tabFloors.length > DUNGEON_FLOORS ? CAPTION_NARROW : undefined}
+                title={caption}
+              >
+                {caption}
+              </p>
               <div className="floortabs" role="group" aria-label={m.dungeon_floor_tabs_label()}>
-                {FLOORS.map((floor) => (
+                {tabFloors.map((floor) => (
                   <button
                     key={floor}
                     type="button"
@@ -201,11 +249,14 @@ export const Stage = ({
                     title={m.dungeon_floor_tab_title({
                       floor,
                       name: FLOOR_NAMES[floor - 1](),
-                      count: dungeon.floorRaiders[floor - 1] ?? 0,
+                      count: counts[floor] ?? 0,
                     })}
                     onClick={() => pickFloor(floor)}
                   >
-                    {m.dungeon_floor_tab({ floor, count: dungeon.floorRaiders[floor - 1] ?? 0 })}
+                    {m.dungeon_floor_tab({
+                      floor,
+                      count: dungeon.floorRaiders[Math.min(floor, DUNGEON_FLOORS) - 1] ?? 0,
+                    })}
                   </button>
                 ))}
               </div>
@@ -243,8 +294,8 @@ export const Stage = ({
             <button
               type="button"
               className="gatehit"
-              aria-label={m.dungeon_lord_pip_label()}
-              title={m.dungeon_lord_pip_label()}
+              aria-label={voidOn ? m.void_pip_label() : m.dungeon_lord_pip_label()}
+              title={voidOn ? m.void_pip_label() : m.dungeon_lord_pip_label()}
               style={{
                 left: (LORD_PIP.x - VIEW_X0) * scale + CANVAS_BORDER,
                 top: LORD_PIP.y * scale + CANVAS_BORDER,

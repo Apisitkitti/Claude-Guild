@@ -123,6 +123,27 @@ import {
   tierUpPhase,
   type TierUpPhase,
 } from "./tierAuraLogic";
+import { VOID_FEET_Y, voidFightingPhase, voidHpFrac } from "./voidFight";
+import {
+  drawVoidBar,
+  drawVoidBoss,
+  drawVoidFloorFx,
+  drawVoidShatter,
+  drawVoidShatterFloor,
+  drawVoidTexts,
+  drawVoidWipe,
+  drawVoidHits,
+  drawVoidImpacts,
+  drawVoidMinion,
+  voidHitterId,
+  voidQuakeAmp,
+  VOID_HOVER_PX,
+  voidBackView,
+  voidBossX,
+} from "./voidFx";
+import { drawVoidBack, drawVoidFront, voidVariantOf } from "./voidScene";
+import { VOID_FLOOR } from "./voidTypes";
+import { captionScale, knockDx } from "./voidVisualLogic";
 
 type Ctx = CanvasRenderingContext2D;
 const rect = (ctx: Ctx, color: string, x: number, y: number, width: number, height: number) => {
@@ -2237,12 +2258,59 @@ const drawLinkIcons = (ctx: Ctx, linkCount: number, time: number, office: Office
 
 /** pixel-font banners are drawn at this integer scale */
 const BANNER_PIXEL_SCALE = 2;
+/** the Veiled One's banners: a wide gold-and-void plaque with big pixel letters (opaque, over the top of the scene) */
+const drawEpicBanner = (
+  ctx: Ctx,
+  banner: Office["banners"][number],
+  elapsed: number,
+  slide: number,
+  still: boolean,
+) => {
+  const text = banner.text;
+  // the bitmap font has Latin capitals and digits only: any other script falls back to the system font in the plate
+  const bitmap = measurePixelText(text, 1) === text.length * PIXEL_ADVANCE - 1;
+  const scale = bitmap ? captionScale(text, VIEW_W - 60, EPIC_SCALE) : 1;
+  ctx.font = "800 9px ui-sans-serif, system-ui, sans-serif";
+  const textW = bitmap ? measurePixelText(text, scale) : Math.ceil(ctx.measureText(text).width);
+  const width = Math.min(VIEW_W - 8, textW + 44),
+    height = (bitmap ? GLYPH_H * scale : 9) + 8;
+  const x = Math.round((VIEW_W - width) / 2);
+  const y = Math.max(2, Math.round(-height - 2 + (height + EPIC_Y) * eob(Math.max(0, slide))));
+  rect(ctx, INK, x - 3, y - 3, width + 6, height + 6);
+  rect(ctx, "#f2c14e", x - 2, y - 2, width + 4, height + 4);
+  rect(ctx, "#8a6416", x - 1, y - 1, width + 2, height + 2);
+  rect(ctx, "#0e0820", x, y, width, height);
+  rect(ctx, "#2a1a5a", x, y, width, 1);
+  rect(ctx, "#2a1a5a", x, y + height - 1, width, 1);
+  rect(ctx, "#f2c14e", x, y + (height >> 1) - 3, 7, 7);
+  rect(ctx, "#fff0a0", x + 2, y + (height >> 1) - 1, 3, 3);
+  rect(ctx, "#f2c14e", x + width - 7, y + (height >> 1) - 3, 7, 7);
+  rect(ctx, "#fff0a0", x + width - 5, y + (height >> 1) - 1, 3, 3);
+  const glint = !still && Math.floor(elapsed * 6) % 2 === 0;
+  if (bitmap) {
+    drawPixelText(ctx, text, VIEW_W / 2, y + 4, glint ? "#fff0a0" : "#ffd070", {
+      scale,
+      align: "center",
+      shadow: "#3a0f16",
+      outline: true,
+    });
+    return;
+  }
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = glint ? "#fff0a0" : "#ffd070";
+  ctx.fillText(text, VIEW_W / 2, y + height / 2 + 0.5);
+};
+const PIXEL_ADVANCE = 4;
+const EPIC_SCALE = 2;
+const EPIC_Y = 22;
 const drawBannerQ = (ctx: Ctx, office: Office) => {
   const banner = office.banners[0];
   if (!banner) return;
   if (banner.start < 0) banner.start = office.realTime;
   const elapsed = office.realTime - banner.start;
   const slide = Math.min(1, elapsed / 0.25, Math.max(0, (banner.dur - elapsed) / 0.25));
+  if (banner.epic) return drawEpicBanner(ctx, banner, elapsed, slide, office.reducedMotion);
   const boss = banner.kind === "boss";
   const tier = banner.kind === "tier";
   ctx.font = boss ? "800 8px ui-sans-serif, system-ui, sans-serif" : WORLD_FONT;
@@ -3366,6 +3434,8 @@ const LORD_SLAM_EMBERS = 5;
 /** where the raiders' effects land on the Lord: his body, a little left of his feet column and up from his feet */
 const LORD_AIM_DX = 6;
 const LORD_AIM_DY = 18;
+const VOID_AIM_DY = 44;
+const HITTER_CHEST_DY = 12;
 const LORD_SHAKE_HZ = 40;
 
 /** the Lord's floor shakes only above this much shake, by up to this many px at full shake */
@@ -3473,6 +3543,7 @@ const drawLord = (ctx: Ctx, office: Office, time: number, still: boolean, pose: 
     return;
   }
   // down: the death sequence (kneel, cracks of light, white flash); after the burst nothing is left to draw
+  if (office.voidFight.phase !== "none") return; // the secret sequence owns the corpse (shatter) and then the floor
   const feet = dungeonLordPoint();
   drawLordDeath(ctx, office, time, still, feet.x, feet.y);
 };
@@ -3579,8 +3650,10 @@ const drawDungeonScene = (ctx: Ctx, office: Office, time: number) =>
 /** one dungeon floor; `mini` (the picture-in-picture on the guild scene) leaves out the tags, hover and the Lord's bar */
 const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number, mini: boolean) => {
   const still = office.reducedMotion;
-  const onLordFloor = floor >= DUNGEON_FLOORS;
+  const onLordFloor = floor === DUNGEON_FLOORS;
+  const onVoid = floor === VOID_FLOOR;
   const lord = office.lord;
+  const vs = office.voidFight;
   let shaken = false;
   if (onLordFloor) {
     // the fight's mood: braziers snuffed in the intro, lava surging when enraged, the empty throne dark
@@ -3593,14 +3666,38 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
       shaken = true;
     }
   }
-  drawDungeonBack(ctx, time, still, floor);
-  if (onLordFloor) drawLordFloorFx(ctx, office, time, still); // warnings and floor attacks: under every character
+  if (onVoid) {
+    const quake = voidQuakeAmp(vs, time, still);
+    if (!still && (vs.shake > LORD_SHAKE_MIN || quake > 0)) {
+      const amp = Math.max(quake, LORD_SHAKE_AMP * vs.shake * vs.shake);
+      ctx.save();
+      ctx.translate(Math.round((Math.random() * 2 - 1) * amp), Math.round((Math.random() * 2 - 1) * amp));
+      shaken = true;
+    }
+    drawVoidBack(ctx, time, still, voidBackView(vs, time, still));
+    drawVoidFloorFx(ctx, vs, time, still);
+  } else drawDungeonBack(ctx, time, still, floor);
+  if (onLordFloor) {
+    drawLordFloorFx(ctx, office, time, still); // warnings and floor attacks: under every character
+    drawVoidShatterFloor(ctx, vs, time, still, dungeonLordPoint().x, dungeonLordPoint().y);
+  }
   const raiders = office.dungeonRaiders().filter((emp) => !office.isHidden(emp) && emp.floor === floor);
   const ents: { y: number; fn: () => void }[] = [];
   if (raiders.length === 0 && floor === 1) ents.push({ y: 0, fn: () => drawSleepers(ctx, time, still) });
   const lordAt = lordPose(office, time, still);
+  if (onVoid) {
+    ents.push({ y: VOID_FEET_Y + VOID_HOVER_PX - 10, fn: () => drawVoidBoss(ctx, vs, time, still) });
+    vs.minions.forEach((minion, index) => {
+      if (minion.on) ents.push({ y: minion.y, fn: () => drawVoidMinion(ctx, minion, time, still, index) });
+    });
+  }
   if (onLordFloor) {
     ents.push({ y: lordAt.y, fn: () => drawLord(ctx, office, time, still, lordAt) });
+    if (vs.phase === "shatter") {
+      // one continuous moment from the killing blow: the Lord cracks and bursts where he stood fighting (never the throne)
+      const stand = dungeonLordPoint();
+      ents.push({ y: stand.y + 1, fn: () => drawVoidShatter(ctx, vs, time, still, stand.x, stand.y) });
+    }
     lord.minions.forEach((minion, index) => {
       if (minion.on) ents.push({ y: minion.y, fn: () => drawMinion(ctx, minion, time, still, index) });
     });
@@ -3609,15 +3706,19 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
   }
   let stackedOnLast = 0;
   raiders.forEach((emp) => {
-    const spot = office.raiderPoint(emp); // keyed by the overflow slot: nobody jumps when another raider leaves
+    const rest = office.raiderPoint(emp); // keyed by the overflow slot: nobody jumps when another raider leaves
+    // an attack of the Veiled One throws a raider it hit back from the boss for a beat (never under reduced motion)
+    const spot = onVoid && !still ? { x: rest.x + knockDx(time - emp.voidHitAt, emp.voidKnock), y: rest.y } : rest;
     const spotIndex = office.raidSpotIndex(emp);
     const home = dungeonSpotOf(spotIndex, floor);
     if (dungeonSpotIndex(spotIndex) === DUNGEON_LAST_SPOT) stackedOnLast++;
     const foePos = dungeonMonsterPoint(home);
-    const fighting = emp.stairsAt < 0 && (onLordFloor ? office.lord.hp > 0 : !!emp.raid && emp.raid.hp > 0);
+    const fighting =
+      emp.stairsAt < 0 &&
+      (onLordFloor ? office.lord.hp > 0 : onVoid ? voidFightingPhase(vs.phase) : !!emp.raid && emp.raid.hp > 0);
     const heldTime = frozenTime(emp, time);
     atSpot(emp, spot, () => {
-      hopDy = onLordFloor ? dodgeLift(time, emp.dodgeAt, still) : 0;
+      hopDy = onLordFloor || onVoid ? dodgeLift(time, emp.dodgeAt, still) : 0;
       drawTierLayers(ctx, emp, heldTime, fighting); // pre-pass: tier presence behind every character
       hopDy = 0;
     });
@@ -3626,14 +3727,18 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
       fn: () =>
         atSpot(emp, spot, () => {
           // a raider hops clear when a Lord attack reaches them
-          hopDy = onLordFloor ? dodgeLift(time, emp.dodgeAt, still) : 0;
+          hopDy = onLordFloor || onVoid ? dodgeLift(time, emp.dodgeAt, still) : 0;
           drawAdventurer(ctx, emp, heldTime, fighting);
           hopDy = 0;
         }),
     });
-    if (!onLordFloor) ents.push({ y: home.y, fn: () => drawRaidFoe(ctx, emp, time, still, foePos) });
+    if (!onLordFloor && !onVoid) ents.push({ y: home.y, fn: () => drawRaidFoe(ctx, emp, time, still, foePos) });
     // on floor 3 the class effect (arrow, spell bolt, slash arc) flies to the Lord's body, not to a foe spot beside the raider
-    const aim = onLordFloor ? { x: lordAt.x - LORD_AIM_DX, y: lordAt.y - LORD_AIM_DY } : undefined;
+    const aim = onLordFloor
+      ? { x: lordAt.x - LORD_AIM_DX, y: lordAt.y - LORD_AIM_DY }
+      : onVoid
+        ? { x: voidBossX(vs) - LORD_AIM_DX, y: VOID_FEET_Y + VOID_HOVER_PX - VOID_AIM_DY - 30 }
+        : undefined;
     ents.push({
       y: spot.y + 0.4,
       fn: () => atSpot(emp, spot, () => drawFx(ctx, emp, heldTime, office, fighting, aim)),
@@ -3647,7 +3752,8 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
   ents.sort((entA, entB) => entA.y - entB.y);
   drawParticles(ctx, office, true, floor);
   for (const entity of ents) entity.fn();
-  drawDungeonFront(ctx, time, still, floor);
+  if (onVoid) drawVoidFront(ctx, voidVariantOf(vs.phase));
+  else drawDungeonFront(ctx, time, still, floor);
   drawParticles(ctx, office, false, floor);
   if (onLordFloor) {
     if (!still) drawSlashes(ctx, lord, time, lordAt.x, lordAt.y);
@@ -3655,9 +3761,20 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
   }
   drawPopups(ctx, office, floor);
   drawSkillFx(ctx, office, floor, still, 0, VIEW_W);
+  if (onVoid) {
+    const hitterId = voidHitterId(vs);
+    const hitter = hitterId ? office.employees.get(hitterId) : undefined;
+    const from = hitter ? office.raiderPoint(hitter) : null;
+    drawVoidHits(ctx, vs, time, still, from ? from.x : 0, from ? from.y - HITTER_CHEST_DY : 0, from !== null);
+    drawVoidImpacts(ctx, vs, time, still);
+  }
+  // the secret sequence's text belongs to the Sanctum; on B3 only the shatter and the wipe have any
+  if (onVoid || (onLordFloor && (vs.phase === "shatter" || vs.phase === "transition")))
+    drawVoidTexts(ctx, vs, time, still);
   if (shaken) ctx.restore();
   if (mini) return;
   if (onLordFloor) drawLordBar(ctx, office, time);
+  if (onVoid) drawVoidBar(ctx, vs, time, still);
   raiders.forEach((emp) => {
     atSpot(emp, office.raiderPoint(emp), () => {
       drawOverhead(ctx, office, emp, time);
@@ -3686,23 +3803,27 @@ const drawLordPip = (ctx: Ctx, office: Office, time: number) => {
   layer.c.setTransform(1, 0, 0, 1, WING_W, 0);
   layer.c.fillStyle = "#0d0b16";
   layer.c.fillRect(VIEW_X0, 0, VIEW_W, WORLD_H);
-  drawDungeonFloor(layer.c, office, time, DUNGEON_FLOORS, true);
+  const pipFloor = office.pipFloor();
+  const onVoid = pipFloor === VOID_FLOOR;
+  drawDungeonFloor(layer.c, office, time, pipFloor, true);
   layer.c.restore();
   const { x, y, w, h } = LORD_PIP;
   const lord = office.lord;
-  const live = lord.hp > 0;
-  const frame = live ? "#d9481f" : "#f2c14e";
+  const vs = office.voidFight;
+  const live = onVoid ? voidFightingPhase(vs.phase) || vs.phase === "reveal" : lord.hp > 0;
+  const hpNow = onVoid ? Math.max(0, voidHpFrac(vs)) : lord.hp;
+  const frame = onVoid ? "#7a5af0" : live ? "#d9481f" : "#f2c14e";
   rect(ctx, INK, x - 2, y - 2, w + 4, h + 4);
   rect(ctx, frame, x - 1, y - 1, w + 2, h + 2);
   rect(ctx, "#2a1a24", x, y, w, h);
   // title strip (pixel font; characters it lacks, like the sword glyph, are skipped)
-  drawPixelText(ctx, PIP_TITLE, x + 4, y + 3, "#ffffff", { shadow: INK });
+  drawPixelText(ctx, onVoid ? PIP_TITLE_VOID : PIP_TITLE, x + 4, y + 3, "#ffffff", { shadow: INK });
   if (live && !office.reducedMotion && Math.sin(time * 6) > 0) rect(ctx, "#ff3b2a", x + w - 8, y + 3, 4, 4);
   else rect(ctx, live ? "#a8200f" : "#8d93a0", x + w - 8, y + 3, 4, 4);
   // the floor
   const picW = w - PIP_PAD * 2,
     picH = h - PIP_TITLE_H - PIP_BAR_H - PIP_PAD;
-  const srcY = Math.max(0, dungeonThronePoint().y - LORD_RISE_H - PIP_SRC_TOP_GAP);
+  const srcY = onVoid ? PIP_VOID_SRC_Y : Math.max(0, dungeonThronePoint().y - LORD_RISE_H - PIP_SRC_TOP_GAP);
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(layer.cv, PIP_SRC_X - VIEW_X0, srcY, PIP_SRC_W, PIP_SRC_H, x + PIP_PAD, y + PIP_TITLE_H, picW, picH);
   ctx.imageSmoothingEnabled = false; // the rest of the frame stays crisp pixel art
@@ -3711,13 +3832,23 @@ const drawLordPip = (ctx: Ctx, office: Office, time: number) => {
   const barW = w - PIP_PAD * 2;
   rect(ctx, "#5a1f2a", x + PIP_PAD, barY, barW, PIP_BAR_H - PIP_PAD);
   if (live) {
-    rect(ctx, "#d9481f", x + PIP_PAD, barY, Math.max(1, Math.round(barW * lord.hp)), PIP_BAR_H - PIP_PAD);
-    rect(ctx, "#ff8a2a", x + PIP_PAD, barY, Math.max(1, Math.round(barW * lord.hp)), 1);
+    rect(
+      ctx,
+      onVoid ? "#7a5af0" : "#d9481f",
+      x + PIP_PAD,
+      barY,
+      Math.max(1, Math.round(barW * hpNow)),
+      PIP_BAR_H - PIP_PAD,
+    );
+    rect(ctx, onVoid ? "#c9b3ff" : "#ff8a2a", x + PIP_PAD, barY, Math.max(1, Math.round(barW * hpNow)), 1);
   } else rect(ctx, "#8d93a0", x + PIP_PAD, barY, barW, PIP_BAR_H - PIP_PAD);
 };
 
 /** pixel-font labels (the 3x5 font has Latin capitals only, so these stay English in every locale) */
 const PIP_TITLE = "DUNGEON LORD B3";
+const PIP_TITLE_VOID = "THE VEILED ONE B4";
+/** the part of the Sanctum the inset shows starts this far down (the boss stands taller than the Lord) */
+const PIP_VOID_SRC_Y = 26;
 const RAID_FLAG_TEXT = "RAID";
 
 /** the flag standing at an empty battle spot while its adventurer raids the dungeon */
@@ -3770,7 +3901,25 @@ const drawScreenOverlays = (ctx: Ctx, office: Office) => {
     }
     office.flash = 0;
   }
+  drawVoidWipes(ctx, office);
   drawBannerQ(ctx, office);
+};
+
+/** the B3 -> B4 pixel-block wipe, over whichever view shows the sequence: the dungeon scene or the live inset */
+const drawVoidWipes = (ctx: Ctx, office: Office) => {
+  const vs = office.voidFight;
+  if (vs.phase !== "transition") return;
+  const feet = dungeonLordPoint();
+  if (office.scene === "dungeon") {
+    if (office.dungeonFloor >= DUNGEON_FLOORS)
+      drawVoidWipe(ctx, vs, office.clock, office.reducedMotion, 0, 0, VIEW_W, WORLD_H, feet.x + WING_W, feet.y - 26);
+    return;
+  }
+  if (!office.lordPip()) return;
+  // the inset lives in world coordinates (the guild scene is translated by WING_W); this layer is screen space
+  const { x, y, w, h } = LORD_PIP;
+  const left = x - VIEW_X0;
+  drawVoidWipe(ctx, vs, office.clock, office.reducedMotion, left, y, w, h, left + w / 2, y + h / 2);
 };
 
 export const drawScene = (ctx: Ctx, office: Office) => {
@@ -3869,12 +4018,12 @@ export const drawScene = (ctx: Ctx, office: Office) => {
 
   const ents: { y: number; fn: () => void }[] = [];
   let raidersInside = 0;
-  const raidersByFloor = new Array<number>(DUNGEON_FLOORS).fill(0);
+  const raidersByFloor = new Array<number>(office.voidOnFloor() ? VOID_FLOOR : DUNGEON_FLOORS).fill(0);
   for (const emp of office.employees.values()) {
     if (office.isHidden(emp)) continue;
     if (emp.inDungeon) {
       raidersInside++;
-      raidersByFloor[emp.floor - 1]++; // the badge counts only the raiders the session filter lets through (as the dungeon scene does)
+      if (emp.floor <= raidersByFloor.length) raidersByFloor[emp.floor - 1]++; // the badge counts only the raiders the session filter lets through (as the dungeon scene does)
       if (emp.deskIdx >= 0) {
         // a battle-spot adventurer out raiding: its empty spot keeps a small flag
         const spot = spotOf(emp.deskIdx);

@@ -314,6 +314,7 @@ describe("the Dungeon Lord boss fight: hit feel", () => {
 describe("the Dungeon Lord boss fight: death sequence", () => {
   it("rewards at once, but the burst, the banner and the fanfare wait for the end of the sequence", () => {
     const { office, fighters } = lordWith(1);
+    office.voidEnabled = false; // the Lord's own death sequence
     const lord = office.lord;
     lord.hp = 1 / lord.maxHp;
     const gold = fighters[0].gold;
@@ -351,6 +352,7 @@ describe("the Dungeon Lord boss fight: death sequence", () => {
 
   it("the raider walks home only after the sequence plus the usual linger", () => {
     const { office, fighters } = lordWith(1);
+    office.voidEnabled = false; // the Lord's own death sequence
     const raider = fighters[0];
     raider.raidIn = true;
     raider.raidEnteredAt = office.clock;
@@ -363,6 +365,7 @@ describe("the Dungeon Lord boss fight: death sequence", () => {
 
   it("under reduced motion the sequence is a short beat", () => {
     const { office, fighters } = lordWith(1);
+    office.voidEnabled = false; // the Lord's own death sequence
     office.reducedMotion = true;
     office.lord.hp = 1 / office.lord.maxHp;
     strike(office, fighters[0].id);
@@ -375,6 +378,7 @@ describe("the Dungeon Lord boss fight: death sequence", () => {
 
   it("a hit on a downed Lord does nothing, and the special attack state is cleared", () => {
     const { office, fighters } = lordWith(1);
+    office.voidEnabled = false; // the Lord's own death sequence
     const lord = office.lord;
     untilAttack(office);
     lord.hp = 1 / lord.maxHp;

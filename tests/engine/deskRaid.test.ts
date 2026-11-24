@@ -117,6 +117,7 @@ describe("heavy-work raid", () => {
 
   it("descends to B3, the Lord falls, the party is cheered and the raider walks home with its loot", () => {
     const office = newOffice();
+    office.voidEnabled = false; // the Lord's own death sequence
     const id = sid();
     const worker = seat(office, id);
     const desk = worker.deskIdx;

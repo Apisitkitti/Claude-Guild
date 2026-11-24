@@ -11,6 +11,7 @@ import { LORD_H } from "./dungeonLordSprite";
 import {
   DUNGEON_FLOORS,
   dungeonLordPoint,
+  dungeonSpotIndex,
   dungeonMonsterPoint,
   dungeonSpotOf,
   dungeonStairsPoint,
@@ -89,6 +90,7 @@ import {
   freshLord,
   growPool,
   LORD_HP_BASE,
+  lordMaxHp,
   nextAttackGap,
   pickAttack,
   planMeteors,
@@ -109,6 +111,134 @@ import {
 } from "./palette";
 import { BoardNotes, sanitizeQuests, type QuestMsgRow } from "./questNotes";
 import { drawScene } from "./render";
+import {
+  VOID_BANNER_S,
+  VOID_BANNER_TRUE_FORM_S,
+  VOID_BANNER_VICTORY_S,
+  VOID_BAR_EASE,
+  VOID_BEAM_HALF_PX,
+  VOID_BLINK_DX,
+  VOID_BODY_H,
+  VOID_COIN_COUNT,
+  VOID_COIN_SPREAD,
+  VOID_CRACK_EVERY_S,
+  VOID_CRIT_POP_S,
+  VOID_CRIT_POP_SCALE,
+  VOID_DEATH_CRACK_S,
+  VOID_DEATH_IMPLODE_S,
+  VOID_DODGE_CHANCE,
+  VOID_DYING_S,
+  VOID_ECLIPSE_DODGED_HEARTS,
+  VOID_ECLIPSE_HIT_HEARTS,
+  VOID_ECLIPSE_HURT_S,
+  VOID_FEET_Y,
+  VOID_FIRST_ATTACK_P2_S,
+  VOID_FIRST_ATTACK_P3_S,
+  VOID_FIRST_ATTACK_S,
+  VOID_FX_CRACK,
+  VOID_FX_CRIT,
+  VOID_FX_EYE,
+  VOID_FX_FLASH,
+  VOID_FX_HIT,
+  VOID_FX_HURT,
+  VOID_FX_IMPLODE,
+  VOID_FX_REVEAL,
+  VOID_FX_ROAR,
+  VOID_FX_SHATTER,
+  VOID_GOLD,
+  VOID_HEART_FLOOR,
+  VOID_HOME_X,
+  VOID_HP_MULT,
+  VOID_HURT_S,
+  VOID_KILLS,
+  VOID_LINE_DYING,
+  VOID_LINE_PHASE2,
+  VOID_LINE_PHASE3,
+  VOID_LINE_RETREAT,
+  VOID_LINE_SHATTER,
+  VOID_LINES_REVEAL,
+  VOID_PHASE2_BELOW,
+  VOID_PHASE3_BELOW,
+  VOID_POP_JITTER,
+  VOID_POP_LIFT,
+  VOID_POP_RISE,
+  VOID_PRAISE_TEXT,
+  VOID_REVEAL_S,
+  VOID_RETREAT_S,
+  VOID_ROAR_S,
+  VOID_SHAKE_BEAM,
+  VOID_SHAKE_COLLAPSE,
+  VOID_SHAKE_CRIT,
+  VOID_SHAKE_DEATH,
+  VOID_SHAKE_DECAY,
+  VOID_SHAKE_ECLIPSE,
+  VOID_SHAKE_FLASH,
+  VOID_SHAKE_REVEAL,
+  VOID_SHAKE_ROAR,
+  VOID_SHAKE_SHATTER,
+  VOID_SHAKE_TRUE_FORM,
+  VOID_SHAKE_VICTORY,
+  VOID_SHAKE_WIPE,
+  VOID_SHATTER_S,
+  VOID_SHOWER_COINS,
+  VOID_STEP_FLASH,
+  VOID_STEP_IMPLODE,
+  VOID_TRUE_FORM_S,
+  VOID_VICTORY_S,
+  VOID_WIPE_MID_S,
+  VOID_WIPE_S,
+  VOID_XP,
+  beginVoidAttack,
+  damageVoid,
+  freshVoidCtl,
+  pickVoidAttack,
+  resetVoid,
+  setVoidPhase,
+  spawnVoidEyes,
+  stopVoidAttack,
+  voidAttackPhase,
+  voidBeamArrive,
+  voidCollapseAt,
+  voidEyeCount,
+  voidFightingPhase,
+  voidHpFrac,
+  voidInvulnerable,
+  voidNextGap,
+  voidPhaseAge,
+  voidPhaseProgress,
+  voidSay,
+  voidVoice,
+  VOID_ARENA_X0,
+  VOID_ARENA_X1,
+  VOID_ARENA_Y0,
+  VOID_ARENA_Y1,
+  VOID_BLINK_STAY_S,
+  VOID_BODY_W,
+  VOID_HIT_Y_MAX,
+  VOID_HIT_Y_MIN,
+  VOID_MENACE_EVERY_S,
+  VOID_MINION_LIFE_S,
+  VOID_MINION_LIFT_PX,
+  VOID_MINION_POOF_S,
+  VOID_MINION_REACH_PX,
+  VOID_MINION_SPEED,
+  VOID_MINION_STRIKE_EVERY_S,
+  VOID_QUAKE_S,
+  VOID_STEP_S,
+  VOID_TAUNT_EVERY_S,
+  clearVoidMinion,
+  cutVoidBeats,
+  raiseVoidMinions,
+  takeVoidBeat,
+  voidStageFree,
+  voidMinionCount,
+  voidMinionsAlive,
+  voidNextTaunt,
+  voidSpotOf,
+  voidTauntLine,
+  type VoidCtl,
+} from "./voidFight";
+import { VOID_FLOOR, voidIdle, type VoidMinion, type VoidState } from "./voidTypes";
 
 // ---------------------------------------------------------------------------
 // Tuning constants. Every value below used to be an inline literal; names say what it means.
@@ -710,6 +840,8 @@ export const bellCount = (rows: readonly { kind: AttentionKind }[], withPermissi
   return count;
 };
 const SFX_QUEUE_MAX = 32;
+/** seconds a banner stays up unless it asks for longer */
+const BANNER_DEFAULT_S = 2.5;
 const ATTN_KINDS: readonly string[] = ["permission", "loop", "asked", "context", "done", "limit"];
 const ATTN_DETAIL_MAX = 60;
 /** longest model id kept per adventurer */
@@ -1223,6 +1355,9 @@ export interface Employee {
   hurtUntil: number;
   /** clock time the raider last hopped out of the way of a Dungeon Lord attack (-99 = never) */
   dodgeAt: number;
+  /** clock time a Veiled One attack last landed on this raider (-99 = never) and which way they are knocked (-1 left, 1 right) */
+  voidHitAt: number;
+  voidKnock: number;
   /** monster at the battle spot */
   monKind: MonsterKind;
   monPos: Pt | null;
@@ -1444,6 +1579,8 @@ export interface Banner {
   pixel?: boolean;
   start: number;
   dur: number;
+  /** the secret boss's banners: drawn bigger than any other (the renderer decides how) */
+  epic?: boolean;
 }
 export interface Butterfly {
   x: number;
@@ -1866,7 +2003,7 @@ export class Office {
   /** the dungeon floor on screen, 1..3 (default: the floor with the most raiders when the scene opens) */
   dungeonFloor = 1;
   setDungeonFloor(floor: number) {
-    const next = Math.min(Math.max(1, Math.round(floor) || 1), DUNGEON_FLOORS);
+    const next = Math.min(Math.max(1, Math.round(floor) || 1), this.voidOnFloor() ? VOID_FLOOR : DUNGEON_FLOORS);
     if (next === this.dungeonFloor) return;
     this.dungeonFloor = next;
     this.hoverId = null;
@@ -1876,20 +2013,29 @@ export class Office {
   busiestFloor(): number {
     const counts = this.floorCounts();
     let best = 1;
-    for (let floor = 2; floor <= DUNGEON_FLOORS; floor++) if (counts[floor - 1] > counts[best - 1]) best = floor;
+    for (let floor = 2; floor <= counts.length; floor++) if (counts[floor - 1] > counts[best - 1]) best = floor;
     return best;
   }
   /** visible raiders per floor (index 0 = B1) */
   floorCounts(): number[] {
-    const counts = new Array<number>(DUNGEON_FLOORS).fill(0);
-    for (const emp of this.employees.values()) if (emp.inDungeon && !this.isHidden(emp)) counts[emp.floor - 1]++;
+    const counts = new Array<number>(this.voidOnFloor() ? VOID_FLOOR : DUNGEON_FLOORS).fill(0);
+    for (const emp of this.employees.values())
+      if (emp.inDungeon && !this.isHidden(emp) && emp.floor <= counts.length) counts[emp.floor - 1]++;
     return counts;
   }
   private pipShown = false;
   /** the Dungeon Lord on floor 3 */
   readonly lord: DungeonLord = freshLord();
+  /** the secret final boss in the Void Sanctum (floor 4); only the engine writes it (rules: voidFight.ts) */
+  readonly voidFight: VoidState = voidIdle();
+  private voidCtl: VoidCtl = freshVoidCtl();
+  /** the secret boss follows the Dungeon Lord's fall (tests of the Lord's own death sequence switch it off) */
+  voidEnabled = true;
+  private readonly lordBuf: Employee[] = [];
+  private readonly voidBuf: Employee[] = [];
   /** where a raider stands right now: their spot on their floor, or on the way to the stairs while descending */
   raiderPoint(emp: Employee): Pt {
+    if (emp.floor === VOID_FLOOR && emp.stairsAt < 0) return this.voidSpot(emp);
     const spot = dungeonSpotOf(this.raidSpotIndex(emp), emp.floor);
     if (emp.stairsAt < 0) return spot;
     const stairs = dungeonStairsPoint(emp.floor);
@@ -2532,6 +2678,8 @@ export class Office {
     this.scene = "guild";
     this.dungeonFloor = 1;
     Object.assign(this.lord, freshLord());
+    Object.assign(this.voidFight, voidIdle());
+    this.voidCtl = freshVoidCtl();
     this.pipShown = false;
     this.stats = { since: Date.now(), entered: 0, left: 0, monsters: 0, bosses: 0, longestBossS: 0, waitS: 0 };
     this.tools.clear();
@@ -3529,7 +3677,7 @@ export class Office {
         raiders++;
         if (!this.isHidden(emp)) {
           raidersShown++;
-          floorRaiders[emp.floor - 1]++;
+          floorRaiders[Math.min(emp.floor, DUNGEON_FLOORS) - 1]++; // the Void Sanctum counts with B3
         }
       }
       if (emp.boss) bossesAlive++;
@@ -3647,6 +3795,7 @@ export class Office {
       case "FROM_RAID":
         return m.dungeon_lord_status_from_raid();
     }
+    if (emp.inDungeon && emp.floor === VOID_FLOOR && emp.act !== "handup") return m.dungeon_lord_status_void();
     if (emp.raidIn && emp.act !== "handup") return m.dungeon_lord_status_raiding();
     if (emp.hurtUntil > this.clock) return m.status_hurt();
     if (emp.boss && emp.act !== "handup") return m.status_boss();
@@ -3720,6 +3869,7 @@ export class Office {
   // ---------- update ----------
   update(rawDt: number) {
     this.updateDungeon();
+    this.updateVoid();
     this.realTime += rawDt;
     if (this.selectedId && this.realTime > this.selectedUntil) {
       this.selectedId = null;
@@ -3735,8 +3885,11 @@ export class Office {
     if (this.trauma > 0) this.trauma = Math.max(0, this.trauma - rawDt * TRAUMA_DECAY);
     if (this.flash > 0) this.flash = Math.max(0, this.flash - rawDt * 2);
     if (this.lord.shake > 0) this.lord.shake = Math.max(0, this.lord.shake - rawDt * LORD_SHAKE_DECAY);
+    if (this.voidFight.shake > 0) this.voidFight.shake = Math.max(0, this.voidFight.shake - rawDt * VOID_SHAKE_DECAY);
     const ease = this.reducedMotion ? 1 : Math.min(1, rawDt * LORD_BAR_EASE);
     this.lord.shown += (this.lord.hp - this.lord.shown) * ease;
+    const voidEase = this.reducedMotion ? 1 : Math.min(1, rawDt * VOID_BAR_EASE);
+    this.voidFight.shown += (voidHpFrac(this.voidFight) - this.voidFight.shown) * voidEase;
     const dt = this.paused ? 0 : rawDt * this.speed;
     if (dt <= 0) return;
     this.clock += dt;
@@ -3865,8 +4018,8 @@ export class Office {
     if (this.popups.length > MAX_POPUPS) this.popups.splice(0, this.popups.length - MAX_POPUPS);
   }
 
-  private addBanner(kind: Banner["kind"], text: string, pixel = false) {
-    this.banners.push({ kind, text, pixel, start: -1, dur: 2.5 });
+  private addBanner(kind: Banner["kind"], text: string, pixel = false, dur = BANNER_DEFAULT_S, epic = false) {
+    this.banners.push({ kind, text, pixel, start: -1, dur, epic });
     if (this.banners.length > MAX_BANNERS) this.banners.splice(1, this.banners.length - MAX_BANNERS);
   }
 
@@ -4422,7 +4575,13 @@ export class Office {
       this.endRaid(emp);
       return;
     }
-    if (emp.floor >= DUNGEON_FLOORS && this.lord.hp <= 0 && emp.raidDoneAt < 0) emp.raidDoneAt = this.clock;
+    if (
+      emp.floor === DUNGEON_FLOORS &&
+      this.lord.hp <= 0 &&
+      emp.raidDoneAt < 0 &&
+      !(this.voidActive() && !this.voidCtl.moved)
+    )
+      emp.raidDoneAt = this.clock;
     const done = emp.raidDoneAt >= 0 && this.clock - emp.raidDoneAt >= RAID_LINGER_S;
     const tired = this.clock - emp.raidEnteredAt >= RAID_MAX_S;
     const idle = emp.pending.size === 0 && this.clock - emp.lastEventAt > RAID_IDLE_S;
@@ -4432,6 +4591,7 @@ export class Office {
   /** the raider leaves the dungeon and walks back out to its battle spot */
   private endRaid(emp: Employee) {
     if (!emp.raidIn) return;
+    if (emp.floor === VOID_FLOOR) emp.hearts = MAX_HEARTS; // the Veiled One's blows do not follow them home
     emp.raidIn = false;
     emp.raidSlot = -1;
     emp.raidEnteredAt = -1;
@@ -4509,15 +4669,18 @@ export class Office {
 
   /** the live Lord inset is up: a visible raider fights a live Lord, or it fell a moment ago */
   lordPip(): boolean {
+    if (this.voidActive())
+      return this.dungeonRaiders().some((emp) => emp.floor >= DUNGEON_FLOORS && !this.isHidden(emp));
     if (this.lord.hp > 0) return this.lordFighters().some((emp) => !this.isHidden(emp));
     return this.lord.slain > 0 && this.clock - this.lord.deadAt < LORD_PIP_AFTER_S;
   }
 
-  /** raiders standing on B3 (not on the stairs), other than `except` */
+  /** raiders standing on B3 (not on the stairs), other than `except` (a reused buffer: valid until the next call) */
   lordFighters(except?: Employee): Employee[] {
-    const out: Employee[] = [];
+    const out = this.lordBuf;
+    out.length = 0;
     for (const emp of this.employees.values())
-      if (emp !== except && emp.inDungeon && emp.floor >= DUNGEON_FLOORS && emp.stairsAt < 0) out.push(emp);
+      if (emp !== except && emp.inDungeon && emp.floor === DUNGEON_FLOORS && emp.stairsAt < 0) out.push(emp);
     return out;
   }
 
@@ -4535,7 +4698,7 @@ export class Office {
     let fighting = 0;
     if (lord.hp > 0)
       for (const emp of this.employees.values())
-        if (emp.inDungeon && emp.floor >= DUNGEON_FLOORS && emp.stairsAt < 0) fighting++;
+        if (emp.inDungeon && emp.floor === DUNGEON_FLOORS && emp.stairsAt < 0) fighting++;
     if (fighting && this.clock >= lord.nextStrikeAt) this.lordStrike();
     if (fighting && lord.engagedAt < 0) {
       lord.engagedAt = this.clock;
@@ -4572,8 +4735,13 @@ export class Office {
 
   /** run `emit` with its effects tagged to floor 3 */
   private onLordFloor(emit: () => void) {
+    this.onFloor(DUNGEON_FLOORS, emit);
+  }
+
+  /** run `emit` with its effects tagged to `floor` */
+  private onFloor(floor: number, emit: () => void) {
     const prev = this.fxDungeon;
-    this.fxDungeon = DUNGEON_FLOORS;
+    this.fxDungeon = floor;
     try {
       emit();
     } finally {
@@ -4585,7 +4753,7 @@ export class Office {
   private lordFighterAt(index: number): Employee | null {
     let at = 0;
     for (const emp of this.employees.values())
-      if (emp.inDungeon && emp.floor >= DUNGEON_FLOORS && emp.stairsAt < 0 && at++ === index) return emp;
+      if (emp.inDungeon && emp.floor === DUNGEON_FLOORS && emp.stairsAt < 0 && at++ === index) return emp;
     return null;
   }
 
@@ -4631,7 +4799,7 @@ export class Office {
     const lord = this.lord;
     let fighters = 0;
     for (const emp of this.employees.values())
-      if (emp.inDungeon && emp.floor >= DUNGEON_FLOORS && emp.stairsAt < 0) fighters++;
+      if (emp.inDungeon && emp.floor === DUNGEON_FLOORS && emp.stairsAt < 0) fighters++;
     if (!fighters) return;
     const kind = pickAttack(lord.atk.prev, Math.random());
     const victim = this.lordFighterAt(Math.floor(Math.random() * fighters) % fighters);
@@ -4641,7 +4809,7 @@ export class Office {
     if (kind === ATTACK_METEOR)
       planMeteors(lord, lord.atk.hitAt, lord.enragedAt >= 0 ? METEORS_ENRAGED : METEORS_CALM, (x, y, radius) => {
         for (const emp of this.employees.values()) {
-          if (!emp.inDungeon || emp.floor < DUNGEON_FLOORS) continue;
+          if (!emp.inDungeon || emp.floor !== DUNGEON_FLOORS) continue;
           const spot = this.raiderPoint(emp);
           if (Math.abs(spot.x - x) < radius && Math.abs(spot.y - y) < radius) return true;
         }
@@ -4740,7 +4908,7 @@ export class Office {
           ),
         );
         for (const emp of this.employees.values()) {
-          if (!emp.inDungeon || emp.floor < DUNGEON_FLOORS || emp.stairsAt >= 0) continue;
+          if (!emp.inDungeon || emp.floor !== DUNGEON_FLOORS || emp.stairsAt >= 0) continue;
           const spot = this.raiderPoint(emp);
           if (Math.hypot(spot.x - meteor.x, (spot.y - meteor.y) / WAVE_SQUASH / 2) < METEOR_BLAST_PX)
             this.lordDodge(emp, emp.id === atk.targetId && emp.dodgeAt < atk.hitAt);
@@ -4752,7 +4920,7 @@ export class Office {
     const mouthX = feet.x + MOUTH_DX,
       mouthY = feet.y + MOUTH_DY;
     for (const emp of this.employees.values()) {
-      if (!emp.inDungeon || emp.floor < DUNGEON_FLOORS || emp.stairsAt >= 0 || emp.dodgeAt >= atk.hitAt) continue;
+      if (!emp.inDungeon || emp.floor !== DUNGEON_FLOORS || emp.stairsAt >= 0 || emp.dodgeAt >= atk.hitAt) continue;
       const spot = this.raiderPoint(emp);
       let arrive: number;
       if (atk.kind === ATTACK_SLAM) {
@@ -4806,7 +4974,7 @@ export class Office {
     if (lord.hp <= 0) return;
     let standing = 0;
     for (const other of this.employees.values())
-      if (other.inDungeon && other.floor >= DUNGEON_FLOORS && other.stairsAt < 0) standing++;
+      if (other.inDungeon && other.floor === DUNGEON_FLOORS && other.stairsAt < 0) standing++;
     if (growPool(lord, standing, this.lordTierAvg())) this.bumpStats();
     lord.hp = Math.max(0, lord.hp - dmg / lord.maxHp);
     if (lord.hp < LORD_HP_EPSILON) lord.hp = 0; // float residue of many small hits
@@ -4857,13 +5025,17 @@ export class Office {
       if (lord.enragedAt < 0 && lord.hp < ENRAGE_BELOW) this.enrageLord();
       return;
     }
+    // raiders on B3 when he falls: his corpse was only a puppet, the shatter IS his death (no finale of his own)
+    const toVoid = this.voidEnabled && this.voidFight.phase === "none" && this.lordFighters().length > 0;
     lord.deadAt = this.clock;
-    lord.finaleAt = -1;
+    lord.finaleAt = toVoid ? this.clock : -1;
     lord.slain++;
     this.stats.bosses++;
     stopAttacks(lord);
-    this.sfx("lordDeath");
-    this.lordShake(LORD_DEATH_SHAKE);
+    if (!toVoid) {
+      this.sfx("lordDeath");
+      this.lordShake(LORD_DEATH_SHAKE);
+    }
     const finale = deathLength(this.reducedMotion);
     for (const raider of this.dungeonRaiders()) {
       if (raider.floor !== DUNGEON_FLOORS) continue;
@@ -4872,7 +5044,7 @@ export class Office {
       raider.gold += LORD_GOLD;
       raider.qGold += LORD_GOLD;
       this.treasury += LORD_GOLD;
-      raider.raidDoneAt = this.clock + finale; // they linger after the burst, not before it
+      raider.raidDoneAt = toVoid ? -1 : this.clock + finale; // they linger after the burst, not before it
     }
     const slayer = this.dungeonRaiders().find((raider) => raider.floor === DUNGEON_FLOORS) ?? emp;
     this.log.unshift({
@@ -4891,6 +5063,7 @@ export class Office {
     });
     if (this.log.length > LOG_MAX) this.log.length = LOG_MAX;
     this.bumpStats();
+    if (toVoid) this.beginVoid();
   }
 
   /** below half hp: flame aura, bigger flames, a surge of lava, faster attacks, a banner and a roar */
@@ -4964,6 +5137,884 @@ export class Office {
     });
   }
 
+  // ---------- the secret final boss: the Veiled One (timings, scaling and patterns: voidFight.ts) ----------
+  /** the secret fight is on (or about to begin), from the Lord's fall to the last beat of the victory or retreat */
+  voidActive(): boolean {
+    return this.voidFight.phase !== "none";
+  }
+
+  /** the raiders were moved to the Void Sanctum: floor 4 can be viewed (from the wipe's midpoint to the end) */
+  voidOnFloor(): boolean {
+    return this.voidFight.phase !== "none" && this.voidCtl.moved;
+  }
+
+  /** the floor the live inset shows: the Sanctum while the secret fight is on it, B3 otherwise */
+  pipFloor(): number {
+    return this.voidOnFloor() ? VOID_FLOOR : DUNGEON_FLOORS;
+  }
+
+  /** the line the Veiled One is shouting right now ("" when quiet) */
+  voidLine(): string {
+    return voidVoice(this.voidFight, this.clock);
+  }
+
+  /** seconds into the current secret phase */
+  voidAge(): number {
+    return voidPhaseAge(this.voidFight, this.clock);
+  }
+
+  /** 0..1 through the current timed phase (shatter, transition, reveal, dying, victory, retreat) */
+  voidProgress(): number {
+    return voidPhaseProgress(this.voidFight, this.clock);
+  }
+
+  /** the boss cannot be hurt right now (reveal, the roar, TRUE FORM, the death) */
+  voidInvulnerable(): boolean {
+    return voidInvulnerable(this.voidFight, this.clock);
+  }
+
+  /** raiders standing in the Void Sanctum (a reused buffer: valid until the next call) */
+  voidFighters(): Employee[] {
+    const out = this.voidBuf;
+    out.length = 0;
+    for (const emp of this.employees.values()) if (emp.inDungeon && emp.floor === VOID_FLOOR) out.push(emp);
+    return out;
+  }
+
+  /** a Sanctum raider's spot: they walk from the B3 ring up to the arc in front of the boss when the reveal begins */
+  private voidSpot(emp: Employee): Pt {
+    const slot = dungeonSpotIndex(this.raidSpotIndex(emp));
+    const to = { x: 0, y: 0 };
+    voidSpotOf(slot, emp.look.cls, to);
+    const stepAt = this.voidCtl.stepAt;
+    if (stepAt < 0) return dungeonSpotOf(slot, DUNGEON_FLOORS);
+    const progress = this.reducedMotion ? 1 : Math.min(1, Math.max(0, (this.clock - stepAt) / VOID_STEP_S));
+    const from = dungeonSpotOf(slot, DUNGEON_FLOORS);
+    return { x: from.x + (to.x - from.x) * progress, y: from.y + (to.y - from.y) * progress };
+  }
+
+  private voidTierAvg(fighters: Employee[]): number {
+    let total = 0;
+    for (const fighter of fighters) total += gearTier(fighter.lv);
+    return fighters.length ? total / fighters.length : 0;
+  }
+
+  /** shake the Sanctum (and the inset that shows it); never under reduced motion */
+  private voidShake(amount: number, atLeast = false) {
+    if (this.reducedMotion) return;
+    const boss = this.voidFight;
+    boss.shake = atLeast ? Math.max(boss.shake, amount) : Math.min(1, boss.shake + amount);
+  }
+
+  /** the boss's body centre, for effects */
+  private voidBody(): Pt {
+    return { x: this.voidFight.x, y: VOID_FEET_Y - VOID_BODY_H / 2 };
+  }
+
+  /** record a big attack impact for the renderer */
+  private voidImpact(x: number, y: number) {
+    const boss = this.voidFight;
+    boss.voidImpactAt = this.clock;
+    boss.voidImpactX = x;
+    boss.voidImpactY = y;
+  }
+
+  /** queue a banner (and then a voice line): they take turns and never overlap */
+  private voidBeats(banner: { text: string; dur: number } | null, line: string | null) {
+    const ctl = this.voidCtl;
+    if (banner) ctl.beats.push({ at: this.clock, banner });
+    if (line) ctl.beats.push({ at: this.clock, line });
+    this.playVoidBeats();
+  }
+
+  private playVoidBeats() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl;
+    for (let beat = takeVoidBeat(ctl, this.clock); beat; beat = takeVoidBeat(ctl, this.clock)) {
+      if (beat.banner) this.addBanner("boss", beat.banner.text, true, beat.banner.dur, true);
+      if (beat.line) voidSay(boss, this.clock, beat.line);
+    }
+  }
+
+  /** the Lord is gone and raiders still stand on B3: his corpse shatters */
+  private beginVoid() {
+    const fighters = this.lordFighters();
+    if (!fighters.length || this.voidFight.phase !== "none") return;
+    const boss = this.voidFight;
+    resetVoid(boss, this.voidCtl);
+    setVoidPhase(boss, this.clock, "shatter");
+    boss.x = VOID_HOME_X;
+    const lordAt = dungeonLordPoint();
+    boss.lordX = lordAt.x;
+    boss.lordY = lordAt.y;
+    boss.lordEnraged = this.lord.enragedAt >= 0;
+    this.voidBeats(null, VOID_LINE_SHATTER);
+    for (const raider of fighters) raider.raidDoneAt = -1; // nobody walks home: the raid goes on below
+    this.sfx("voidShatter");
+    this.voidShake(VOID_SHAKE_SHATTER);
+    const at = dungeonLordPoint();
+    this.onFloor(DUNGEON_FLOORS, () =>
+      this.burst(
+        at.x,
+        at.y - LORD_H / 2,
+        VOID_FX_SHATTER.n,
+        VOID_FX_SHATTER.cols,
+        VOID_FX_SHATTER.speed,
+        VOID_FX_SHATTER.gravity,
+        VOID_FX_SHATTER.life,
+        1,
+        true,
+      ),
+    );
+    this.bumpStats();
+  }
+
+  /** advance the secret fight's phases; called every frame */
+  private updateVoid() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      clock = this.clock,
+      age = voidPhaseAge(boss, clock);
+    if (boss.phase === "none") return;
+    this.playVoidBeats();
+    switch (boss.phase) {
+      case "shatter":
+        if (!this.lordFighters().length) this.endVoid();
+        else if (age >= VOID_SHATTER_S) this.startVoidWipe();
+        return;
+      case "transition":
+        if (!ctl.moved) {
+          if (age >= VOID_WIPE_MID_S) {
+            if (this.lordFighters().length) this.moveRaidersToVoid();
+            else this.endVoid();
+          }
+          return;
+        }
+        if (!this.voidFighters().length) this.endVoid();
+        else if (age >= VOID_WIPE_S) this.startVoidReveal();
+        return;
+      case "reveal":
+        if (!this.voidFighters().length || this.voidAllIdle()) this.startVoidRetreat();
+        else if (age >= VOID_REVEAL_S) this.startVoidFight();
+        return;
+      case "fight":
+      case "phase2":
+      case "phase3":
+        if (!this.voidFighters().length || this.voidAllIdle()) this.startVoidRetreat();
+        else this.tickVoidFight();
+        return;
+      case "dying":
+        this.tickVoidDeath(age);
+        if (age >= VOID_DYING_S) this.voidVictory();
+        return;
+      case "victory":
+        if (age >= VOID_VICTORY_S) this.endVoid();
+        return;
+      case "retreat":
+        if (age >= VOID_RETREAT_S) this.endVoid();
+        return;
+    }
+  }
+
+  /** every raider in the Sanctum went quiet (its session sent nothing for RAID_IDLE_S): the boss gives up */
+  private voidAllIdle(): boolean {
+    for (const emp of this.voidFighters()) if (this.clock - emp.lastEventAt <= RAID_IDLE_S) return false;
+    return true;
+  }
+
+  /** the secret fight is over (or never began): raiders still down there go back to B3, the camera follows */
+  private endVoid() {
+    for (const emp of this.employees.values()) {
+      if (!emp.inDungeon || emp.floor !== VOID_FLOOR) continue;
+      emp.floor = DUNGEON_FLOORS;
+      emp.floorKills = 0;
+      emp.stairsAt = -1;
+      emp.raid = null;
+      emp.hearts = MAX_HEARTS;
+    }
+    resetVoid(this.voidFight, this.voidCtl);
+    if (this.dungeonFloor === VOID_FLOOR) this.setDungeonFloor(DUNGEON_FLOORS);
+    this.bumpStats();
+  }
+
+  private startVoidWipe() {
+    setVoidPhase(this.voidFight, this.clock, "transition");
+    this.sfx("voidWipe");
+    this.voidShake(VOID_SHAKE_WIPE);
+    this.bumpStats();
+  }
+
+  /** the wipe is opaque: every B3 raider appears in the Sanctum, and the camera follows */
+  private moveRaidersToVoid() {
+    this.voidCtl.moved = true;
+    for (const emp of this.lordFighters()) {
+      emp.floor = VOID_FLOOR;
+      emp.floorKills = 0;
+      emp.stairsAt = -1;
+      emp.raid = null;
+      emp.raidDoneAt = -1;
+      emp.dodgeAt = -99;
+      emp.voidHitAt = -99;
+    }
+    if (this.scene === "dungeon" && this.dungeonFloor === DUNGEON_FLOORS) this.setDungeonFloor(VOID_FLOOR);
+    this.hoverId = null;
+    this.bumpStats();
+  }
+
+  /** the Veiled One descends: the pool is locked now, and nobody can hurt it yet */
+  private startVoidReveal() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      clock = this.clock,
+      fighters = this.voidFighters();
+    setVoidPhase(boss, clock, "reveal");
+    ctl.stepAt = clock; // the raiders walk up to the boss
+    boss.maxHp = Math.max(1, Math.round(lordMaxHp(fighters.length, this.voidTierAvg(fighters)) * VOID_HP_MULT));
+    boss.hp = boss.maxHp;
+    boss.shown = 0;
+    boss.x = VOID_HOME_X;
+    boss.invulnUntil = clock + VOID_REVEAL_S;
+    cutVoidBeats(boss, ctl, clock);
+    this.voidBeats(
+      { text: m.void_banner_reveal(), dur: VOID_BANNER_S },
+      VOID_LINES_REVEAL[boss.kills % VOID_LINES_REVEAL.length],
+    );
+    this.sfx("voidReveal");
+    this.voidShake(VOID_SHAKE_REVEAL);
+    const body = this.voidBody();
+    this.onFloor(VOID_FLOOR, () =>
+      this.burst(
+        body.x,
+        body.y,
+        VOID_FX_REVEAL.n,
+        VOID_FX_REVEAL.cols,
+        VOID_FX_REVEAL.speed,
+        VOID_FX_REVEAL.gravity,
+        VOID_FX_REVEAL.life,
+        1,
+        true,
+      ),
+    );
+    this.bumpStats();
+  }
+
+  private startVoidFight() {
+    const ctl = this.voidCtl;
+    setVoidPhase(this.voidFight, this.clock, "fight");
+    ctl.nextAttackAt = this.clock + VOID_FIRST_ATTACK_S;
+    ctl.nextTauntAt = this.clock + VOID_TAUNT_EVERY_S / 2;
+    ctl.nextMenaceAt = this.clock;
+    this.bumpStats();
+  }
+
+  /** every minion crumbles (a phase changed, or the fight ended) */
+  private clearVoidMinions() {
+    const boss = this.voidFight;
+    for (const minion of boss.minions) if (minion.on && minion.clearedAt < 0) minion.clearedAt = this.clock;
+    boss.shielded = false;
+  }
+
+  /** below 60% hp: the veil tears, a short invulnerable roar, then faster attacks (and the collapse) */
+  private startVoidPhase2() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      clock = this.clock;
+    setVoidPhase(boss, clock, "phase2");
+    boss.phase2At = clock;
+    boss.invulnUntil = clock + VOID_ROAR_S;
+    stopVoidAttack(boss, clock);
+    this.clearVoidMinions();
+    ctl.nextAttackAt = boss.invulnUntil + VOID_FIRST_ATTACK_P2_S;
+    ctl.nextTauntAt = boss.invulnUntil + VOID_TAUNT_EVERY_S / 2;
+    cutVoidBeats(boss, ctl, clock);
+    this.voidBeats({ text: m.void_banner_phase2(), dur: VOID_BANNER_S }, VOID_LINE_PHASE2);
+    this.sfx("voidPhase2");
+    this.voidShake(VOID_SHAKE_ROAR);
+    const body = this.voidBody();
+    this.onFloor(VOID_FLOOR, () =>
+      this.burst(
+        body.x,
+        body.y,
+        VOID_FX_ROAR.n,
+        VOID_FX_ROAR.cols,
+        VOID_FX_ROAR.speed,
+        VOID_FX_ROAR.gravity,
+        VOID_FX_ROAR.life,
+        1,
+        true,
+      ),
+    );
+    this.bumpStats();
+  }
+
+  /** below 25% hp: the TRUE FORM cinematic (invulnerable, shaking), then desperate attacks with the eclipse */
+  private startVoidPhase3() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      clock = this.clock;
+    setVoidPhase(boss, clock, "phase3");
+    boss.phase3At = clock;
+    boss.invulnUntil = clock + VOID_TRUE_FORM_S;
+    stopVoidAttack(boss, clock);
+    this.clearVoidMinions();
+    ctl.nextAttackAt = boss.invulnUntil + VOID_FIRST_ATTACK_P3_S;
+    ctl.nextTauntAt = boss.invulnUntil + VOID_TAUNT_EVERY_S / 2;
+    ctl.phase3Count = 0;
+    cutVoidBeats(boss, ctl, clock);
+    this.voidBeats({ text: m.void_banner_true_form(), dur: VOID_BANNER_TRUE_FORM_S }, VOID_LINE_PHASE3);
+    this.sfx("voidTrueForm");
+    this.voidShake(VOID_SHAKE_TRUE_FORM, true);
+    const body = this.voidBody();
+    this.onFloor(VOID_FLOOR, () =>
+      this.burst(
+        body.x,
+        body.y,
+        VOID_FX_FLASH.n,
+        VOID_FX_FLASH.cols,
+        VOID_FX_FLASH.speed,
+        VOID_FX_FLASH.gravity,
+        VOID_FX_FLASH.life,
+        1,
+        true,
+      ),
+    );
+    this.bumpStats();
+  }
+
+  /** the pool is spent: the multi-stage death (no victory plaque until it has played out) */
+  private startVoidDying() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      clock = this.clock;
+    boss.hp = 0;
+    setVoidPhase(boss, clock, "dying");
+    boss.dyingAt = clock;
+    boss.invulnUntil = Infinity;
+    stopVoidAttack(boss, clock);
+    this.clearVoidMinions();
+    ctl.nextAttackAt = -1;
+    ctl.deathStep = 0;
+    ctl.crackAt = clock;
+    cutVoidBeats(boss, ctl, clock);
+    this.voidBeats(null, VOID_LINE_DYING);
+    this.sfx("voidDeath");
+    this.voidShake(VOID_SHAKE_DEATH);
+    this.bumpStats();
+  }
+
+  /** every raider left the Sanctum before the kill: the boss fades out laughing */
+  private startVoidRetreat() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      clock = this.clock;
+    setVoidPhase(boss, clock, "retreat");
+    stopVoidAttack(boss, clock);
+    this.clearVoidMinions();
+    ctl.nextAttackAt = -1;
+    cutVoidBeats(boss, ctl, clock);
+    this.voidBeats({ text: m.void_banner_retreat(), dur: VOID_BANNER_S }, VOID_LINE_RETREAT);
+    this.sfx("voidBlink");
+    this.bumpStats();
+  }
+
+  /** a tool finished with a raider in the Sanctum: the same hit rules as the Lord (tier crit and damage, class skills) */
+  private voidRaidHit(emp: Employee, tool: string) {
+    const boss = this.voidFight;
+    if (boss.phase === "reveal" || (voidFightingPhase(boss.phase) && this.clock < boss.invulnUntil)) {
+      boss.blockedAt = this.clock; // the shield ripple: the hit is blocked and nothing was applied
+      return;
+    }
+    if (!voidFightingPhase(boss.phase)) return;
+    const roll = this.rollHit(emp, tool);
+    const minion = boss.shielded ? clearVoidMinion(boss, this.clock) : null;
+    if (minion) this.voidHitMinion(emp, minion, roll.crit);
+    else this.voidHit(emp, roll.dmg, roll.crit);
+    if (roll.skill) {
+      const target = minion
+        ? { x: minion.x, y: minion.y - VOID_MINION_LIFT_PX }
+        : { x: boss.lastHitX, y: boss.lastHitY };
+      this.castSkill(emp, roll.skill, this.raiderPoint(emp), target);
+    }
+  }
+
+  /** the shield: a hit kills a minion instead of hurting the boss */
+  private voidHitMinion(emp: Employee, minion: VoidMinion, crit: boolean) {
+    const boss = this.voidFight;
+    boss.shielded = voidMinionsAlive(boss) > 0;
+    boss.blockedAt = this.clock;
+    boss.lastHitX = minion.x;
+    boss.lastHitY = minion.y - VOID_MINION_LIFT_PX;
+    boss.lastHitDmg = 0;
+    boss.lastHitCrit = crit;
+    boss.lastHitAt = this.clock;
+    boss.lastHitId = emp.id;
+    boss.lastHitMinion = true;
+    this.sfx("hit");
+    this.fxFor(emp, () =>
+      this.burst(
+        minion.x,
+        minion.y - VOID_MINION_LIFT_PX,
+        VOID_FX_CRACK.n,
+        VOID_FX_CRACK.cols,
+        VOID_FX_CRACK.speed,
+        VOID_FX_CRACK.gravity,
+        VOID_FX_CRACK.life,
+      ),
+    );
+  }
+
+  /** damage pools into the one hp bar; phase thresholds and the death follow */
+  private voidHit(emp: Employee, dmg: number, crit: boolean) {
+    const boss = this.voidFight;
+    damageVoid(boss, dmg);
+    boss.hitAt = this.clock; // only when damage was applied
+    const body = this.voidBody();
+    const hitX = boss.x + rand(-VOID_BODY_W / 2, VOID_BODY_W / 2);
+    const hitY = VOID_FEET_Y - VOID_BODY_H * rand(VOID_HIT_Y_MIN, VOID_HIT_Y_MAX);
+    boss.lastHitX = hitX;
+    boss.lastHitY = hitY;
+    boss.lastHitDmg = dmg;
+    boss.lastHitCrit = crit;
+    boss.lastHitAt = this.clock;
+    boss.lastHitId = emp.id;
+    boss.lastHitMinion = false;
+    this.sfx("hit");
+    this.fxFor(emp, () => {
+      this.pop(
+        hitX + rand(-VOID_POP_JITTER, VOID_POP_JITTER),
+        body.y - VOID_BODY_H / 2 - VOID_POP_LIFT,
+        `-${dmg}`,
+        crit ? "#ffe14a" : "#ffffff",
+        crit,
+        crit,
+        crit ? VOID_CRIT_POP_S : undefined,
+        crit ? VOID_CRIT_POP_SCALE : 0,
+      );
+      const sparks = crit ? VOID_FX_CRIT : VOID_FX_HIT;
+      this.burst(hitX, hitY, sparks.n, sparks.cols, sparks.speed, sparks.gravity, sparks.life);
+    });
+    if (crit) this.voidShake(VOID_SHAKE_CRIT);
+    if (boss.hp <= 0) this.startVoidDying();
+    else if (boss.phase === "fight" && voidHpFrac(boss) < VOID_PHASE2_BELOW) this.startVoidPhase2();
+    else if (boss.phase === "phase2" && voidHpFrac(boss) < VOID_PHASE3_BELOW) this.startVoidPhase3();
+  }
+
+  /** attacks, minions, taunts and the menace pulse while the boss fights */
+  private tickVoidFight() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      clock = this.clock;
+    const dt = ctl.lastAt < 0 ? 0 : Math.min(MAX_FRAME_DT, clock - ctl.lastAt);
+    ctl.lastAt = clock;
+    if (boss.phase === "phase3" && clock < boss.invulnUntil) this.voidShake(VOID_SHAKE_TRUE_FORM, true);
+    if (clock >= ctl.nextMenaceAt) {
+      boss.menaceAt = clock;
+      ctl.nextMenaceAt = clock + VOID_MENACE_EVERY_S;
+    }
+    this.tickVoidMinions(dt);
+    if (
+      clock >= ctl.nextTauntAt &&
+      clock >= boss.invulnUntil &&
+      !ctl.beats.length &&
+      voidStageFree(ctl, clock) &&
+      ctl.nextTauntAt >= 0
+    ) {
+      this.voidBeats(null, voidTauntLine(boss.phase, ctl.tauntN++));
+      ctl.nextTauntAt = clock + voidNextTaunt(Math.random());
+    }
+    const attack = boss.attack;
+    if (
+      attack &&
+      attack.kind === "blink" &&
+      attack.landed &&
+      boss.x !== VOID_HOME_X &&
+      clock >= attack.hitAt + VOID_BLINK_STAY_S
+    ) {
+      boss.blinkFromX = boss.x; // it steps back home once the strike is done
+      boss.blinkAt = clock;
+      boss.x = VOID_HOME_X;
+    }
+    const attackPhase = voidAttackPhase(boss, clock);
+    if (attackPhase === "none") {
+      for (const eye of boss.eyes) eye.on = false;
+      if (clock >= boss.invulnUntil && ctl.nextAttackAt >= 0 && clock >= ctl.nextAttackAt) this.startVoidAttack();
+      return;
+    }
+    if (!attack) return;
+    if (!attack.landed && clock >= attack.hitAt) {
+      attack.landed = true;
+      this.landVoidAttack();
+    }
+    if (attack.landed) this.tickVoidAttack();
+  }
+
+  /** minions drift to the nearest raider, strike on contact, and crumble after VOID_MINION_LIFE_S */
+  private tickVoidMinions(dt: number) {
+    const boss = this.voidFight,
+      clock = this.clock;
+    const fighters = this.voidFighters();
+    for (const minion of boss.minions) {
+      if (!minion.on) continue;
+      if (minion.clearedAt >= 0) {
+        if (clock - minion.clearedAt > VOID_MINION_POOF_S) minion.on = false;
+        continue;
+      }
+      if (clock - minion.bornAt > VOID_MINION_LIFE_S) {
+        minion.clearedAt = clock;
+        continue;
+      }
+      let nearest: Employee | null = null,
+        best = Infinity,
+        goal = { x: minion.x, y: minion.y };
+      for (const emp of fighters) {
+        const spot = this.raiderPoint(emp);
+        const dist = Math.hypot(spot.x - minion.x, spot.y - minion.y);
+        if (dist < best) {
+          best = dist;
+          nearest = emp;
+          goal = spot;
+        }
+      }
+      if (!nearest) continue;
+      if (best > VOID_MINION_REACH_PX) {
+        const step = Math.min(best, VOID_MINION_SPEED * dt);
+        minion.x += ((goal.x - minion.x) / best) * step;
+        minion.y += ((goal.y - minion.y) / best) * step;
+      } else if (clock - minion.strikeAt >= VOID_MINION_STRIKE_EVERY_S) {
+        minion.strikeAt = clock;
+        this.voidStrike(nearest, "direct");
+      }
+    }
+    boss.shielded = voidMinionsAlive(boss) > 0;
+  }
+
+  /** pick an attack and its target and start the warning */
+  private startVoidAttack() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      fighters = this.voidFighters();
+    if (!fighters.length) return;
+    const kind = pickVoidAttack(boss.phase, ctl.prev, ctl.phase3Count, Math.random(), voidMinionsAlive(boss) > 0);
+    const victim = fighters[Math.floor(Math.random() * fighters.length) % fighters.length];
+    const at = this.raiderPoint(victim);
+    ctl.count++;
+    ctl.prev = kind;
+    if (boss.phase === "phase3") ctl.phase3Count++;
+    ctl.targetId = victim.id;
+    ctl.done.clear();
+    const attack = beginVoidAttack(boss, this.clock, kind, at.x, at.y, ctl.count);
+    if (kind === "eyes") spawnVoidEyes(boss, this.clock, attack, voidEyeCount(boss.phase));
+    if (kind === "eclipse") this.sfx("voidEclipse");
+    ctl.nextAttackAt = attack.endAt + voidNextGap(boss.phase, Math.random());
+  }
+
+  /** the warning ran out: the attack lands */
+  private landVoidAttack() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      attack = boss.attack;
+    if (!attack) return;
+    switch (attack.kind) {
+      case "beam":
+        this.sfx("voidBeam");
+        this.voidShake(VOID_SHAKE_BEAM);
+        this.voidImpact(attack.targetX, attack.targetY);
+        break;
+      case "blink": {
+        const victim = this.employees.get(ctl.targetId);
+        boss.blinkFromX = boss.x;
+        boss.blinkAt = this.clock;
+        boss.x = (victim ? this.raiderPoint(victim).x : attack.targetX) + VOID_BLINK_DX;
+        if (boss.phase === "phase3") boss.x = Math.max(boss.x, VOID_HOME_X); // the towering form never covers the raiders
+        this.sfx("voidBlink");
+        this.voidImpact(boss.x, attack.targetY);
+        if (victim && victim.inDungeon && victim.floor === VOID_FLOOR) this.voidStrike(victim, "attack");
+        break;
+      }
+      case "collapse":
+        this.sfx("lordSlam");
+        this.voidShake(VOID_SHAKE_COLLAPSE);
+        this.voidImpact((VOID_ARENA_X0 + VOID_ARENA_X1) / 2, (VOID_ARENA_Y0 + VOID_ARENA_Y1) / 2);
+        for (const emp of this.voidFighters()) {
+          const spot = this.raiderPoint(emp);
+          if (voidCollapseAt(attack.seed, spot.x, spot.y)) this.voidStrike(emp, "attack");
+        }
+        break;
+      case "eclipse":
+        this.voidShake(VOID_SHAKE_ECLIPSE);
+        boss.quakeUntil = this.clock + VOID_QUAKE_S;
+        this.voidImpact((VOID_ARENA_X0 + VOID_ARENA_X1) / 2, (VOID_ARENA_Y0 + VOID_ARENA_Y1) / 2);
+        for (const emp of this.voidFighters()) this.voidStrike(emp, "eclipse");
+        break;
+      case "summon": {
+        this.sfx("lordSummon");
+        const body = this.voidBody();
+        this.voidImpact(body.x, body.y);
+        raiseVoidMinions(boss, this.clock, voidMinionCount(boss.phase));
+        boss.shielded = voidMinionsAlive(boss) > 0;
+        this.onFloor(VOID_FLOOR, () => {
+          for (const minion of boss.minions)
+            if (minion.on && minion.bornAt === this.clock)
+              this.burst(
+                minion.x,
+                minion.y - VOID_MINION_LIFT_PX,
+                VOID_FX_ROAR.n,
+                VOID_FX_ROAR.cols,
+                VOID_FX_ROAR.speed,
+                VOID_FX_ROAR.gravity,
+                VOID_FX_ROAR.life,
+                1,
+                true,
+              );
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  /** while an attack is up: the beam reaches raiders on its row, the eyes fire one by one */
+  private tickVoidAttack() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      attack = boss.attack,
+      clock = this.clock;
+    if (!attack) return;
+    if (attack.kind === "beam") {
+      for (const emp of this.voidFighters()) {
+        if (ctl.done.has(emp.id)) continue;
+        const spot = this.raiderPoint(emp);
+        if (Math.abs(spot.y - attack.targetY) > VOID_BEAM_HALF_PX) continue;
+        if (clock >= attack.hitAt + voidBeamArrive(boss.x, spot.x)) this.voidStrike(emp, "attack");
+      }
+    } else if (attack.kind === "eyes") {
+      for (const eye of boss.eyes) {
+        if (!eye.on || eye.fired || clock < eye.fireAt) continue;
+        eye.fired = true;
+        this.sfx("voidBeam");
+        this.voidImpact(eye.x, eye.y);
+        this.onFloor(VOID_FLOOR, () =>
+          this.burst(
+            eye.x,
+            eye.y,
+            VOID_FX_EYE.n,
+            VOID_FX_EYE.cols,
+            VOID_FX_EYE.speed,
+            VOID_FX_EYE.gravity,
+            VOID_FX_EYE.life,
+          ),
+        );
+        let nearest: Employee | null = null,
+          best = Infinity;
+        for (const emp of this.voidFighters()) {
+          const spot = this.raiderPoint(emp);
+          const dist = Math.hypot(spot.x - eye.x, spot.y - eye.y);
+          if (dist < best) {
+            best = dist;
+            nearest = emp;
+          }
+        }
+        if (nearest) this.voidStrike(nearest, "direct"); // each eye is its own shot
+      }
+    }
+  }
+
+  /**
+   * an attack reaches a raider. A raider dodges with VOID_DODGE_CHANCE (the hop); a hit costs a heart but never the
+   * last one, knocks them back and is recorded for the renderer. The eclipse hits everybody: dodgers survive at 1
+   * heart, the rest are left at 0 (cosmetic: nobody leaves). "direct" skips the once-per-attack bookkeeping.
+   */
+  private voidStrike(emp: Employee, mode: "attack" | "eclipse" | "direct") {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      eclipse = mode === "eclipse";
+    if (mode === "attack" && ctl.done.has(emp.id)) return;
+    ctl.done.add(emp.id);
+    const dodged = Math.random() < VOID_DODGE_CHANCE;
+    const at = this.raiderPoint(emp);
+    if (dodged) emp.dodgeAt = this.clock;
+    else {
+      emp.voidHitAt = this.clock;
+      emp.voidKnock = at.x <= boss.x ? -1 : 1;
+    }
+    if (eclipse) {
+      emp.hearts = dodged ? VOID_ECLIPSE_DODGED_HEARTS : VOID_ECLIPSE_HIT_HEARTS;
+      if (!dodged) {
+        emp.hurtUntil = this.clock + VOID_ECLIPSE_HURT_S;
+        emp.redUntil = this.clock + VOID_ECLIPSE_HURT_S;
+      }
+    } else if (!dodged) {
+      if (emp.hearts > VOID_HEART_FLOOR) this.loseHeart(emp);
+      else emp.hurtUntil = this.clock + VOID_HURT_S;
+    }
+    if (!dodged) {
+      boss.lastHurtId = emp.id;
+      boss.lastHurtAt = this.clock;
+      boss.lastHurtHearts = emp.hearts;
+      this.voidImpact(at.x, at.y);
+    }
+    this.fxFor(emp, () => {
+      this.pop(at.x, at.y - POP_ABOVE_HEAD, dodged ? "!" : "!!", dodged ? "#9ad8ff" : "#ff6a8a", false, false);
+      if (!dodged)
+        this.burst(
+          at.x,
+          at.y - LORD_HIT_POP_LIFT * 2,
+          VOID_FX_HURT.n,
+          VOID_FX_HURT.cols,
+          VOID_FX_HURT.speed,
+          VOID_FX_HURT.gravity,
+          VOID_FX_HURT.life,
+        );
+    });
+  }
+
+  /** the dying boss: cracks of light, then the implosion, then the final flash */
+  private tickVoidDeath(age: number) {
+    const ctl = this.voidCtl,
+      body = this.voidBody();
+    if (age < VOID_DEATH_CRACK_S) {
+      if (this.clock - ctl.crackAt >= VOID_CRACK_EVERY_S) {
+        ctl.crackAt = this.clock;
+        this.voidShake(VOID_SHAKE_CRIT);
+        this.onFloor(VOID_FLOOR, () =>
+          this.burst(
+            body.x + rand(-VOID_POP_JITTER, VOID_POP_JITTER),
+            body.y + rand(-VOID_BODY_H / 2, VOID_BODY_H / 2),
+            VOID_FX_CRACK.n,
+            VOID_FX_CRACK.cols,
+            VOID_FX_CRACK.speed,
+            VOID_FX_CRACK.gravity,
+            VOID_FX_CRACK.life,
+          ),
+        );
+      }
+      return;
+    }
+    if (age < VOID_DEATH_IMPLODE_S) {
+      if (ctl.deathStep < VOID_STEP_IMPLODE) {
+        ctl.deathStep = VOID_STEP_IMPLODE;
+        this.voidShake(VOID_SHAKE_DEATH);
+        this.onFloor(VOID_FLOOR, () =>
+          this.ring(
+            body.x,
+            body.y,
+            VOID_FX_IMPLODE.n,
+            VOID_FX_IMPLODE.cols,
+            VOID_FX_IMPLODE.speed,
+            VOID_FX_IMPLODE.life,
+            true,
+          ),
+        );
+      }
+      return;
+    }
+    if (ctl.deathStep < VOID_STEP_FLASH) {
+      ctl.deathStep = VOID_STEP_FLASH;
+      this.voidShake(VOID_SHAKE_FLASH);
+      this.onFloor(VOID_FLOOR, () =>
+        this.burst(
+          body.x,
+          body.y,
+          VOID_FX_FLASH.n,
+          VOID_FX_FLASH.cols,
+          VOID_FX_FLASH.speed,
+          VOID_FX_FLASH.gravity,
+          VOID_FX_FLASH.life,
+          1,
+          true,
+        ),
+      );
+    }
+  }
+
+  /** the Veiled One is gone: the biggest banner, the biggest reward, and the walk home */
+  private voidVictory() {
+    const boss = this.voidFight,
+      clock = this.clock,
+      raiders = this.voidFighters();
+    if (!raiders.length) {
+      this.endVoid(); // everybody left during the death: no plaque, no counters
+      return;
+    }
+    setVoidPhase(boss, clock, "victory");
+    boss.kills++;
+    this.stats.bosses++;
+    for (const raider of raiders) {
+      raider.kills += VOID_KILLS;
+      raider.qKills += VOID_KILLS;
+      raider.gold += VOID_GOLD;
+      raider.qGold += VOID_GOLD;
+      this.treasury += VOID_GOLD;
+      raider.hearts = MAX_HEARTS;
+      this.gainXp(raider, Math.max(VOID_XP, xpNeed(raider.lv) - raider.xp));
+      raider.raidDoneAt = clock; // desk raiders walk home after the usual linger; the rest go back to B3 at the end
+      const at = this.raiderPoint(raider);
+      this.fxFor(raider, () =>
+        this.pop(at.x, at.y - VOID_POP_RISE, `+${VOID_GOLD}g`, "#f2c14e", true, true, LOOT_POP_DUR),
+      );
+      this.gmPraise.unshift({ sid: raider.id, at: clock, text: VOID_PRAISE_TEXT });
+    }
+    if (this.gmPraise.length > GM_PRAISE_CAP) this.gmPraise.length = GM_PRAISE_CAP;
+    this.sfx("bossDown");
+    this.sfx("voidVictory");
+    this.cheers();
+    this.voidShake(VOID_SHAKE_VICTORY);
+    const slayer = raiders[0];
+    if (slayer) {
+      cutVoidBeats(boss, this.voidCtl, clock); // the plaque never waits for a lingering line
+      this.voidBeats(
+        { text: m.void_banner_slain({ tag: slayer.tag, project: slayer.project }), dur: VOID_BANNER_VICTORY_S },
+        null,
+      );
+      this.log.unshift({
+        id: this.logSeq++,
+        sid: slayer.id,
+        color: slayer.look.shirt,
+        bad: false,
+        text: m.void_banner_slain({ tag: slayer.tag, project: slayer.project }),
+        time: Date.now(),
+        tag: slayer.tag,
+        project: slayer.project,
+        intern: false,
+        internLabel: "",
+        kind: KIND_LORD,
+        detail: m.void_log_slain_detail({ count: boss.kills }),
+      });
+      if (this.log.length > LOG_MAX) this.log.length = LOG_MAX;
+    }
+    const body = this.voidBody();
+    this.onFloor(VOID_FLOOR, () => {
+      for (let k = 0; k < VOID_COIN_COUNT; k++)
+        this.emitP(
+          body.x + rand(-VOID_COIN_SPREAD, VOID_COIN_SPREAD),
+          body.y,
+          rand(-COIN_VX, COIN_VX),
+          rand(-COIN_VY_MAX, -COIN_VY_MIN),
+          COIN_GRAVITY,
+          COIN_LIFE,
+          "#f2c14e",
+          1,
+          "coin",
+          true,
+        );
+      for (let k = 0; k < VOID_SHOWER_COINS; k++)
+        this.emitP(
+          VIEW_X0 + ((k + rand(0, 1)) / VOID_SHOWER_COINS) * VIEW_W,
+          -rand(0, LORD_SHOWER_HEIGHT),
+          rand(-COIN_VX, COIN_VX),
+          rand(LORD_SHOWER_VY_MIN, LORD_SHOWER_VY_MAX),
+          LORD_SHOWER_GRAVITY,
+          LORD_SHOWER_LIFE,
+          "#f2c14e",
+          1,
+          "coin",
+          true,
+        );
+    });
+    this.bumpStats();
+  }
+
   /** a dead foe is replaced by a new kind after a short beat */
   private respawnRaid(emp: Employee) {
     if (emp.stairsAt >= 0) {
@@ -4980,6 +6031,10 @@ export class Office {
     emp.lungeUntil = this.clock + LUNGE_S;
     emp.hsUntil = this.clock + HITSTOP_S;
     emp.hsAt = this.clock;
+    if (emp.floor === VOID_FLOOR) {
+      this.voidRaidHit(emp, tool);
+      return;
+    }
     if (emp.floor >= DUNGEON_FLOORS) {
       if (this.lord.hp <= 0) return;
       const lordRoll = this.rollHit(emp, tool);
@@ -5130,6 +6185,8 @@ export class Office {
       tierUpAt: -99,
       lungeUntil: 0,
       dodgeAt: -99,
+      voidHitAt: -99,
+      voidKnock: -1,
       flashUntil: 0,
       monLungeUntil: 0,
       monKnockUntil: 0,
