@@ -15,7 +15,8 @@ import {
   type VoidForm,
 } from "@/lib/office/voidBossSprite";
 import { colossusBodyPlace, drawColossusEnts, drawColossusFloor, handSprite } from "@/lib/office/voidColossus";
-import { VOID_WIPE_S } from "@/lib/office/voidFight";
+import { FACE_H, FACE_W, colossusBodyArt, colossusEyeArt, colossusFaceArt } from "@/lib/office/voidColossusArt";
+import { VOID_ROAR_ATTACK_S, VOID_WIPE_S } from "@/lib/office/voidFight";
 import {
   voidSpotOf,
   VOID_ARENA_Y1,
@@ -100,6 +101,24 @@ import {
   SHARD_HOME_X,
   SHARD_HOME_Y,
   type AscendBeat,
+  CRACK_STAGES,
+  CRIT_RECOIL_PX,
+  GAZE_DARK_TARGETS,
+  HIT_RECOIL_PX,
+  HIT_RECOIL_S,
+  MASK_OPEN_LEVELS,
+  ROAR_RING_COUNT,
+  SQUINT_LEVELS,
+  crackStageOf,
+  eyeReaction,
+  finalCrack,
+  gazeDarkness,
+  maskOpenLevel,
+  p3Fraction,
+  roarOpen,
+  roarRingRadius,
+  slamRingRadius,
+  squintLevel,
 } from "@/lib/office/voidVisualLogic";
 
 interface Op {
@@ -595,7 +614,8 @@ describe("phase 3: the colossus is the true form, enormous", () => {
     expect(handPlace(hand, home, 3.2, 1.2, false, false, place).y).toBeCloseTo(104, 0);
     const target = { x: 180, y: 130, at: 0 };
     handPlace({ ...target, state: "windup" }, home, 1.2, 1.2, false, false, place);
-    expect(place).toMatchObject({ x: 180, claw: true });
+    expect(place.claw).toBe(true);
+    expect(place.x).toBeCloseTo(78 + (180 - 78) * 0.35, 1); // the raised hand keeps to its own side, clear of the face
     expect(place.y).toBeCloseTo(130 - HAND_RAISE, 0);
     handPlace({ ...target, state: "slam" }, home, 0.3, 1.2, false, false, place);
     expect(place.y).toBeCloseTo(130 - HAND_REACH, 0);
@@ -673,5 +693,104 @@ describe("phase 3: the colossus is the true form, enormous", () => {
     expect(pushbackRadius(-1)).toBe(-1);
     expect(pushbackRadius(0.45)).toBeGreaterThan(0);
     expect(pushbackRadius(PUSHBACK_S)).toBe(-1);
+  });
+});
+
+describe("phase 3 punch: hand-made colossus, eye reactions, heavy moves", () => {
+  beforeEach(() => vi.stubGlobal("document", { createElement: () => fakeCanvas() }));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("paints the colossus detail sprites opaque and inside their canvases", () => {
+    const last = COLOSSUS_SCALES.length - 1;
+    const scale = COLOSSUS_SCALES[last];
+    const body = colossusBodyArt(last, 0, CRACK_STAGES)!;
+    expect(sizeOf(body)).toEqual({ width: Math.round(VOID_TRUE_W * scale), height: Math.round(VOID_TRUE_H * scale) });
+    const face = colossusFaceArt(last, 0, MASK_OPEN_LEVELS, CRACK_STAGES)!;
+    expect(sizeOf(face)).toEqual({ width: Math.round(FACE_W * scale), height: Math.round(FACE_H * scale) });
+    const eye = colossusEyeArt(last, SQUINT_LEVELS, 1, true, CRACK_STAGES)!;
+    for (const sprite of [body, face, eye]) {
+      const ops = opsOf(sprite);
+      expect(ops.length).toBeGreaterThan(100);
+      for (const op of ops) {
+        expect(op.color).toMatch(HEX);
+        expect(op.x).toBeGreaterThanOrEqual(0);
+        expect(op.y).toBeGreaterThanOrEqual(0);
+        expect(op.x + op.w).toBeLessThanOrEqual(sprite.width);
+        expect(op.y + op.h).toBeLessThanOrEqual(sprite.height);
+      }
+    }
+    expect(colossusEyeArt(last, 0, 0, false, 0)).toBe(colossusEyeArt(last, 0, 0, false, 0)); // cached
+    expect(colossusBodyArt(last, 0, 0)).not.toBe(colossusBodyArt(last, 0, 3)); // cracks are cached per stage
+  });
+
+  it("recoils and squints on a hit, harder on a crit, and holds still under reduced motion", () => {
+    const out = { squint: 0, recoil: 0, flash: 0, shard: -1 };
+    eyeReaction(0.03, -99, false, out);
+    expect(out.recoil).toBeGreaterThan(1);
+    expect(out.recoil).toBeLessThanOrEqual(HIT_RECOIL_PX);
+    expect(out.squint).toBeGreaterThan(0.5);
+    expect(out.flash).toBe(0);
+    eyeReaction(HIT_RECOIL_S + 0.01, -99, false, out);
+    expect(out.recoil).toBe(0);
+    eyeReaction(0.03, 0.03, false, out);
+    expect(out.recoil).toBeGreaterThan(HIT_RECOIL_PX - 1);
+    expect(out.recoil).toBeLessThanOrEqual(CRIT_RECOIL_PX);
+    expect(out.flash).toBeGreaterThan(0);
+    expect(out.shard).toBeGreaterThanOrEqual(0);
+    eyeReaction(0.03, 0.03, true, out);
+    expect(out).toEqual({ squint: 0, recoil: 0, flash: 0, shard: -1 });
+    expect(squintLevel(0)).toBe(0);
+    expect(squintLevel(1)).toBe(SQUINT_LEVELS);
+  });
+
+  it("steps the cracks by eyeCrack and the bar by the colossus's own pool", () => {
+    expect(crackStageOf(0)).toBe(0);
+    expect(crackStageOf(0.05)).toBe(0);
+    expect(crackStageOf(0.2)).toBe(1);
+    expect(crackStageOf(0.7)).toBe(3);
+    expect(crackStageOf(1)).toBe(CRACK_STAGES);
+    const state = stateAt("phase3");
+    state.p3MaxHp = 800;
+    state.p3Hp = 200;
+    expect(p3Fraction(state)).toBeCloseTo(0.25, 5);
+    state.p3Hp = 800;
+    expect(p3Fraction(state)).toBe(1);
+  });
+
+  it("darkens only the back layers for the gaze, ramping up, holding and fading", () => {
+    expect(GAZE_DARK_TARGETS).toEqual({ back: true, characters: false, front: false });
+    expect(gazeDarkness(9, 10, 12, 13.2, false)).toBe(0);
+    const early = gazeDarkness(10.3, 10, 12, 13.2, false);
+    const late = gazeDarkness(11.6, 10, 12, 13.2, false);
+    expect(early).toBeGreaterThan(0);
+    expect(late).toBeGreaterThan(early);
+    expect(gazeDarkness(12.6, 10, 12, 13.2, false)).toBe(1);
+    expect(gazeDarkness(13.4, 10, 12, 13.2, false)).toBeLessThan(1);
+    expect(gazeDarkness(14, 10, 12, 13.2, false)).toBe(0);
+    expect(gazeDarkness(10.1, 10, 12, 13.2, true)).toBe(gazeDarkness(13, 10, 12, 13.2, true)); // static frame
+  });
+
+  it("expands concentric roar rings from the mask, opens the mask and keeps the slam rings full width", () => {
+    expect(roarRingRadius(-0.1, 0)).toBe(-1);
+    const first = roarRingRadius(0.3, 0);
+    expect(first).toBeGreaterThan(0);
+    expect(roarRingRadius(0.3, 1)).toBeLessThan(first); // later rings trail the first
+    expect(roarRingRadius(0.3 + 0.16 * (ROAR_RING_COUNT - 1), ROAR_RING_COUNT - 1)).toBeGreaterThan(0);
+    expect(roarRingRadius(10, 0)).toBe(-1);
+    expect(roarOpen(9, 10, 11, false)).toBe(0);
+    expect(roarOpen(10.5, 10, 11, false)).toBeCloseTo(0.5, 5);
+    expect(roarOpen(11.2, 10, 11, false)).toBe(1);
+    expect(roarOpen(11 + VOID_ROAR_ATTACK_S + 1, 10, 11, false)).toBe(0);
+    expect(roarOpen(10.2, 10, 11, true)).toBe(1);
+    expect(maskOpenLevel(1)).toBe(MASK_OPEN_LEVELS);
+    expect(slamRingRadius(0.4, 0) * 2).toBeGreaterThan(VIEW_W * 0.4); // the shockwave sweeps the whole floor
+    expect(slamRingRadius(0, 0)).toBe(-1);
+  });
+
+  it("builds the final blow's crack and keeps it static under reduced motion", () => {
+    expect(finalCrack(-1, false)).toBe(0);
+    expect(finalCrack(0.1, false)).toBeGreaterThan(0);
+    expect(finalCrack(1, false)).toBe(1);
+    expect(finalCrack(0, true)).toBe(1);
   });
 });

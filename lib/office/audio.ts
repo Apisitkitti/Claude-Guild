@@ -39,6 +39,9 @@ export type SfxCue =
   | "voidHandSlam"
   | "voidGaze"
   | "voidShatterEye"
+  | "voidEyeHit"
+  | "voidRoar"
+  | "voidFinalBlow"
   | "voidDeath"
   | "voidVictory";
 
@@ -53,6 +56,9 @@ const ATTACK_S = 0.005;
 const MIN_GAIN = 0.0001;
 /** the same non-hit cue twice inside this gap is dropped (many adventurers finishing at once) */
 const CUE_MIN_GAP_S = 0.08;
+/** the colossus eye's heavy thud is rate limited harder than other cues so a hit storm stays a thud, not a buzz */
+const EYE_HIT_MIN_GAP_S = 0.18;
+const CUE_GAP_S: Partial<Record<SfxCue, number>> = { voidEyeHit: EYE_HIT_MIN_GAP_S };
 
 type Wave = "square" | "triangle" | "sawtooth" | "sine";
 interface Tone {
@@ -317,6 +323,23 @@ const CUES: Record<Exclude<SfxCue, "hit">, Tone[]> = {
     { at: 0.1, freq: midi(64), dur: 1.1, wave: "square", gain: 0.25, slideTo: midi(100) },
     { at: 0.2, freq: midi(76), dur: 1, wave: "sine", gain: 0.35, slideTo: midi(52) },
   ],
+  voidEyeHit: [
+    { at: 0, freq: midi(38), dur: 0.22, wave: "triangle", gain: 0.7, slideTo: midi(22) },
+    { at: 0, freq: midi(62), dur: 0.06, wave: "square", gain: 0.3, slideTo: midi(40) },
+    { at: 0.03, freq: midi(26), dur: 0.3, wave: "sawtooth", gain: 0.4, slideTo: midi(16) },
+  ],
+  voidRoar: [
+    { at: 0, freq: midi(28), dur: 1.4, wave: "sawtooth", gain: 0.7, slideTo: midi(20) },
+    { at: 0, freq: midi(40), dur: 1.2, wave: "sawtooth", gain: 0.45, slideTo: midi(30) },
+    { at: 0.1, freq: midi(52), dur: 1, wave: "square", gain: 0.25, slideTo: midi(36) },
+    { at: 0.2, freq: midi(64), dur: 0.8, wave: "sawtooth", gain: 0.2, slideTo: midi(44) },
+  ],
+  voidFinalBlow: [
+    { at: 0, freq: midi(90), dur: 0.9, wave: "sine", gain: 0.45, slideTo: midi(36) },
+    { at: 0, freq: midi(72), dur: 0.8, wave: "triangle", gain: 0.35, slideTo: midi(30) },
+    { at: 0.5, freq: midi(24), dur: 1.2, wave: "sawtooth", gain: 0.8, slideTo: midi(12) },
+    { at: 0.5, freq: midi(48), dur: 0.5, wave: "square", gain: 0.4, slideTo: midi(20) },
+  ],
   voidShatterEye: [
     ...[108, 103, 99, 105, 96, 101, 94].map((note, index) => ({
       at: index * 0.07,
@@ -476,7 +499,7 @@ export class Sfx {
       return true;
     }
     const last = this.lastCueAt.get(cue);
-    if (last !== undefined && now - last < CUE_MIN_GAP_S) return false;
+    if (last !== undefined && now - last < (CUE_GAP_S[cue] ?? CUE_MIN_GAP_S)) return false;
     this.lastCueAt.set(cue, now);
     for (const tone of CUES[cue]) this.tone(now, tone);
     return true;

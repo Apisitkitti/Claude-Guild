@@ -10,7 +10,6 @@
 // All sprites face the viewer, bottom-centre anchored (draw at x - wide/2, y - high).
 
 import { Grid as BaseGrid, lighten, mix } from "./sprites";
-import { COLOSSUS_SCALES } from "./voidVisualLogic";
 
 export type VoidForm = 1 | 2 | 3;
 
@@ -640,38 +639,5 @@ export const voidBossSprite = (form: VoidForm, frame: number, hurt = false, dith
 /** the painting grid of the Veiled One's sprites (ellipses, limbs, strands, dither), for the colossus's hands */
 export { Grid as VoidGrid };
 
-// ---- the colossus: the true form enlarged, armless, with a dark rim and a rim light --------------------------------------------
-const RIM_TINT = "#ff7a5a";
-/** every filled cell touching the outline gets a bright rim (a lit edge on the dark silhouette) */
-const rimLight = (grid: Grid) => {
-  const { width, height, cells, inked } = grid;
-  const out = cells.slice();
-  for (let y = 1; y < height - 1; y++)
-    for (let x = 1; x < width - 1; x++) {
-      const at = y * width + x;
-      const color = cells[at];
-      if (!color || inked.has(at)) continue;
-      if (inked.has(at - 1) || inked.has(at + 1) || inked.has(at - width) || inked.has(at + width))
-        out[at] = lighten(mix(color, RIM_TINT, 0.35), 0.4);
-    }
-  grid.cells = out;
-};
-export const VOID_COLOSSUS_FRAMES = 4;
-/** the colossus body at COLOSSUS_SCALES[step]: the true form (painted 160x128) with no arms, a 2 px dark outline and a lit rim */
-export const voidColossusSprite = (step: number, frame: number): HTMLCanvasElement => {
-  const scaleIndex = clampLevel(step, COLOSSUS_SCALES.length - 1);
-  const index = wrapIndex(frame, VOID_COLOSSUS_FRAMES);
-  const key = `colossus|${scaleIndex}|${index}`;
-  const known = cache.get(key);
-  if (known) return known;
-  const grid = new Grid(VOID_TRUE_W, VOID_TRUE_H);
-  grid.dy = 4 + BOB[index];
-  drawTrue(grid, index, false);
-  const big = grid.upscaled(COLOSSUS_SCALES[scaleIndex]);
-  big.outline();
-  rimLight(big);
-  big.outline();
-  const canvas = big.toCanvas();
-  cache.set(key, canvas);
-  return canvas;
-};
+// ---- the colossus: hand-painted at its own scale in voidColossusArt.ts --------------------------------------------------------
+export { COLOSSUS_FRAMES as VOID_COLOSSUS_FRAMES, voidColossusSprite } from "./voidColossusArt";

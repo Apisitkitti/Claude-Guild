@@ -95,6 +95,7 @@ const eslintConfig = defineConfig([
       "lib/office/voidScene.ts",
       "lib/office/voidFx.ts",
       "lib/office/voidColossus.ts",
+      "lib/office/voidColossusArt.ts",
       "lib/office/voidAtmosphere.ts",
       "tests/**",
     ],

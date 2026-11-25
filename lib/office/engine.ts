@@ -244,6 +244,15 @@ import {
   VOID_PUSHBACK_S,
   VOID_QUAKE_S,
   VOID_HAND_QUAKE_S,
+  VOID_BANNER_FINAL_S,
+  VOID_FINAL_CAPTION,
+  VOID_FINAL_SLOW_CLOCK_S,
+  VOID_FINAL_TIME_SCALE,
+  VOID_P3_HP_MULT,
+  VOID_ROAR_QUAKE_S,
+  VOID_SHAKE_EYE_CRIT,
+  VOID_SHAKE_EYE_HIT,
+  VOID_SHAKE_ROAR_ATTACK,
   VOID_STEP_S,
   VOID_TAUNT_EVERY_S,
   clearVoidMinion,
@@ -276,6 +285,8 @@ const ENDED_TTL_S = 30;
 
 // -- engine loop / housekeeping
 const MAX_FRAME_DT = 0.1;
+/** floating "+5xp" / "+3g" loot popups */
+const LOOT_POP_RE = /^\+\d+(xp|g)$/;
 const EMIT_INTERVAL_MS = 200;
 const ERROR_LOG_INTERVAL_MS = 5000;
 const PRUNE_INTERVAL_S = 15;
@@ -3910,7 +3921,8 @@ export class Office {
     this.lord.shown += (this.lord.hp - this.lord.shown) * ease;
     const voidEase = this.reducedMotion ? 1 : Math.min(1, rawDt * VOID_BAR_EASE);
     this.voidFight.shown += (voidHpFrac(this.voidFight) - this.voidFight.shown) * voidEase;
-    const dt = this.paused ? 0 : rawDt * this.speed;
+    const slow = !this.reducedMotion && this.clock < this.voidFight.slowUntil ? VOID_FINAL_TIME_SCALE : 1; // the final blow
+    const dt = this.paused ? 0 : rawDt * this.speed * slow;
     if (dt <= 0) return;
     this.clock += dt;
     this.updateFx(dt);
@@ -4034,6 +4046,7 @@ export class Office {
   }
 
   private pop(x: number, y: number, text: string, col: string, big = false, star = false, dur = 0.8, scale = 0) {
+    if (this.fxDungeon === VOID_FLOOR && this.voidFight.phase === "phase3" && LOOT_POP_RE.test(text)) return; // no xp / gold clutter on the colossus floor
     this.popups.push({ x, y, text, col, big, born: this.clock, dur, star, scale, dungeon: this.fxDungeon });
     if (this.popups.length > MAX_POPUPS) this.popups.splice(0, this.popups.length - MAX_POPUPS);
   }
@@ -5509,6 +5522,9 @@ export class Office {
     setVoidPhase(boss, clock, "phase3");
     boss.phase3At = clock;
     boss.ascendAt = clock;
+    boss.p3MaxHp = Math.max(1, Math.round(boss.maxHp * VOID_P3_HP_MULT));
+    boss.p3Hp = boss.p3MaxHp;
+    boss.eyeCrack = 0;
     boss.invulnUntil = clock + VOID_ASCEND_S;
     boss.coreOpenAt = boss.invulnUntil - VOID_CORE_OPEN_S;
     boss.x = VOID_HOME_X;
@@ -5579,6 +5595,7 @@ export class Office {
     ctl.deathStep = 0;
     ctl.crackAt = clock;
     cutVoidBeats(boss, ctl, clock);
+    if (boss.finalBlowAt === clock) this.voidBeats({ text: VOID_FINAL_CAPTION, dur: VOID_BANNER_FINAL_S }, null);
     this.voidBeats(null, VOID_LINE_DYING);
     this.sfx("voidDeath");
     this.voidShake(VOID_SHAKE_DEATH);
@@ -5667,7 +5684,12 @@ export class Office {
     boss.lastHitAt = this.clock;
     boss.lastHitId = emp.id;
     boss.lastHitMinion = false;
-    this.sfx("hit");
+    this.sfx(colossus ? "voidEyeHit" : "hit");
+    if (colossus) {
+      boss.eyeHitAt = this.clock;
+      if (crit) boss.eyeCritAt = this.clock;
+      this.voidShake(crit ? VOID_SHAKE_EYE_CRIT : VOID_SHAKE_EYE_HIT);
+    }
     this.fxFor(emp, () => {
       this.pop(
         hitX + rand(-VOID_POP_JITTER, VOID_POP_JITTER),
@@ -5682,10 +5704,20 @@ export class Office {
       const sparks = crit ? VOID_FX_CRIT : VOID_FX_HIT;
       this.burst(hitX, hitY, sparks.n, sparks.cols, sparks.speed, sparks.gravity, sparks.life);
     });
-    if (crit) this.voidShake(VOID_SHAKE_CRIT);
-    if (boss.hp <= 0) this.startVoidDying();
+    if (crit && !colossus) this.voidShake(VOID_SHAKE_CRIT);
+    if (colossus && boss.p3Hp <= 0) this.finalBlow();
+    else if (boss.hp <= 0) this.startVoidDying();
     else if (boss.phase === "fight" && voidHpFrac(boss) < VOID_PHASE2_BELOW) this.startVoidPhase2();
     else if (boss.phase === "phase2" && voidHpFrac(boss) < VOID_PHASE3_BELOW) this.startVoidPhase3();
+  }
+
+  /** the killing hit on the colossus: a heartbeat of slow motion (not under reduced motion), then the eye shatters */
+  private finalBlow() {
+    const boss = this.voidFight;
+    boss.finalBlowAt = this.clock;
+    if (!this.reducedMotion) boss.slowUntil = this.clock + VOID_FINAL_SLOW_CLOCK_S;
+    this.sfx("voidFinalBlow");
+    this.startVoidDying();
   }
 
   /** attacks, minions, taunts and the menace pulse while the boss fights */
@@ -5800,10 +5832,13 @@ export class Office {
     const attack = beginVoidAttack(boss, this.clock, kind, at.x, at.y, ctl.count);
     if (kind === "eyes") spawnVoidEyes(boss, this.clock, attack, voidEyeCount(boss.phase));
     if (kind === "eclipse") this.sfx("voidEclipse");
+    if (kind === "gaze") boss.gazeChargeAt = this.clock;
+    if (kind === "roar") boss.roarAt = this.clock;
     if (kind === "hand") {
       const hand = boss.hands[voidHandFor(boss, at.x)];
       hand.state = "windup";
       hand.at = this.clock;
+      boss.handShadowAt = this.clock;
       hand.x = at.x;
       hand.y = at.y;
     }
@@ -5861,6 +5896,13 @@ export class Office {
         if (victim && victim.inDungeon && victim.floor === VOID_FLOOR) this.voidStrike(victim, "attack");
         break;
       }
+      case "roar":
+        this.sfx("voidRoar");
+        this.voidShake(VOID_SHAKE_ROAR_ATTACK);
+        if (!this.reducedMotion) boss.quakeUntil = this.clock + VOID_ROAR_QUAKE_S;
+        this.voidImpact(boss.coreX, boss.coreY);
+        for (const emp of this.voidFighters()) this.voidStrike(emp, "attack"); // the wave pushes everybody back
+        break;
       case "gaze":
         this.sfx("voidGaze");
         this.voidShake(VOID_SHAKE_GAZE);
@@ -6863,7 +6905,10 @@ export class Office {
   }
 
   private pushSkillFx(fx: SkillFx) {
-    for (const old of this.skillFx) if (old.owner === fx.owner) old.noText = true; // one name plate at a time
+    // one name plate at a time (on the colossus floor: across all raiders)
+    const crowded = fx.dungeon === VOID_FLOOR && this.voidFight.phase === "phase3";
+    for (const old of this.skillFx)
+      if (old.owner === fx.owner || (crowded && old.dungeon === VOID_FLOOR)) old.noText = true;
     this.skillFx.push(fx);
     if (this.skillFx.length > SKILL_FX_MAX) this.skillFx.splice(0, this.skillFx.length - SKILL_FX_MAX);
   }

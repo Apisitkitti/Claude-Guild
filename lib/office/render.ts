@@ -123,7 +123,7 @@ import {
   tierUpPhase,
   type TierUpPhase,
 } from "./tierAuraLogic";
-import { VOID_FEET_Y, voidFightingPhase, voidHpFrac } from "./voidFight";
+import { VOID_FEET_Y, VOID_FINAL_CAPTION, voidFightingPhase, voidHpFrac } from "./voidFight";
 import {
   drawVoidBar,
   drawVoidBoss,
@@ -2265,16 +2265,19 @@ const drawEpicBanner = (
   elapsed: number,
   slide: number,
   still: boolean,
+  /** the plate's centre x and the largest letter scale (the FINAL BLOW plate is 3x and sits clear of the colossus's face) */
+  centerX = VIEW_W / 2,
+  maxScale = EPIC_SCALE,
 ) => {
   const text = banner.text;
   // the bitmap font has Latin capitals and digits only: any other script falls back to the system font in the plate
   const bitmap = measurePixelText(text, 1) === text.length * PIXEL_ADVANCE - 1;
-  const scale = bitmap ? captionScale(text, VIEW_W - 60, EPIC_SCALE) : 1;
+  const scale = bitmap ? captionScale(text, VIEW_W - 60, maxScale) : 1;
   ctx.font = "800 9px ui-sans-serif, system-ui, sans-serif";
   const textW = bitmap ? measurePixelText(text, scale) : Math.ceil(ctx.measureText(text).width);
   const width = Math.min(VIEW_W - 8, textW + 44),
     height = (bitmap ? GLYPH_H * scale : 9) + 8;
-  const x = Math.round((VIEW_W - width) / 2);
+  const x = Math.round(Math.min(VIEW_W - width - 2, Math.max(2, centerX - width / 2)));
   const y = Math.max(2, Math.round(-height - 2 + (height + EPIC_Y) * eob(Math.max(0, slide))));
   rect(ctx, INK, x - 3, y - 3, width + 6, height + 6);
   rect(ctx, "#f2c14e", x - 2, y - 2, width + 4, height + 4);
@@ -2288,7 +2291,7 @@ const drawEpicBanner = (
   rect(ctx, "#fff0a0", x + width - 5, y + (height >> 1) - 1, 3, 3);
   const glint = !still && Math.floor(elapsed * 6) % 2 === 0;
   if (bitmap) {
-    drawPixelText(ctx, text, VIEW_W / 2, y + 4, glint ? "#fff0a0" : "#ffd070", {
+    drawPixelText(ctx, text, x + width / 2, y + 4, glint ? "#fff0a0" : "#ffd070", {
       scale,
       align: "center",
       shadow: "#3a0f16",
@@ -2299,18 +2302,38 @@ const drawEpicBanner = (
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = glint ? "#fff0a0" : "#ffd070";
-  ctx.fillText(text, VIEW_W / 2, y + height / 2 + 0.5);
+  ctx.fillText(text, x + width / 2, y + height / 2 + 0.5);
 };
 const PIXEL_ADVANCE = 4;
 const EPIC_SCALE = 2;
 const EPIC_Y = 22;
+const FINAL_PLATE_SCALE = 3;
+const FINAL_PLATE_INSET = 108;
 const drawBannerQ = (ctx: Ctx, office: Office) => {
   const banner = office.banners[0];
   if (!banner) return;
   if (banner.start < 0) banner.start = office.realTime;
   const elapsed = office.realTime - banner.start;
   const slide = Math.min(1, elapsed / 0.25, Math.max(0, (banner.dur - elapsed) / 0.25));
-  if (banner.epic) return drawEpicBanner(ctx, banner, elapsed, slide, office.reducedMotion);
+  if (banner.epic) {
+    const vs = office.voidFight;
+    const final = banner.text === VOID_FINAL_CAPTION && (vs.phase === "phase3" || vs.phase === "dying");
+    // the FINAL BLOW plate: scale 3, on the side of the screen away from the colossus's face
+    const centerX = final
+      ? vs.coreX + WING_W < VIEW_W / 2
+        ? VIEW_W - FINAL_PLATE_INSET
+        : FINAL_PLATE_INSET
+      : VIEW_W / 2;
+    return drawEpicBanner(
+      ctx,
+      banner,
+      elapsed,
+      slide,
+      office.reducedMotion,
+      centerX,
+      final ? FINAL_PLATE_SCALE : EPIC_SCALE,
+    );
+  }
   const boss = banner.kind === "boss";
   const tier = banner.kind === "tier";
   ctx.font = boss ? "800 8px ui-sans-serif, system-ui, sans-serif" : WORLD_FONT;
@@ -3647,6 +3670,17 @@ const drawLordBar = (ctx: Ctx, office: Office, time: number) => {
 const drawDungeonScene = (ctx: Ctx, office: Office, time: number) =>
   drawDungeonFloor(ctx, office, time, office.dungeonFloor, false);
 
+/** the colossus's phase: only the newest live skill keeps its name plate (the others still play their effect), so the sky stays clear */
+const limitVoidPlates = (office: Office, floor: number) => {
+  let newest: (typeof office.skillFx)[number] | null = null;
+  for (const fx of office.skillFx) {
+    const age = office.clock - fx.born;
+    if (fx.dungeon !== floor || age < 0 || age >= fx.dur) continue;
+    if (!newest || fx.born > newest.born) newest = fx;
+  }
+  for (const fx of office.skillFx) if (fx.dungeon === floor && fx !== newest) fx.noText = true;
+};
+
 /** one dungeon floor; `mini` (the picture-in-picture on the guild scene) leaves out the tags, hover and the Lord's bar */
 const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number, mini: boolean) => {
   const still = office.reducedMotion;
@@ -3763,6 +3797,7 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
     drawTaunt(ctx, lord, time, lordAt.x - LORD_TAUNT_DX, lordAt.y - LORD_TAUNT_DY, mini ? 2 : 1);
   }
   drawPopups(ctx, office, floor);
+  if (onVoid && vs.phase === "phase3") limitVoidPlates(office, floor);
   drawSkillFx(ctx, office, floor, still, 0, VIEW_W);
   if (onVoid) {
     const hitterId = voidHitterId(vs);

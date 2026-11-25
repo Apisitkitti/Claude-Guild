@@ -34,14 +34,21 @@ const VOID_HP_EPSILON = 1e-6;
 export const voidDamageFloor = (phase: VoidPhase): number =>
   phase === "fight"
     ? VOID_PHASE2_BELOW - VOID_HP_EPSILON
-    : phase === "phase2"
+    : phase === "phase2" || phase === "phase3"
       ? VOID_PHASE3_BELOW - VOID_HP_EPSILON
       : 0;
+/** the colossus's own pool, as a multiple of the fight's max hp (tuned: a lone lv 16 raider needs ~50 s for it) */
+export const VOID_P3_HP_MULT = 1.5;
 /** the phases in which the boss can be hurt (an invulnerable window still blocks it) */
 export const voidFightingPhase = (phase: VoidPhase): boolean =>
   phase === "fight" || phase === "phase2" || phase === "phase3";
 /** hp as a fraction of the locked pool (0 when there is none) */
-export const voidHpFrac = (state: VoidState): number => (state.maxHp > 0 ? state.hp / state.maxHp : 0);
+export const voidHpFrac = (state: VoidState): number =>
+  state.maxHp <= 0
+    ? 0
+    : state.phase === "phase3" && state.p3MaxHp > 0
+      ? (VOID_PHASE3_BELOW * state.p3Hp) / state.p3MaxHp // the bar's last quarter drains with the colossus's own pool
+      : state.hp / state.maxHp;
 
 // ---- timings -----------------------------------------------------------------------------------------------------
 /** the Lord's corpse cracks and explodes (still on B3) */
@@ -252,6 +259,12 @@ export const voidEyeSpot = (seed: number, index: number, out: { x: number; y: nu
 };
 
 // ---- attacks -----------------------------------------------------------------------------------------------------
+/** the colossus's heavy moves: a long wind-up (the hand's floor shadow, the gaze's dark charge, the roar's inhale) */
+export const VOID_HAND_TELEGRAPH_S = 1.4;
+export const VOID_GAZE_CHARGE_S = 2;
+export const VOID_ROAR_TELEGRAPH_S = 1;
+/** the colossus's roar attack: the scream and its sound wave (the older VOID_ROAR_S is the phase 2 roar cinematic) */
+export const VOID_ROAR_ATTACK_S = 0.8;
 /** seconds of the warning before each attack lands (phase 1 pace) */
 const TELEGRAPH_S: Record<VoidAttackKind, number> = {
   beam: 1.2,
@@ -260,8 +273,9 @@ const TELEGRAPH_S: Record<VoidAttackKind, number> = {
   collapse: 1.4,
   eclipse: 2.6,
   summon: 1,
-  hand: 1.2,
-  gaze: 1.4,
+  hand: VOID_HAND_TELEGRAPH_S,
+  gaze: VOID_GAZE_CHARGE_S,
+  roar: VOID_ROAR_TELEGRAPH_S,
 };
 /** no warning is shorter than this, so it always reads */
 export const VOID_MIN_TELEGRAPH_S = 0.9;
@@ -282,10 +296,11 @@ const ACTIVE_S: Record<VoidAttackKind, number> = {
   summon: 0.6,
   hand: VOID_HAND_ACTIVE_S,
   gaze: VOID_GAZE_SWEEP_S,
+  roar: VOID_ROAR_ATTACK_S,
 };
 /** telegraphs get shorter as the boss gets angrier (the eclipse and the colossus's hand and gaze keep their charge) */
 const PHASE_PACE: Record<string, number> = { fight: 1, phase2: 0.85, phase3: 0.7 };
-const FIXED_TELEGRAPH: ReadonlySet<VoidAttackKind> = new Set<VoidAttackKind>(["eclipse", "hand", "gaze"]);
+const FIXED_TELEGRAPH: ReadonlySet<VoidAttackKind> = new Set<VoidAttackKind>(["eclipse", "hand", "gaze", "roar"]);
 export const voidTelegraphS = (kind: VoidAttackKind, phase: VoidPhase): number =>
   FIXED_TELEGRAPH.has(kind)
     ? TELEGRAPH_S[kind]
@@ -296,19 +311,21 @@ export const VOID_FIRST_ATTACK_S = 1.2;
 export const VOID_FIRST_ATTACK_P2_S = 1.6;
 export const VOID_FIRST_ATTACK_P3_S = 1.5;
 /** seconds between attacks per phase (+-15% jitter) */
-const GAP_S: Record<string, number> = { fight: 3, phase2: 2.2, phase3: 2 };
+const GAP_S: Record<string, number> = { fight: 3, phase2: 2.2, phase3: 2.4 };
 const GAP_JITTER = 0.1;
 export const voidNextGap = (phase: VoidPhase, rnd: number): number =>
   (GAP_S[phase] ?? GAP_S.fight) * (1 - GAP_JITTER + 2 * GAP_JITTER * rnd);
 /** every Nth attack of phase 2 and phase 3 is the eclipse */
 export const VOID_ECLIPSE_EVERY = 3;
+/** the colossus fires its moves in a fixed rotation (hand, gaze, roar) with the eclipse on every 4th attack */
+export const VOID_ECLIPSE_EVERY_P3 = 4;
+const POOL_P3: readonly VoidAttackKind[] = ["hand", "gaze", "roar"];
 const POOL_P1: readonly VoidAttackKind[] = ["beam", "eyes", "blink", "summon"];
 const POOL_P2: readonly VoidAttackKind[] = ["beam", "eyes", "blink", "collapse", "summon"];
-const POOL_P3: readonly VoidAttackKind[] = ["hand", "gaze"];
 /**
  * the next attack: phase 1 draws from beam/eyes/blink/summon (no summon while minions live), phase 2 (TRUE FORM) adds
- * collapse, phase 3 (the colossus) draws hand/gaze (the hand may repeat on another raider, the gaze never twice in a
- * row), and every VOID_ECLIPSE_EVERY-th attack of phase 2 and 3 is the eclipse. Never the same kind twice in a row
+ * collapse, phase 3 (the colossus) rotates hand, gaze, roar with the eclipse on every VOID_ECLIPSE_EVERY_P3-th attack,
+ * and every VOID_ECLIPSE_EVERY-th attack of phase 2 is the eclipse. Never the same kind twice in a row
  * otherwise. `phaseCount` = attacks already started in the current phase.
  */
 export const pickVoidAttack = (
@@ -318,9 +335,14 @@ export const pickVoidAttack = (
   rnd: number,
   minionsAlive = false,
 ): VoidAttackKind => {
-  if ((phase === "phase2" || phase === "phase3") && (phaseCount + 1) % VOID_ECLIPSE_EVERY === 0) return "eclipse";
-  const pool = (phase === "fight" ? POOL_P1 : phase === "phase3" ? POOL_P3 : POOL_P2).filter(
-    (kind) => (kind !== prev || (phase === "phase3" && kind === "hand")) && !(minionsAlive && kind === "summon"),
+  if (phase === "phase3") {
+    const eclipses = Math.floor((phaseCount + 1) / VOID_ECLIPSE_EVERY_P3);
+    if ((phaseCount + 1) % VOID_ECLIPSE_EVERY_P3 === 0) return "eclipse";
+    return POOL_P3[(phaseCount - eclipses) % POOL_P3.length];
+  }
+  if (phase === "phase2" && (phaseCount + 1) % VOID_ECLIPSE_EVERY === 0) return "eclipse";
+  const pool = (phase === "fight" ? POOL_P1 : POOL_P2).filter(
+    (kind) => kind !== prev && !(minionsAlive && kind === "summon"),
   );
   return pool[Math.min(pool.length - 1, Math.floor(rnd * pool.length))];
 };
@@ -367,7 +389,11 @@ export const VOID_SHAKE_ROAR = 0.7;
 export const VOID_SHAKE_TRUE_FORM = 0.65;
 /** THE VOID AWAKENS keeps the screen at least this shaken for the whole ascend */
 export const VOID_SHAKE_ASCEND = 0.75;
-export const VOID_SHAKE_HAND = 0.55;
+export const VOID_SHAKE_HAND = 0.85;
+/** every raider hit on the colossus's core staggers the eye a little; a crit a lot more */
+export const VOID_SHAKE_EYE_HIT = 0.12;
+export const VOID_SHAKE_EYE_CRIT = 0.3;
+export const VOID_SHAKE_ROAR_ATTACK = 0.6;
 export const VOID_SHAKE_GAZE = 0.35;
 export const VOID_SHAKE_EYE_SHATTER = 0.9;
 export const VOID_SHAKE_DEATH = 0.5;
@@ -474,6 +500,11 @@ export const setVoidPhase = (state: VoidState, clock: number, phase: VoidPhase) 
 
 /** the boss is hurt: true while the hit still counts (the caller checks voidInvulnerable first) */
 export const damageVoid = (state: VoidState, dmg: number): void => {
+  if (state.phase === "phase3") {
+    state.p3Hp = Math.max(0, state.p3Hp - dmg); // the colossus's own pool; hp rests on its 25% floor
+    state.eyeCrack = state.p3MaxHp > 0 ? 1 - state.p3Hp / state.p3MaxHp : 1;
+    return;
+  }
   const floor = voidDamageFloor(state.phase) * state.maxHp;
   state.hp = Math.max(floor, state.hp - dmg);
   if (state.hp < VOID_HP_EPSILON) state.hp = 0; // float residue of many small hits
@@ -619,7 +650,15 @@ export const homeVoidHands = (state: VoidState, clock: number, stateName: VoidHa
   for (const hand of state.hands) homeVoidHand(hand, clock, stateName);
 };
 /** the hand slam shakes the floor this long */
-export const VOID_HAND_QUAKE_S = 0.5;
+export const VOID_HAND_QUAKE_S = 0.8;
+/** the roar's sound wave shakes the floor this long */
+export const VOID_ROAR_QUAKE_S = 0.5;
+/** the killing blow: game time crawls at this scale for this many REAL seconds (so the clock span is the product) */
+export const VOID_FINAL_SLOW_S = 0.6;
+export const VOID_FINAL_TIME_SCALE = 0.25;
+export const VOID_FINAL_SLOW_CLOCK_S = VOID_FINAL_SLOW_S * VOID_FINAL_TIME_SCALE;
+export const VOID_FINAL_CAPTION = "FINAL BLOW";
+export const VOID_BANNER_FINAL_S = 1.4;
 
 // ---- minions -----------------------------------------------------------------------------------------------------
 export const VOID_MINION_LIFE_S = 8;

@@ -20,7 +20,14 @@ import {
   voidFormSize,
   type VoidForm,
 } from "./voidBossSprite";
-import { colossusBodyPlace, drawColossusEnts, drawColossusFlash, drawColossusFloor } from "./voidColossus";
+import {
+  colossusBodyPlace,
+  colossusJolt,
+  colossusReaction,
+  drawColossusEnts,
+  drawColossusFlash,
+  drawColossusFloor,
+} from "./voidColossus";
 import {
   VOID_ARENA_X0,
   VOID_ARENA_Y0,
@@ -48,6 +55,7 @@ import {
   voidDeathStageProgress,
   voidEyeDeathProgress,
   voidEyeDeathStage,
+  voidHandHome,
   voidHpFrac,
   voidVoice,
 } from "./voidFight";
@@ -91,6 +99,20 @@ import {
   BAR_TOP,
   ASCEND_DONE,
   COLOSSUS_CHEST_Y,
+  P3_BAR_TRAIL_S,
+  P3_LOW,
+  SKY_BLOT_MAX,
+  SLAM_FX_S,
+  crackStageOf,
+  finalCrack,
+  gazeDarkness,
+  handPlace,
+  handShadowGrow,
+  handWindupS,
+  maskOpenLevel,
+  p3Fraction,
+  roarOpen,
+  squintLevel,
   COLOSSUS_NUMBER_BONUS,
   PUSHBACK_REACH,
   pushbackRadius,
@@ -386,8 +408,30 @@ const BACK_VIEW: VoidBackView = {
     dying: false,
     deathCrack: 0,
     deathShatter: 0,
+    jolt: 0,
+    squint: 0,
+    flash: 0,
+    shard: -1,
+    shardSeed: 0,
+    stage: 0,
+    open: 0,
+    roarAge: -99,
+    finalCrack: 0,
+    slamAge: -1,
+    slamX: 0,
+    blotX: 0,
+    blotY: 0,
+    blotLevel: 0,
+    gazeDark: 0,
   },
+  gazeDark: 0,
 };
+const HAND_SCRATCH = { x: 0, y: 0, claw: false, slam: 0 };
+const HOME_SCRATCH = { x: 0, y: 0 };
+const STILL_DUST_S = 0.4;
+const STILL_BLOT = 8;
+let slamMemAt = -99;
+let slamMemX = 0;
 const STILL_CRACK = 0.7;
 const STILL_SHATTER = 0.5;
 const GROW_SHAKE_PX = 2;
@@ -416,6 +460,63 @@ export const voidBackView = (state: VoidState, time: number, still = false): Voi
   // the growth spurts shake the body (never under reduced motion)
   col.shake = !still && phase === "phase3" && BEAT.all < 1 ? GROW_SHAKE_PX : 0;
   col.sinceHit = time - state.lastHitAt;
+  // ---- phase 3 punch: recoil and squint of the eye, cracks by stage, the heavy moves ----
+  const react = colossusReaction(state, time, still);
+  col.jolt = phase === "phase3" || eyeDeath ? colossusJolt(state, time, still) : 0;
+  col.squint = squintLevel(react.squint);
+  col.flash = react.flash;
+  col.shard = react.shard;
+  col.stage = phase === "phase3" || eyeDeath ? crackStageOf(state.eyeCrack) : 0;
+  col.finalCrack =
+    state.finalBlowAt > -90 && (phase === "phase3" || eyeDeath) ? finalCrack(time - state.finalBlowAt, still) : 0;
+  col.slamAge = -1;
+  col.blotLevel = 0;
+  col.open = 0;
+  col.roarAge = -99;
+  view.gazeDark = 0;
+  if (phase === "phase3") {
+    for (const hand of state.hands) {
+      if (hand.state === "sink" && hand.at > slamMemAt) {
+        slamMemAt = hand.at;
+        slamMemX = hand.x;
+      }
+      if (hand.state === "windup") {
+        const home = voidHandHome(hand.side);
+        HOME_SCRATCH.x = home.x;
+        HOME_SCRATCH.y = home.y;
+        const place = handPlace(hand, HOME_SCRATCH, time, handWindupS(), still, false, HAND_SCRATCH);
+        const level = still ? STILL_BLOT : Math.round(handShadowGrow(time - hand.at, handWindupS()) * SKY_BLOT_MAX);
+        if (level > col.blotLevel) {
+          col.blotLevel = level;
+          col.blotX = place.x;
+          col.blotY = place.y;
+        }
+      }
+    }
+    const since = time - slamMemAt;
+    if (still) {
+      if (state.hands.some((hand) => hand.state === "sink")) {
+        col.slamAge = STILL_DUST_S;
+        col.slamX = slamMemX;
+      }
+    } else if (slamMemAt > -90 && since >= 0 && since < SLAM_FX_S + 0.3) {
+      col.slamAge = since;
+      col.slamX = slamMemX;
+    }
+    const attackNow = state.attack;
+    if (attackNow && attackNow.kind === "roar" && time >= attackNow.at && time < attackNow.endAt + 0.6) {
+      col.open = maskOpenLevel(roarOpen(time, attackNow.at, attackNow.hitAt, still));
+      col.roarAge = time >= attackNow.hitAt ? time - attackNow.hitAt : -1;
+    }
+    if (attackNow && attackNow.kind === "gaze")
+      view.gazeDark = gazeDarkness(
+        time,
+        state.gazeChargeAt > -90 ? state.gazeChargeAt : attackNow.at,
+        attackNow.hitAt,
+        attackNow.endAt,
+        still,
+      );
+  }
   col.dying = eyeDeath;
   col.deathCrack = 0;
   col.deathShatter = 0;
@@ -760,7 +861,7 @@ const ECLIPSE_Y = 38;
 const ECLIPSE_FLOOR_Y = 128;
 const SUN_R = 36;
 /** the phase 3 eclipse is bigger */
-const ECLIPSE_BIG = 1.4;
+const ECLIPSE_BIG = 1.75;
 const drawEclipse = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
   const attack = state.attack;
   if (!attack || attack.kind !== "eclipse") return;
@@ -1517,6 +1618,18 @@ const diamond = (ctx: Ctx, x: number, y: number, lit: boolean, color: string) =>
   if (lit) rect(ctx, WHITE, x + 2, y + 2, 1, 1);
 };
 
+const P3_SEG_COLORS = ["#e0343c", "#e8541c", "#f08a1c", "#f2c14e"];
+const P3_SEG_HI = ["#ff8a8a", "#ffa06a", "#ffc06a", "#fff0a0"];
+let trailFrac = 1;
+let trailTime = 0;
+/** the draining trail of the phase 3 bar: holds the last fraction and eases down to the real one */
+const p3Trail = (frac: number, time: number): number => {
+  const delta = time - trailTime;
+  trailTime = time;
+  trailFrac = delta < 0 || delta > 1 ? frac : Math.max(frac, trailFrac - delta / P3_BAR_TRAIL_S);
+  return trailFrac;
+};
+
 /** the ornate boss bar: iron-violet frame with gold corners and an eye emblem, name, phase pips, a 40-segment bar */
 export const drawVoidBar = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
   if (!BAR_PHASES.has(state.phase)) return;
@@ -1526,6 +1639,8 @@ export const drawVoidBar = (ctx: Ctx, state: VoidState, time: number, still: boo
   const panelX = Math.round(CENTER_X - panelW / 2);
   const panelY = BAR_TOP + Math.round((1 - slide) * (PANEL_H + 6));
   const pips = phasePips(state.phase);
+  const colossus = state.phase === "phase3" || (state.phase === "dying" && state.dyingEye);
+  const frac = colossus ? (state.phase === "dying" ? 0 : p3Fraction(state)) : voidHpFrac(state);
   const colors = BAR_PHASE_COLORS[Math.max(0, pips - 1)];
   const dying = state.phase === "dying";
   // phase 3 wears a red-and-gold frame
@@ -1558,7 +1673,7 @@ export const drawVoidBar = (ctx: Ctx, state: VoidState, time: number, still: boo
   drawPixelText(ctx, awake ? NAME_AWAKE : NAME, panelX + 8, panelY + 4, dying ? "#c4c9d4" : awake ? GOLD_HI : WHITE, {
     shadow: INK,
   });
-  const pct = dying ? "FALLEN" : `${Math.ceil(voidHpFrac(state) * 100)}%`;
+  const pct = dying ? "FALLEN" : `${Math.ceil(frac * 100)}%`;
   drawPixelText(ctx, pct, panelX + panelW - 30, panelY + 4, dying ? "#8d93a0" : GOLD_HI, {
     shadow: INK,
     align: "right",
@@ -1570,22 +1685,25 @@ export const drawVoidBar = (ctx: Ctx, state: VoidState, time: number, still: boo
     barY = panelY + 14;
   const segs = BAR_SEGMENTS;
   rect(ctx, INK, barX - 1, barY - 1, segs * BAR_SEG_PX + 1, 10);
-  const fillNow = Math.max(0, state.shown);
-  const lit = dying ? 0 : barLitSegments(voidHpFrac(state), segs, state.hp > 0);
+  const fillNow = colossus ? p3Trail(frac, time) : Math.max(0, state.shown);
+  const lit = dying ? 0 : barLitSegments(frac, segs, colossus ? state.p3Hp > 0 : state.hp > 0);
   const trail = barLitSegments(fillNow, segs, false);
+  const lowPulse = colossus && frac < P3_LOW && !still && Math.floor(time * 5) % 2 === 0;
   const hot = pips >= 3 && !still && Math.floor(time * 6) % 2 === 0;
   for (let seg = 0; seg < segs; seg++) {
     const sx = barX + seg * BAR_SEG_PX;
     const on = seg < lit,
       draining = !on && seg < trail;
-    rect(ctx, on ? (hot ? colors.hi : colors.on) : draining ? "#ffe14a" : "#2a1a3a", sx, barY, BAR_SEG_PX - 1, 8);
+    const tone = Math.min(P3_SEG_COLORS.length - 1, Math.floor((seg / segs) * P3_SEG_COLORS.length));
+    const fillOn = colossus ? (lowPulse ? "#ffffff" : P3_SEG_COLORS[tone]) : hot ? colors.hi : colors.on;
+    rect(ctx, on ? fillOn : draining ? "#ffe14a" : "#2a1a3a", sx, barY, BAR_SEG_PX - 1, 8);
     if (on || draining) {
-      rect(ctx, on ? colors.hi : "#fff4a0", sx, barY, BAR_SEG_PX - 1, 1);
+      rect(ctx, on ? (colossus ? P3_SEG_HI[tone] : colors.hi) : "#fff4a0", sx, barY, BAR_SEG_PX - 1, 1);
       rect(ctx, on ? colors.lo : "#b8962a", sx, barY + 7, BAR_SEG_PX - 1, 1);
     }
   }
   // the phase thresholds: gold ticks at 60% and 25%
-  for (const mark of BAR_MARKS) {
+  for (const mark of colossus ? [] : BAR_MARKS) {
     const mx = barX + Math.round(segs * mark) * BAR_SEG_PX - 1;
     rect(ctx, GOLD, mx, barY - 3, 1, 3);
     rect(ctx, GOLD, mx, barY + 8, 1, 2);

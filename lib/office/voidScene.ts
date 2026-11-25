@@ -8,9 +8,9 @@
  */
 import { VIEW_W, VIEW_X0, WORLD_H } from "./layout";
 import { drawAtmosphereBack } from "./voidAtmosphere";
-import { drawColossusBack, type ColossusView } from "./voidColossus";
+import { drawColossusBack, drawColossusChest, type ColossusView } from "./voidColossus";
 import { VOID_ARENA_X0, VOID_ARENA_Y0, VOID_HOME_X, VOID_FEET_Y } from "./voidFight";
-import { COLOSSUS_EYE_X, COLOSSUS_EYE_Y, noise2 } from "./voidVisualLogic";
+import { COLOSSUS_EYE_X, COLOSSUS_EYE_Y, GAZE_DARK_LEVEL, noise2 } from "./voidVisualLogic";
 
 type Ctx = CanvasRenderingContext2D;
 /** 0 = the veiled arena (phase 1), 1 = TRUE FORM (phase 2: blood-red sky, burning eye), 2 = the colossus (phase 3: starfield, face, shards) */
@@ -503,6 +503,8 @@ export interface VoidBackView {
   eclipse: number;
   /** the colossus's face, eye, shards and death (phase 3) */
   colossus: ColossusView;
+  /** 0..1: the gaze darkens the back layers to near black (never the characters or the front); the chest eye glows on top */
+  gazeDark: number;
 }
 
 const floors: (HTMLCanvasElement | null | undefined)[] = [];
@@ -524,9 +526,13 @@ export const drawVoidBack = (ctx: Ctx, time: number, still: boolean, view: VoidB
     if (view.colossus.eyeFly < 1)
       drawEye(ctx, time, still, 1, view.colossus.eyeX, view.colossus.eyeY, view.colossus.eyeScale);
     // the shards are cut from the phase 2 island, so the floor is whole when the ascend begins
-    drawColossusBack(ctx, view.colossus, time, still, floorOf(1));
+    drawColossusBack(ctx, view.colossus, time, still, floorOf(1), view.gazeDark <= 0);
     drawChunks(ctx, time, still, 1);
     drawAtmosphereBack(ctx, time, still, true, "near");
+    if (view.gazeDark > 0) {
+      drawDitherVeil(ctx, "#05020b", view.gazeDark * GAZE_DARK_LEVEL, VIEW_X0, 0, VIEW_W, WORLD_H);
+      drawColossusChest(ctx, view.colossus, time, still);
+    }
   } else {
     drawEye(ctx, time, still, variant, EYE.x, EYE.y, 1);
     twinkle(ctx, time, still, variant);

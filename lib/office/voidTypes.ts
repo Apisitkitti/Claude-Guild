@@ -24,8 +24,9 @@ export type VoidPhase =
 /** beam: sweeping void beam across the floor · eyes: floating eyes spawn and fire · blink: teleports behind a raider
  *  and strikes · collapse: the floor tiles fall away in a pattern (phase2 only) · hand (phase3): a colossus hand winds
  *  up over a raider (targetX/Y) and slams it · gaze (phase3): the colossus eye fires a beam that sweeps the whole floor
- *  left to right between hitAt and endAt (targetX = sweep start; see voidGazeX in voidFight.ts) */
-export type VoidAttackKind = "beam" | "eyes" | "blink" | "collapse" | "eclipse" | "summon" | "hand" | "gaze";
+ *  left to right between hitAt and endAt (targetX = sweep start; see voidGazeX in voidFight.ts) · roar (phase3): the
+ *  colossus screams, a sound wave at hitAt pushes every raider back (a hit costs a heart but never the last) */
+export type VoidAttackKind = "beam" | "eyes" | "blink" | "collapse" | "eclipse" | "summon" | "hand" | "gaze" | "roar";
 // summon (phase 1+): 2-3 void minions rise next to the boss and drift to the raiders; while any lives the boss is
 // `shielded` (raider hits kill a minion instead of hurting it).
 // eclipse (phase2 and phase3): the boss raises both arms, the arena darkens to its palette (opaque, never over characters),
@@ -175,6 +176,24 @@ export interface VoidState {
   pushbackY: number;
   /** the death in progress is the colossus's eye shattering (it died in phase3) */
   dyingEye: boolean;
+  // ---- phase 3 impact ----
+  /** the colossus's own hp pool (set at the ascend); phase3 damage drains it while hp stays at its 25% floor */
+  p3Hp: number;
+  p3MaxHp: number;
+  /** clock time of the last hit on the core / the last crit on it (-99 = never): the eye staggers */
+  eyeHitAt: number;
+  eyeCritAt: number;
+  /** 0..1 = 1 - p3Hp / p3MaxHp: how cracked the eye is (progressive cracks) */
+  eyeCrack: number;
+  /** clock time a hand began its windup (the floor shadow of the slam starts) */
+  handShadowAt: number;
+  /** clock time the gaze began charging (the arena darkens except the eye until the beam fires) */
+  gazeChargeAt: number;
+  /** clock time the roar began (telegraph start) */
+  roarAt: number;
+  /** clock time of the killing blow, and the clock time the slow-mo ends (game time runs slow until then) */
+  finalBlowAt: number;
+  slowUntil: number;
 }
 
 export const voidIdle = (): VoidState => ({
@@ -234,4 +253,14 @@ export const voidIdle = (): VoidState => ({
   pushbackX: 0,
   pushbackY: 0,
   dyingEye: false,
+  p3Hp: 0,
+  p3MaxHp: 0,
+  eyeHitAt: -99,
+  eyeCritAt: -99,
+  eyeCrack: 0,
+  handShadowAt: -99,
+  gazeChargeAt: -99,
+  roarAt: -99,
+  finalBlowAt: -99,
+  slowUntil: -99,
 });

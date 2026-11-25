@@ -232,3 +232,60 @@ export const drawBossRuneCircle = (ctx: Ctx, cx: number, cy: number, time: numbe
   rect(ctx, CIRCLE_COLORS[2], cx - 1, cy - 1, 3, 3);
   if (beat > 0.8) rect(ctx, "#ffffff", cx, cy, 1, 1);
 };
+
+// ---- opaque ordered-dither fills (never alpha): the hand's shadow, the sky blot, the dust wall -------------------------------------------
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+const DITHER_MAX = 16;
+const ditherPatterns = new Map<string, CanvasPattern | null>();
+/** a cached 4x4 Bayer pattern of `color` covering `level` / 16 of the pixels (null when no canvas exists) */
+const ditherPattern = (ctx: Ctx, color: string, level: number): CanvasPattern | null => {
+  const key = `${color}|${level}`;
+  const known = ditherPatterns.get(key);
+  if (known !== undefined) return known;
+  let pattern: CanvasPattern | null = null;
+  if (typeof document !== "undefined") {
+    const cv = document.createElement("canvas");
+    cv.width = 4;
+    cv.height = 4;
+    const tile = cv.getContext("2d");
+    if (tile) {
+      for (let i = 0; i < 16; i++) if (BAYER[i] < level) rect(tile, color, i % 4, Math.floor(i / 4), 1, 1);
+      pattern = ctx.createPattern(cv, "repeat");
+    }
+  }
+  ditherPatterns.set(key, pattern);
+  return pattern;
+};
+/** an opaque dither of `color` over a rect: level 0..16 (16 = solid) */
+export const drawDitherRect = (
+  ctx: Ctx,
+  color: string,
+  level: number,
+  x: number,
+  y: number,
+  wide: number,
+  high: number,
+) => {
+  const clamped = Math.min(DITHER_MAX, Math.max(0, Math.round(level)));
+  if (clamped <= 0 || wide <= 0 || high <= 0) return;
+  if (clamped >= DITHER_MAX) return rect(ctx, color, x, y, wide, high);
+  const pattern = ditherPattern(ctx, color, clamped);
+  if (!pattern) return;
+  ctx.fillStyle = pattern;
+  ctx.fillRect(Math.round(x), Math.round(y), Math.round(wide), Math.round(high));
+};
+/** an opaque dithered ellipse, one row at a time (rows are runs: cheap) */
+export const drawDitherEllipse = (
+  ctx: Ctx,
+  color: string,
+  level: number,
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+) => {
+  for (let row = -Math.round(ry); row <= Math.round(ry); row++) {
+    const half = Math.round(rx * Math.sqrt(Math.max(0, 1 - (row * row) / (ry * ry + 1))));
+    drawDitherRect(ctx, color, level, cx - half, cy + row, half * 2 + 1, 1);
+  }
+};

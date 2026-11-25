@@ -15,9 +15,11 @@ import {
   VOID_HAND_SINK_S,
   VOID_HAND_SLAM_S,
   VOID_PHASE2_BELOW,
+  VOID_PHASE3_BELOW,
+  VOID_ROAR_ATTACK_S,
   voidTelegraphS,
 } from "./voidFight";
-import type { VoidHandState, VoidPhase } from "./voidTypes";
+import type { VoidHandState, VoidPhase, VoidState } from "./voidTypes";
 
 // ---- the pixel-block wipe -------------------------------------------------------------------------------------------
 /** one wipe block is this many px square */
@@ -475,7 +477,7 @@ export const HAND_H = 84;
 /** the hand's palm centre this far above the floor point it works on when it slams (claws touch the floor) */
 export const HAND_REACH = 34;
 /** how high above the floor point the hand is raised in the windup */
-export const HAND_RAISE = 82;
+export const HAND_RAISE = 108;
 const HAND_SINK_DROP = 120;
 const HAND_RISE_FROM = 150;
 const HAND_RECOVER_S = 0.45;
@@ -484,6 +486,8 @@ const HAND_BOB_PX = 3;
 const HAND_BOB_HZ = 1.7;
 const HAND_CLAW_AT = 0.3;
 const MIN_WINDUP_S = 0.1;
+/** the raised hand keeps to its own side of the arena (this share of the way to the target) so it never covers the mask face */
+const WINDUP_SIDE = 0.35;
 const SINK_OPEN_AT = 0.5;
 const STILL_SINK_AT = 0.3;
 export interface HandPlace {
@@ -530,12 +534,13 @@ export const handPlace = (
     out.y = home.y + bob + recover;
   } else if (hand.state === "windup") {
     const tick = smooth(age / Math.max(MIN_WINDUP_S, windupS));
-    out.x = home.x + (hand.x - home.x) * tick;
+    out.x = home.x + (hand.x - home.x) * tick * WINDUP_SIDE;
     out.y = home.y + (hand.y - HAND_RAISE - home.y) * tick;
     out.claw = tick > HAND_CLAW_AT;
   } else if (hand.state === "slam") {
     const tick = clamp01(age / VOID_HAND_SLAM_S);
-    out.x = hand.x;
+    const raisedX = home.x + (hand.x - home.x) * WINDUP_SIDE;
+    out.x = raisedX + (hand.x - raisedX) * tick;
     out.y = hand.y - HAND_RAISE + (HAND_RAISE - HAND_REACH) * tick * tick;
     out.claw = true;
     out.slam = tick;
@@ -607,3 +612,178 @@ const FALL_SPREAD = 0.9;
 /** how far (px) a face fragment with random `rnd` 0..1 has fallen `shatter` (0..1) into the shatter stage; it accelerates */
 export const fragmentFall = (shatter: number, rnd: number): number =>
   Math.round(shatter * shatter * FALL_PX * (FALL_BASE + FALL_SPREAD * rnd));
+
+// ---- phase 3 punch: the eye's reaction, crack stages, the heavy moves ---------------------------------------------------------------
+export const HIT_RECOIL_S = 0.15;
+export const HIT_RECOIL_PX = 3;
+export const CRIT_RECOIL_S = 0.26;
+export const CRIT_RECOIL_PX = 6;
+export const SQUINT_S = 0.2;
+export const CRIT_SQUINT_S = 0.34;
+/** squint steps of the cached eye sprites: 0 open .. SQUINT_LEVELS shut */
+export const SQUINT_LEVELS = 3;
+export const CRIT_FLASH_S = 0.16;
+export const CRIT_SHARD_S = 0.55;
+export const CRIT_SHARDS = 16;
+const RECOIL_PEAK = 0.3;
+
+/** 0..1 jolt profile: a fast kick out to the peak, a slower settle */
+export const recoilProfile = (age: number, duration: number): number => {
+  if (!(age >= 0) || age >= duration) return 0;
+  const ratio = age / duration;
+  return ratio < RECOIL_PEAK ? ratio / RECOIL_PEAK : 1 - (ratio - RECOIL_PEAK) / (1 - RECOIL_PEAK);
+};
+export interface EyeReaction {
+  /** 0..1 lids closed / iris contracted */
+  squint: number;
+  /** px the whole colossus is kicked up (positive = up) */
+  recoil: number;
+  /** 0..1 the opaque flash band over the eye after a crit (1 = just landed) */
+  flash: number;
+  /** 0..1 progress of the shard burst after a crit, -1 = none */
+  shard: number;
+}
+/** how the colossus reacts `hitAge` / `critAge` seconds after a hit / crit on the eye (all zero under reduced motion) */
+export const eyeReaction = (hitAge: number, critAge: number, still: boolean, out: EyeReaction): EyeReaction => {
+  out.squint = 0;
+  out.recoil = 0;
+  out.flash = 0;
+  out.shard = -1;
+  if (still) return out;
+  out.squint = Math.max(
+    recoilProfile(hitAge, SQUINT_S) > 0 ? 1 - hitAge / SQUINT_S : 0,
+    critAge >= 0 && critAge < CRIT_SQUINT_S ? 1 - critAge / CRIT_SQUINT_S : 0,
+  );
+  out.recoil = Math.max(
+    recoilProfile(hitAge, HIT_RECOIL_S) * HIT_RECOIL_PX,
+    recoilProfile(critAge, CRIT_RECOIL_S) * CRIT_RECOIL_PX,
+  );
+  out.flash = critAge >= 0 && critAge < CRIT_FLASH_S ? 1 - critAge / CRIT_FLASH_S : 0;
+  out.shard = critAge >= 0 && critAge < CRIT_SHARD_S ? critAge / CRIT_SHARD_S : -1;
+  return out;
+};
+export const squintLevel = (squint: number): number =>
+  Math.min(SQUINT_LEVELS, Math.max(0, Math.round(squint * SQUINT_LEVELS)));
+
+/** eyeCrack (0..1) crosses these: stage 1-2 crack the eye, 3-4 spread over the body */
+const CRACK_AT_A = 0.1;
+const CRACK_AT_B = 0.3;
+const CRACK_AT_C = 0.55;
+const CRACK_AT_D = 0.8;
+export const CRACK_STAGE_AT: readonly number[] = [CRACK_AT_A, CRACK_AT_B, CRACK_AT_C, CRACK_AT_D];
+export const CRACK_STAGES = CRACK_STAGE_AT.length;
+export const crackStageOf = (crack: number): number => {
+  let stage = 0;
+  for (const at of CRACK_STAGE_AT) if (crack >= at) stage++;
+  return stage;
+};
+
+// the gaze: the arena goes dark on the BACK layers only (raiders, floor effects and the front stay as they are)
+export const GAZE_DARK_LEVEL = 14;
+export const GAZE_DARK_RAMP = 0.7;
+export const GAZE_DARK_FADE_S = 0.45;
+export const STILL_GAZE_DARK = 0.7;
+export const GAZE_DARK_TARGETS: Readonly<{ back: boolean; characters: boolean; front: boolean }> = {
+  back: true,
+  characters: false,
+  front: false,
+};
+/** 0..1 darkness of the back layers: ramps up through the charge, holds through the sweep, fades after it */
+export const gazeDarkness = (now: number, at: number, hitAt: number, endAt: number, still: boolean): number => {
+  if (now < at) return 0;
+  if (now >= endAt + GAZE_DARK_FADE_S) return 0;
+  if (still) return STILL_GAZE_DARK;
+  if (now >= endAt) return 1 - (now - endAt) / GAZE_DARK_FADE_S;
+  return clamp01((now - at) / Math.max(MIN_WINDUP_S, (hitAt - at) * GAZE_DARK_RAMP));
+};
+
+// the hand: a huge floor shadow for the telegraph, the sky blotted by the raised hand, a heavy slam
+export const HAND_SHADOW_RX = 48;
+export const HAND_SHADOW_RY = 26;
+export const HAND_SHADOW_MIN = 14;
+export const SKY_BLOT_RX = 46;
+export const SKY_BLOT_RY = 58;
+export const SKY_BLOT_MAX = 12;
+/** 0..1 growth of the hand's floor shadow `age` seconds into the telegraph */
+export const handShadowGrow = (age: number, telegraphS: number): number =>
+  clamp01(1 - (1 - clamp01(age / Math.max(MIN_WINDUP_S, telegraphS))) ** 2);
+export const SLAM_RING_SPEED = 420;
+export const SLAM_RING_GAP_S = 0.07;
+export const SLAM_RINGS = 3;
+export const SLAM_FX_S = 0.9;
+export const SLAM_SAG_PX = 3;
+export const SLAM_SAG_S = 0.22;
+export const DUST_RISE_PX = 74;
+export const DUST_S = 1.1;
+export const DEBRIS_CHUNKS = 22;
+/** radius of slam ring `index` `age` seconds after the impact (-1 = not out yet or gone) */
+export const slamRingRadius = (age: number, index: number): number => {
+  const run = age - index * SLAM_RING_GAP_S;
+  return run > 0 && age < SLAM_FX_S ? run * SLAM_RING_SPEED : -1;
+};
+/** 0..1 how high the dust wall stands and its dissolve level 0..SKY_BLOT_MAX */
+export const dustWall = (age: number): { rise: number; dissolve: number } => ({
+  rise: age < 0 ? 0 : 1 - (1 - clamp01(age / (DUST_S * RECOIL_PEAK))) ** 2,
+  dissolve:
+    age < DUST_S * RECOIL_PEAK
+      ? 0
+      : Math.round(clamp01((age - DUST_S * RECOIL_PEAK) / (DUST_S * (1 - RECOIL_PEAK))) * SKY_BLOT_MAX),
+});
+/** body sag (px, down) of the colossus when a hand lands */
+export const slamSag = (age: number): number => recoilProfile(age, SLAM_SAG_S) * SLAM_SAG_PX;
+
+// the roar: the mask splits, sound-wave rings expand from it, floor debris lifts
+export const ROAR_RING_COUNT = 5;
+export const ROAR_RING_GAP_S = 0.16;
+export const ROAR_RING_SPEED = 190;
+export const ROAR_RING_REACH = 330;
+export const ROAR_RING_SQUASH = 0.55;
+export const ROAR_LIFT_PX = 26;
+const LIFT_MIN = 0.4;
+export const ROAR_CLOSE_S = 0.25;
+export const MASK_OPEN_LEVELS = 4;
+const STILL_RING_A = 60;
+const STILL_RING_B = 110;
+const STILL_RING_C = 160;
+export const STILL_RING_RADII: readonly number[] = [STILL_RING_A, STILL_RING_B, STILL_RING_C];
+/** radius (px) of roar ring `index` `age` seconds into the active scream (-1 = not out) */
+export const roarRingRadius = (age: number, index: number): number => {
+  const run = age - index * ROAR_RING_GAP_S;
+  const radius = run * ROAR_RING_SPEED;
+  return run > 0 && radius < ROAR_RING_REACH ? radius : -1;
+};
+/** the roar's schedule from the attack (telegraph at..hitAt, scream hitAt..hitAt + VOID_ROAR_ATTACK_S): mask open 0..1 */
+export const roarOpen = (now: number, at: number, hitAt: number, still: boolean): number => {
+  if (now < at || now >= hitAt + VOID_ROAR_ATTACK_S + ROAR_CLOSE_S) return 0;
+  if (still) return 1;
+  if (now < hitAt) return clamp01((now - at) / Math.max(MIN_WINDUP_S, hitAt - at));
+  if (now < hitAt + VOID_ROAR_ATTACK_S) return 1;
+  return 1 - (now - hitAt - VOID_ROAR_ATTACK_S) / ROAR_CLOSE_S;
+};
+export const maskOpenLevel = (open: number): number =>
+  Math.min(MASK_OPEN_LEVELS, Math.max(0, Math.round(open * MASK_OPEN_LEVELS)));
+/** a floor chunk's lift (px) `age` seconds into the roar: it rises and settles */
+export const roarLift = (age: number, rnd: number): number =>
+  age < 0 || age > VOID_ROAR_ATTACK_S + ROAR_CLOSE_S
+    ? 0
+    : Math.sin(clamp01(age / (VOID_ROAR_ATTACK_S + ROAR_CLOSE_S)) * Math.PI) *
+      ROAR_LIFT_PX *
+      (LIFT_MIN + rnd * (1 - LIFT_MIN));
+
+// the final blow: a white-gold crack across the eye
+export const FINAL_CRACK_S = 0.4;
+export const finalCrack = (age: number, still: boolean): number =>
+  age < 0 ? 0 : still ? 1 : clamp01(age / FINAL_CRACK_S);
+
+// the phase 3 bar
+export const P3_BAR_TRAIL_S = 1.6;
+/** 0..1 of the colossus's own hp pool (a full bar at the start of phase 3) */
+export const p3Fraction = (state: VoidState): number =>
+  state.p3MaxHp > 0
+    ? clamp01(state.p3Hp / state.p3MaxHp)
+    : state.maxHp > 0
+      ? clamp01(state.hp / state.maxHp / VOID_PHASE3_BELOW)
+      : 0;
+export const P3_LOW = 0.25;
+/** skill plates at once in phase 3 */
+export const P3_PLATE_LIMIT = 1;

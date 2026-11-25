@@ -9,8 +9,20 @@
  * pieces are cached, the rest is rect calls driven by hashes.
  */
 import { VIEW_W, VIEW_X0, WORLD_H } from "./layout";
-import { VoidGrid, type Ramp, voidColossusSprite } from "./voidBossSprite";
-import { VOID_HAND_SINK_S, VOID_HAND_SLAM_S, VOID_ARENA_Y1, voidGazeX, voidHandHome } from "./voidFight";
+import { drawDitherEllipse, drawDitherRect } from "./voidAtmosphere";
+import { VoidGrid, type Ramp } from "./voidBossSprite";
+import { BOB, FACE_X0, FACE_Y0, colossusEyeArt, colossusFaceArt, voidColossusSprite } from "./voidColossusArt";
+import {
+  VOID_ARENA_X0,
+  VOID_ARENA_X1,
+  VOID_ARENA_Y0,
+  VOID_ARENA_Y1,
+  VOID_HAND_SINK_S,
+  VOID_HAND_SLAM_S,
+  VOID_ROAR_ATTACK_S,
+  voidGazeX,
+  voidHandHome,
+} from "./voidFight";
 import type { VoidHand, VoidState } from "./voidTypes";
 import {
   ASCEND_DONE,
@@ -20,12 +32,34 @@ import {
   COLOSSUS_SCALES,
   COLOSSUS_SHOULDER_DX,
   COLOSSUS_SHOULDER_DY,
+  CRACK_STAGES,
+  CRIT_SHARDS,
+  DEBRIS_CHUNKS,
+  DUST_RISE_PX,
   GAZE_LEFT,
   GAZE_RIGHT,
   HAND_H,
   HAND_W,
+  SKY_BLOT_MAX,
+  SKY_BLOT_RX,
+  SKY_BLOT_RY,
+  HAND_SHADOW_MIN,
+  HAND_SHADOW_RX,
+  HAND_SHADOW_RY,
+  ROAR_RING_COUNT,
+  ROAR_RING_SQUASH,
+  STILL_RING_RADII,
   ascendBeat,
   colossusPlace,
+  dustWall,
+  eyeReaction,
+  handShadowGrow,
+  roarLift,
+  roarRingRadius,
+  slamRingRadius,
+  slamSag,
+  squintLevel,
+  type EyeReaction,
   corePulse,
   fragmentFall,
   gazeBeamPoint,
@@ -99,6 +133,29 @@ export interface ColossusView {
   dying: boolean;
   deathCrack: number;
   deathShatter: number;
+  // ---- phase 3 punch ----
+  /** px the whole colossus is shoved down (+) or kicked up (-): hit recoil and the sag of a slam */
+  jolt: number;
+  /** squint level 0..SQUINT_LEVELS of the eye, the crit flash 0..1, the crit shard burst 0..1 (-1 none) and its seed */
+  squint: number;
+  flash: number;
+  shard: number;
+  shardSeed: number;
+  /** crack stage 0..CRACK_STAGES */
+  stage: number;
+  /** mask open level 0..MASK_OPEN_LEVELS and the seconds since the scream began (-99 = no scream) */
+  open: number;
+  roarAge: number;
+  /** the final blow's white-gold crack across the eye 0..1 */
+  finalCrack: number;
+  /** the hands: seconds since the last landing and where; the raised hand blots the sky at (blotX, blotY) */
+  slamAge: number;
+  slamX: number;
+  blotX: number;
+  blotY: number;
+  blotLevel: number;
+  /** darkness of the back layers during the gaze 0..1 (the scene applies it; the chest glows on top) */
+  gazeDark: number;
 }
 
 const BEAT: AscendBeat = { ...ASCEND_DONE };
@@ -232,11 +289,30 @@ const bodyOrigin = (view: ColossusView, step: number): { x: number; y: number } 
   y: view.y - COLOSSUS_PAINT_CHEST_Y * COLOSSUS_SCALES[step],
 });
 
+/** the body with its face and eye painted in: what falls apart when the colossus dies */
+const fragmentSource = (): HTMLCanvasElement => {
+  const last = COLOSSUS_SCALES.length - 1;
+  const body = voidColossusSprite(last, 0, CRACK_STAGES);
+  const made = canvasOf(body.width, body.height);
+  if (!made) return body;
+  const scale = COLOSSUS_SCALES[last];
+  made.c.drawImage(body, 0, 0);
+  const face = colossusFaceArt(last, 0, 0, CRACK_STAGES);
+  if (face) made.c.drawImage(face, Math.round(FACE_X0 * scale), Math.round(FACE_Y0 * scale));
+  const eye = colossusEyeArt(last, 0, 0, false, CRACK_STAGES);
+  if (eye)
+    made.c.drawImage(
+      eye,
+      Math.round(COLOSSUS_PAINT_CHEST_X * scale - eye.width / 2),
+      Math.round(COLOSSUS_PAINT_CHEST_Y * scale - eye.height / 2),
+    );
+  return made.cv;
+};
 let fragments: Piece[] | undefined;
 /** the finished body cut into large pieces (they fall into the abyss in the death) */
 const bodyFragments = (): Piece[] => {
   if (fragments) return fragments;
-  const sprite = voidColossusSprite(COLOSSUS_SCALES.length - 1, 0);
+  const sprite = fragmentSource();
   fragments = cutLayer(sprite, seedGrid(6, 4, 0, 0, sprite.width, sprite.height, 3), VOIDC, GOLD_HI);
   return fragments;
 };
@@ -272,42 +348,106 @@ const drawCracks = (ctx: Ctx, cx: number, cy: number, progress: number, time: nu
   }
 };
 
-/** the chest eye: a blazing corona around the painted eye that pulses, swells on a strike and gathers light before the gaze */
-const drawChest = (ctx: Ctx, view: ColossusView, time: number, still: boolean) => {
+const PAN = [-1, 0, 1, 0];
+const SHARD_COLORS = ["#ffffff", "#ffd070", "#ff8a2a", "#e0243c"];
+const FINAL_PTS = 9;
+/** the chest eye: a blazing corona, the live eye (squint, hot gaze glow, cracks), the crit flash band, shards and the final crack */
+export const drawColossusChest = (ctx: Ctx, view: ColossusView, time: number, still: boolean) => {
+  if (!view.on) return;
   const scale = COLOSSUS_SCALES[view.step] / COLOSSUS_SCALES[COLOSSUS_SCALES.length - 1];
+  const cy = view.y + Math.round(view.jolt);
   const beat = still ? 0.5 : (Math.sin(time * 4) + 1) / 2;
   const pulse = still ? 1 : corePulse(view.sinceHit);
+  const hot = view.charge > 0;
+  const gain = 1 + view.charge * 0.8;
   const rays = 24;
   for (let ray = 0; ray < rays; ray++) {
     const angle = (still ? 0 : time * 0.5) + (ray / rays) * TURN;
-    const length = (46 + (ray % 2) * 18 + beat * 10) * scale * pulse;
-    for (let step = 38 * scale; step < length; step += 3)
+    const length = (50 + (ray % 2) * 18 + beat * 10) * scale * pulse * gain;
+    for (let step = 46 * scale; step < length; step += 3)
       rect(
         ctx,
         step > length - 7 ? GOLD_HI : ray % 2 ? "#ff8a2a" : "#d0381c",
         view.x + Math.cos(angle) * step * 1.25,
-        view.y + Math.sin(angle) * step * 0.9,
+        cy + Math.sin(angle) * step * 0.9,
         3,
         3,
       );
   }
-  dots(ctx, view.x, view.y, (58 + beat * 3) * scale * pulse, beat > 0.5 ? "#ffffff" : GOLD_HI, 0.07, 2);
+  dots(ctx, view.x, cy, (62 + beat * 3) * scale * pulse * gain, beat > 0.5 ? "#ffffff" : GOLD_HI, 0.07, 2);
+  if (hot) {
+    // the gaze gathers light: rings of fire pulled in toward the eye, brighter as the charge climbs
+    for (let ring = 0; ring < 3; ring++) {
+      const radius = (1 - ((view.charge * 3 + ring * 0.33 + (still ? 0 : time * 0.9)) % 1)) * 120 * scale + 50 * scale;
+      dots(ctx, view.x, cy, radius, ring === 0 ? "#ffffff" : ring === 1 ? GOLD_HI : "#ff8a2a", 0.06, 3);
+    }
+  }
+  const sprite = colossusEyeArt(
+    view.step,
+    view.squint,
+    PAN[still ? 0 : Math.floor(time * 3) % PAN.length],
+    hot && view.charge > 0.5,
+    Math.min(CRACK_STAGES, view.stage),
+  );
+  if (sprite) ctx.drawImage(sprite, Math.round(view.x - sprite.width / 2), Math.round(cy - sprite.height / 2));
   if (!still && view.sinceHit >= 0 && view.sinceHit < 0.35)
-    dots(ctx, view.x, view.y, 40 * scale + view.sinceHit * 220, "#ffffff", 0.05, 3);
+    dots(ctx, view.x, cy, 48 * scale + view.sinceHit * 220, "#ffffff", 0.05, 3);
   if (view.charge > 0) {
     for (let spoke = 0; spoke < 20; spoke++) {
       const angle = (spoke / 20) * TURN + (still ? 0 : time * 2);
-      const radius = (1 - view.charge) * 70 + 8;
+      const radius = (1 - view.charge) * 70 + 14;
       rect(
         ctx,
         spoke % 2 ? "#ffffff" : GOLD_HI,
         view.x + Math.cos(angle) * radius * 1.3,
-        view.y + Math.sin(angle) * radius * 0.7,
+        cy + Math.sin(angle) * radius * 0.7,
         3,
         3,
       );
     }
-    disc(ctx, view.x, view.y, Math.round(6 + view.charge * 20), view.charge > 0.8 ? "#ffffff" : GOLD_HI);
+  }
+  if (view.flash > 0) {
+    // a crit: an opaque band racing across the eye
+    const half = Math.round(2 + view.flash * 9);
+    const wide = Math.round(52 * scale + 34 * (1 - view.flash));
+    rect(ctx, VOIDC, view.x - wide - 2, cy - half - 2, wide * 2 + 4, half * 2 + 4);
+    rect(ctx, view.flash > 0.5 ? "#ffffff" : GOLD_HI, view.x - wide, cy - half, wide * 2, half * 2);
+    rect(ctx, "#ffffff", view.x - wide, cy - 1, wide * 2, 2);
+  }
+  if (view.shard >= 0) {
+    for (let piece = 0; piece < CRIT_SHARDS; piece++) {
+      const angle = noise2(piece, 201) * TURN;
+      const speed = 60 + noise2(piece, 202) * 120;
+      const age = view.shard * 0.55;
+      rect(
+        ctx,
+        SHARD_COLORS[piece % SHARD_COLORS.length],
+        view.x + Math.cos(angle) * speed * age,
+        cy + Math.sin(angle) * speed * age * 0.8 + 140 * age * age,
+        piece % 3 ? 3 : 5,
+        piece % 3 ? 3 : 4,
+      );
+    }
+  }
+  if (view.finalCrack > 0) {
+    // the killing blow: a white-gold crack tearing across the eye
+    const reach = Math.round(view.finalCrack * FINAL_PTS);
+    const left = view.x - 50 * scale;
+    const stepX = (100 * scale) / FINAL_PTS;
+    for (let seg = 0; seg < reach; seg++) {
+      const x0 = left + seg * stepX,
+        x1 = left + (seg + 1) * stepX;
+      const y0 = cy + (noise2(seg, 203) - 0.5) * 22,
+        y1 = cy + (noise2(seg + 1, 203) - 0.5) * 22;
+      for (let sub = 0; sub <= 6; sub++) {
+        const tick = sub / 6;
+        const px = x0 + (x1 - x0) * tick,
+          py = y0 + (y1 - y0) * tick;
+        rect(ctx, VOIDC, px - 3, py - 3, 7, 7);
+        rect(ctx, GOLD_HI, px - 2, py - 2, 5, 5);
+        rect(ctx, "#ffffff", px - 1, py - 1, 3, 3);
+      }
+    }
   }
 };
 
@@ -360,9 +500,63 @@ const drawShards = (ctx: Ctx, floorLayer: HTMLCanvasElement | null, split: numbe
   });
 };
 
+const DUST_COLORS = ["#8a6a5a", "#4a2536"];
+const DUST_Y = 124;
+const ringColor = (index: number) => (index % 3 === 0 ? "#ffffff" : index % 3 === 1 ? GOLD_HI : "#9a7bff");
+/** a wall of dust behind the raiders after a hand lands (back layer): ragged columns rising across the arena, dissolving by dither */
+const drawDustWall = (ctx: Ctx, view: ColossusView) => {
+  if (view.slamAge < 0) return;
+  const wall = dustWall(view.slamAge);
+  if (wall.rise <= 0 || wall.dissolve >= SKY_BLOT_MAX) return;
+  const cover = Math.round(11 * (1 - wall.dissolve / SKY_BLOT_MAX));
+  for (let x = VOID_ARENA_X0 - 16; x < VOID_ARENA_X1 + 16; x += 5) {
+    const height = Math.round(wall.rise * DUST_RISE_PX * (0.45 + noise2(x, 211) * 0.55));
+    const full = Math.abs(x - view.slamX) < 60 ? 1 : 0.72;
+    drawDitherRect(ctx, DUST_COLORS[1], cover, x, DUST_Y - height * full, 5, height * full);
+    drawDitherRect(
+      ctx,
+      DUST_COLORS[0],
+      Math.max(0, cover - 5),
+      x,
+      DUST_Y - height * full * 0.7,
+      5,
+      height * full * 0.7,
+    );
+  }
+};
+
+/** the roar: concentric sound-wave rings of the scream (back layer) and the inhale before it */
+const drawRoarRings = (ctx: Ctx, view: ColossusView, cx: number, cy: number, still: boolean) => {
+  if (view.roarAge >= 0 && view.roarAge < VOID_ROAR_ATTACK_S + 0.6) {
+    for (let index = 0; index < (still ? STILL_RING_RADII.length : ROAR_RING_COUNT); index++) {
+      const radius = still ? STILL_RING_RADII[index] : roarRingRadius(view.roarAge, index);
+      if (radius < 0) continue;
+      const step = 0.9 / Math.sqrt(Math.max(8, radius));
+      for (let thick = 0; thick < 3; thick++)
+        dots(ctx, cx, cy, radius - thick * 3, thick === 1 ? ringColor(index + 1) : ringColor(index), step, 3);
+    }
+  } else if (view.open > 0 && view.roarAge < 0 && view.roarAge > -90 && !still) {
+    // the inhale: motes pulled into the mask
+    const pull = 1 - view.open / 4;
+    for (let mote = 0; mote < 18; mote++) {
+      const angle = (mote / 18) * TURN;
+      const radius = 18 + pull * 90;
+      rect(
+        ctx,
+        mote % 2 ? "#ffffff" : "#ff8a2a",
+        cx + Math.cos(angle) * radius,
+        cy + Math.sin(angle) * radius * ROAR_RING_SQUASH,
+        3,
+        3,
+      );
+    }
+  }
+};
+
 /**
- * the colossus's back layer, over the sky: the body (or its falling pieces), the chest eye, the dissolve under the floor line and
- * the floor shards. `floorLayer` is the phase 2 island art of the scene.
+ * the colossus's back layer, over the sky: the body (or its falling pieces), the face and the chest eye, the dissolve under
+ * the floor line and the floor shards. `floorLayer` is the phase 2 island art of the scene. `withChest` = false leaves the
+ * chest eye to the scene (the gaze darkens everything behind the raiders first, then the eye is drawn on top).
  */
 export const drawColossusBack = (
   ctx: Ctx,
@@ -370,16 +564,31 @@ export const drawColossusBack = (
   time: number,
   still: boolean,
   floorLayer: HTMLCanvasElement | null,
+  withChest = true,
 ) => {
   if (!view.on) return;
   const shatter = view.deathShatter;
   const jitter = view.shake > 0 && !still ? (Math.floor(time * 30) % 2 ? 1 : -1) * view.shake : 0;
   if (shatter <= 0) {
     const frame = still ? 0 : Math.floor(time * 3) % BODY_FRAMES;
-    const sprite = voidColossusSprite(view.step, frame);
+    const stage = view.dying ? CRACK_STAGES : Math.min(CRACK_STAGES, view.stage);
+    const sprite = voidColossusSprite(view.step, frame, stage);
     const at = bodyOrigin(view, view.step);
-    ctx.drawImage(sprite, Math.round(at.x + jitter), Math.round(at.y));
-    if (view.eyeFly >= 1 || !view.dying) drawChest(ctx, view, time, still);
+    const jolt = Math.round(view.jolt);
+    ctx.drawImage(sprite, Math.round(at.x + jitter), Math.round(at.y + jolt));
+    const scale = COLOSSUS_SCALES[view.step];
+    const face = colossusFaceArt(view.step, frame, view.open, stage);
+    if (face)
+      ctx.drawImage(
+        face,
+        Math.round(at.x + jitter + FACE_X0 * scale),
+        Math.round(at.y + jolt + (FACE_Y0 + BOB[frame]) * scale),
+      );
+    drawRoarRings(ctx, view, view.x, at.y + jolt + (40 + BOB[frame]) * scale, still);
+    if (view.blotLevel > 0) {
+      drawDitherEllipse(ctx, VOIDC, view.blotLevel, view.blotX, view.blotY, SKY_BLOT_RX, SKY_BLOT_RY);
+      drawDitherEllipse(ctx, VOIDC, view.blotLevel + 4, view.blotX, view.blotY, SKY_BLOT_RX * 0.6, SKY_BLOT_RY * 0.6);
+    }
     if (view.dying) drawCracks(ctx, view.x, view.y, view.deathCrack, time, still);
   } else {
     const at = bodyOrigin(view, COLOSSUS_SCALES.length - 1);
@@ -397,6 +606,9 @@ export const drawColossusBack = (
   const fade = fadeLayer();
   if (fade) ctx.drawImage(fade, VIEW_X0, WORLD_H - FADE_H);
   drawShards(ctx, floorLayer, view.split, time, still);
+  // the chest eye sits on top of the floor shards (still behind every raider): it is what the raiders strike
+  if (shatter <= 0 && withChest && (view.eyeFly >= 1 || !view.dying)) drawColossusChest(ctx, view, time, still);
+  drawDustWall(ctx, view);
 };
 
 // ---- the hands -----------------------------------------------------------------------------------------------------------------------------
@@ -483,6 +695,19 @@ const drawArm = (ctx: Ctx, sx: number, sy: number, wx: number, wy: number, side:
   }
 };
 
+const REACT: EyeReaction = { squint: 0, recoil: 0, flash: 0, shard: -1 };
+/** px the colossus is shoved down (+) or kicked up (-) right now: the recoil of a hit on the eye, the sag when a hand lands */
+export const colossusJolt = (state: VoidState, time: number, still: boolean): number => {
+  eyeReaction(time - state.eyeHitAt, time - state.eyeCritAt, still, REACT);
+  let sag = 0;
+  if (!still) for (const hand of state.hands) if (hand.state === "sink") sag = Math.max(sag, slamSag(time - hand.at));
+  return sag - REACT.recoil;
+};
+/** the eye's reaction (squint level, crit flash, shard burst) of this moment: one shared object */
+export const colossusReaction = (state: VoidState, time: number, still: boolean): EyeReaction =>
+  eyeReaction(time - state.eyeHitAt, time - state.eyeCritAt, still, REACT);
+export { squintLevel };
+
 const PLACE: HandPlace = { x: 0, y: 0, claw: false, slam: 0 };
 const lastState: string[] = ["", ""];
 const HOME = { x: 0, y: 0 };
@@ -490,6 +715,7 @@ const HOME = { x: 0, y: 0 };
 /** the colossus's hands (entity pass, behind every raider) */
 const drawHands = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
   const body = colossusBodyPlace(state, time, still, SHOULDER_PLACE);
+  const jolt = Math.round(colossusJolt(state, time, still));
   state.hands.forEach((hand, index) => {
     const home = voidHandHome(hand.side);
     HOME.x = home.x;
@@ -509,7 +735,7 @@ const drawHands = (ctx: Ctx, state: VoidState, time: number, still: boolean) => 
     drawArm(
       ctx,
       body.x + hand.side * COLOSSUS_SHOULDER_DX * scale,
-      body.y + COLOSSUS_SHOULDER_DY * scale,
+      body.y + COLOSSUS_SHOULDER_DY * scale + jolt,
       hx,
       place.claw ? hy - HAND_H / 2 + 8 : hy + HAND_H / 2 - 12,
       hand.side,
@@ -528,75 +754,73 @@ const WARN = "#ff3b5a";
 const WARN_HI = "#ffb0c0";
 const RED_S = "#a0182e";
 const VIOLET_S = "#4a2a8a";
-/** a striped ellipse of warning (opaque) on the floor at (cx, cy) */
-const warnEllipse = (ctx: Ctx, cx: number, cy: number, radius: number, time: number, still: boolean) => {
-  const ry = Math.round(radius * SQUASH);
-  const slide = still ? 0 : Math.floor(time * 12);
-  for (let row = -ry; row <= ry; row++) {
-    const half = Math.round(radius * Math.sqrt(1 - (row * row) / (ry * ry + 1)));
-    rect(ctx, Math.floor((row + slide) / 3) % 2 === 0 ? RED_S : VIOLET_S, cx - half, cy + row, half * 2 + 1, 1);
-  }
-  dots(ctx, cx, cy, radius, still || Math.floor(time * 8) % 2 === 0 ? WARN_HI : WARN, 0.08, 2);
-};
-
+const SHADOW_DARK = "#05020b";
 const drawHandFloor = (ctx: Ctx, hand: VoidHand, state: VoidState, time: number, still: boolean) => {
   const age = time - hand.at;
   if (hand.state === "windup") {
-    const grow = still ? 1 : clamp01(age / handWindupS());
-    warnEllipse(ctx, hand.x, hand.y, 14 + grow * 22, time, still);
+    // a huge opaque shadow spreads over the floor under the target; the warning ring marks its edge
+    const sinceShadow = state.handShadowAt > -90 ? time - state.handShadowAt : age;
+    const grow = still ? 1 : handShadowGrow(sinceShadow, handWindupS());
+    const rx = HAND_SHADOW_MIN + grow * (HAND_SHADOW_RX - HAND_SHADOW_MIN);
+    const ry = rx * (HAND_SHADOW_RY / HAND_SHADOW_RX);
+    drawDitherEllipse(ctx, SHADOW_DARK, 6, hand.x, hand.y, rx, ry);
+    drawDitherEllipse(ctx, SHADOW_DARK, 11, hand.x, hand.y, rx * 0.78, ry * 0.78);
+    drawDitherEllipse(ctx, SHADOW_DARK, 16, hand.x, hand.y, rx * 0.5, ry * 0.5);
+    dots(ctx, hand.x, hand.y, rx, still || Math.floor(time * 8) % 2 === 0 ? WARN_HI : WARN, 0.06, 2);
+    dots(ctx, hand.x, hand.y, rx * 0.5, RED_S, 0.1, 2);
     rect(ctx, WARN_HI, hand.x - 1, hand.y - 1, 3, 3);
   } else if (hand.state === "slam") {
-    // the hand's shadow shrinks onto the spot as it falls
+    // the shadow contracts onto the spot as the hand falls
     const tick = clamp01(age / VOID_HAND_SLAM_S);
-    for (let row = -6; row <= 6; row++) {
-      const half = Math.round((36 - tick * 14) * Math.sqrt(1 - (row * row) / 49));
-      rect(ctx, "#05020b", hand.x - half, hand.y + row, half * 2, 1);
-    }
-  }
-  if (hand.state === "sink") {
-    const wave = still ? 0.2 : Math.max(0, age);
-    if (hand.state === "sink") {
-      // ground cracks radiating from the crash that fade as the hand sinks
-      const keep = still ? 1 : 1 - clamp01(age / VOID_HAND_SINK_S);
-      for (let crack = 0; crack < 8; crack++) {
-        const angle = (crack / 8) * TURN + noise2(crack, 91) * 0.4;
-        const length = Math.round((16 + noise2(crack, 92) * 12) * Math.min(1, 0.4 + wave * 3));
-        const shown = Math.round(length * keep);
-        for (let step = 3; step < shown; step += 2) {
-          rect(ctx, "#05020b", hand.x + Math.cos(angle) * step - 1, hand.y + Math.sin(angle) * step * SQUASH - 1, 3, 3);
-          rect(
-            ctx,
-            step % 4 ? "#ff6a4a" : GOLD_HI,
-            hand.x + Math.cos(angle) * step,
-            hand.y + Math.sin(angle) * step * SQUASH,
-            1,
-            1,
-          );
-        }
-      }
-      if (!still && age < 0.4) {
-        for (let k = 0; k < 3; k++) {
-          const radius = (age - k * 0.06) * 160;
-          if (radius > 0)
-            dots(ctx, hand.x, hand.y, radius, k === 0 ? "#ffffff" : k === 1 ? GOLD_HI : "#d0381c", 0.05, 2);
-        }
-        if (age < 0.1) disc(ctx, hand.x, hand.y, 16, age < 0.05 ? "#ffffff" : GOLD_HI);
-        for (let piece = 0; piece < 12; piece++) {
-          const angle = noise2(piece, 93) * TURN;
-          const speed = 40 + noise2(piece, 94) * 70;
-          rect(
-            ctx,
-            piece % 3 ? "#4a2536" : "#ff8a2a",
-            hand.x + Math.cos(angle) * speed * age,
-            hand.y + Math.sin(angle) * speed * age * 0.7 - 30 * age + 160 * age * age,
-            3,
-            3,
-          );
-        }
+    const rx = HAND_SHADOW_RX * (1 - tick * 0.45);
+    drawDitherEllipse(ctx, SHADOW_DARK, 16, hand.x, hand.y, rx, rx * (HAND_SHADOW_RY / HAND_SHADOW_RX));
+  } else if (hand.state === "sink") {
+    const wave = still ? 0.3 : Math.max(0, age);
+    // ground cracks radiating from the crash, fading as the hand sinks
+    const keep = still ? 1 : 1 - clamp01(age / VOID_HAND_SINK_S) * 0.6;
+    for (let crack = 0; crack < 14; crack++) {
+      const angle = (crack / 14) * TURN + noise2(crack, 91) * 0.4;
+      const length = Math.round((26 + noise2(crack, 92) * 34) * Math.min(1, 0.3 + wave * 4));
+      const shown = Math.round(length * keep);
+      for (let step = 3; step < shown; step += 2) {
+        const px = hand.x + Math.cos(angle) * step * 1.2,
+          py = hand.y + Math.sin(angle) * step * SQUASH;
+        rect(ctx, SHADOW_DARK, px - 1, py - 1, 3, 3);
+        rect(ctx, step % 4 ? "#ff6a4a" : GOLD_HI, px, py, 1, 1);
       }
     }
+    if (!still && age < 0.5) {
+      // a shockwave ring across the whole floor, three bands deep
+      for (let band = 0; band < 3; band++) {
+        const radius = slamRingRadius(age, band);
+        if (radius > 0)
+          dots(
+            ctx,
+            hand.x,
+            hand.y,
+            radius,
+            band === 0 ? "#ffffff" : band === 1 ? GOLD_HI : "#d0381c",
+            0.9 / Math.sqrt(Math.max(8, radius)),
+            3,
+            0,
+          );
+      }
+      if (age < 0.1) disc(ctx, hand.x, hand.y, 20, age < 0.05 ? "#ffffff" : GOLD_HI);
+      for (let piece = 0; piece < DEBRIS_CHUNKS; piece++) {
+        const angle = noise2(piece, 93) * TURN;
+        const speed = 50 + noise2(piece, 94) * 110;
+        const size = piece % 3 ? 3 : 5;
+        rect(
+          ctx,
+          piece % 4 === 0 ? "#ff8a2a" : piece % 2 ? "#4a2536" : "#7a4256",
+          hand.x + Math.cos(angle) * speed * age,
+          hand.y + Math.sin(angle) * speed * age * 0.6 - 90 * age + 260 * age * age,
+          size,
+          size,
+        );
+      }
+    }
   }
-  void state;
 };
 
 const BEAM_P = { x: 0, y: 0 };
@@ -606,11 +830,11 @@ const drawGaze = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
   if (!attack || attack.kind !== "gaze" || time >= attack.endAt) return;
   const charging = time < attack.hitAt;
   if (charging) {
-    // the whole sweep lane is marked: striped end marks, chevrons running to the right, the start line pulsing
+    // the whole sweep lane is marked: end marks, chevrons running to the right, the start line pulsing
     const hot = still || Math.floor(time * 9) % 2 === 0;
     const lane = hot ? WARN_HI : WARN;
     rect(ctx, lane, GAZE_LEFT - 2, VOID_ARENA_Y1 - 2, GAZE_RIGHT - GAZE_LEFT + 4, 2);
-    rect(ctx, lane, GAZE_LEFT - 2, 68, GAZE_RIGHT - GAZE_LEFT + 4, 2);
+    rect(ctx, lane, GAZE_LEFT - 2, VOID_ARENA_Y0 - 2, GAZE_RIGHT - GAZE_LEFT + 4, 2);
     for (let x = GAZE_LEFT + 6; x < GAZE_RIGHT - 6; x += 22) {
       const slide = still ? 0 : Math.floor(time * 30) % 22;
       const cx = GAZE_LEFT + 6 + ((x - GAZE_LEFT - 6 + slide) % (GAZE_RIGHT - GAZE_LEFT - 12));
@@ -625,42 +849,74 @@ const drawGaze = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
   }
   const gx = voidGazeX(attack, time, GAZE_LEFT, GAZE_RIGHT);
   const chest = colossusBodyPlace(state, time, still, CHEST_PLACE);
-  const trailTo = Math.max(GAZE_LEFT, gx - 4);
-  // the scorched trail the beam leaves: embers on the floor
-  for (let x = GAZE_LEFT; x < trailTo; x += 3) {
+  const trailTo = Math.max(GAZE_LEFT, gx - 6);
+  // the burning trail the beam leaves: scorched floor, embers cooling with distance, small flames
+  for (let x = GAZE_LEFT; x < trailTo; x += 2) {
     const fade = (gx - x) / (GAZE_RIGHT - GAZE_LEFT);
-    if (noise2(x, 95) > 0.75 - fade * 0.2) continue;
-    rect(ctx, fade < 0.25 ? "#ff8a2a" : "#4a1a1a", x, 74 + noise2(x, 96) * (VOID_ARENA_Y1 - 80), 2, 2);
+    const lane = VOID_ARENA_Y0 + 4 + noise2(x, 96) * (VOID_ARENA_Y1 - VOID_ARENA_Y0 - 8);
+    rect(ctx, "#1a0a0e", x, lane - 1, 3, 3);
+    if (noise2(x, 95) > 0.55 + fade * 0.3) continue;
+    rect(ctx, fade < 0.2 ? GOLD_HI : fade < 0.45 ? "#ff8a2a" : "#a0182e", x, lane, 2, 2);
+    if (!still && noise2(x, 98) > 0.7 && fade < 0.6) {
+      const flame = 3 + Math.floor((noise2(x, Math.floor(time * 12)) * 5) / (1 + fade * 4));
+      rect(ctx, "#d0381c", x, lane - flame, 2, flame);
+      rect(ctx, GOLD_HI, x, lane - flame / 2, 1, flame / 2);
+    }
   }
   const col = gazeColumn(gx);
-  rect(ctx, "#05020b", col.x - 2, col.y, col.width + 4, col.height);
+  // a thick beam: wide dark-red body, orange, gold, a white-hot core
+  rect(ctx, SHADOW_DARK, col.x - 4, col.y, col.width + 8, col.height);
+  rect(ctx, "#a0182e", col.x - 2, col.y, col.width + 4, col.height);
   rect(ctx, "#d0381c", col.x, col.y, col.width, col.height);
   rect(ctx, "#ff8a2a", col.x + 2, col.y, col.width - 4, col.height);
   rect(ctx, GOLD_HI, col.x + 4, col.y, col.width - 8, col.height);
   rect(ctx, "#ffffff", col.x + 7, col.y, col.width - 14, col.height);
-  // the beam from the eye down to the floor column
-  for (let seg = 0; seg <= 30; seg++) {
-    gazeBeamPoint(chest.x, chest.y, gx, seg / 30, BEAM_P);
-    rect(ctx, "#a0182e", BEAM_P.x - 5, BEAM_P.y - 4, 11, 9);
-    rect(ctx, "#ff8a2a", BEAM_P.x - 3, BEAM_P.y - 3, 7, 7);
-    rect(ctx, "#ffffff", BEAM_P.x - 1, BEAM_P.y - 2, 3, 5);
+  for (let seg = 0; seg <= 34; seg++) {
+    gazeBeamPoint(chest.x, chest.y, gx, seg / 34, BEAM_P);
+    rect(ctx, SHADOW_DARK, BEAM_P.x - 10, BEAM_P.y - 7, 21, 15);
+    rect(ctx, "#a0182e", BEAM_P.x - 9, BEAM_P.y - 6, 19, 13);
+    rect(ctx, "#ff8a2a", BEAM_P.x - 6, BEAM_P.y - 5, 13, 11);
+    rect(ctx, GOLD_HI, BEAM_P.x - 4, BEAM_P.y - 3, 9, 7);
+    rect(ctx, "#ffffff", BEAM_P.x - 2, BEAM_P.y - 2, 5, 5);
   }
-  disc(ctx, chest.x, chest.y, 12, "#ffffff");
+  disc(ctx, chest.x, chest.y, 14, "#ffffff");
   if (!still)
-    for (let k = 0; k < 8; k++)
+    for (let k = 0; k < 14; k++)
       rect(
         ctx,
         k % 2 ? GOLD_HI : "#ffffff",
-        gx - 14 + noise2(k + Math.floor(time * 30), 97) * 28,
-        74 + noise2(k, 98) * 110,
+        gx - 16 + noise2(k + Math.floor(time * 30), 97) * 32,
+        VOID_ARENA_Y0 + noise2(k, 98) * (VOID_ARENA_Y1 - VOID_ARENA_Y0),
         2,
         2,
       );
 };
 
-/** floor-level work of the colossus: hand telegraphs and shockwaves, the gaze (drawn before the characters) */
+const ROAR_CHUNKS = 28;
+/** the roar: floor tiles and rubble lift off the ground and tremble (floor pass: under every character) */
+const drawRoarDebris = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
+  const attack = state.attack;
+  if (!attack || attack.kind !== "roar") return;
+  const age = time - attack.at;
+  const hit = attack.hitAt - attack.at;
+  if (age < hit * 0.4 || age > hit + VOID_ROAR_ATTACK_S + 0.3) return;
+  const shake = still ? 0 : Math.floor(time * 30) % 2;
+  for (let chunk = 0; chunk < ROAR_CHUNKS; chunk++) {
+    const lift = still ? 14 : roarLift(age - hit * 0.4, noise2(chunk, 221));
+    if (lift <= 0 && !still) continue;
+    const x = VOID_ARENA_X0 + noise2(chunk, 222) * (VOID_ARENA_X1 - VOID_ARENA_X0);
+    const y = VOID_ARENA_Y0 + 6 + noise2(chunk, 223) * (VOID_ARENA_Y1 - VOID_ARENA_Y0 - 12);
+    const size = 3 + (chunk % 3) * 2;
+    rect(ctx, SHADOW_DARK, x + shake - 1, y - lift - 1, size + 2, size + 2);
+    rect(ctx, chunk % 4 ? "#4a2536" : "#7a4256", x + shake, y - lift, size, size);
+    rect(ctx, "#9a6a76", x + shake, y - lift, size - 1, 1);
+  }
+};
+
+/** floor-level work of the colossus: hand telegraphs and shockwaves, the roar's debris, the gaze (drawn before the characters) */
 export const drawColossusFloor = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
   for (const hand of state.hands) drawHandFloor(ctx, hand, state, time, still);
+  drawRoarDebris(ctx, state, time, still);
   drawGaze(ctx, state, time, still);
 };
 
