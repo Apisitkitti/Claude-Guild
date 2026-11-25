@@ -730,7 +730,7 @@ const SPOT_R_RANGED_FAR = 105;
  * VOID_FRONT_PER_ROW raiders wide; extra rows stack back toward the colossus */
 export const VOID_FRONT_PER_ROW = 6;
 const VOID_FRONT_MARGIN_X = 25;
-const VOID_FRONT_MARGIN_Y = 8;
+const VOID_FRONT_MARGIN_Y = 12;
 export const VOID_FRONT_X0 = VOID_ARENA_X0 + VOID_FRONT_MARGIN_X;
 export const VOID_FRONT_DX = 26;
 export const VOID_FRONT_Y = VOID_ARENA_Y1 - VOID_FRONT_MARGIN_Y;

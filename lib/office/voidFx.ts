@@ -1605,7 +1605,7 @@ const BAR_PHASE_COLORS = [
 ];
 const BAR_MARKS = [0.6, 0.25];
 const BAR_PHASES = new Set(["reveal", "fight", "phase2", "phase3", "dying", "retreat"]);
-const PANEL_H = 30;
+const PANEL_H = 26;
 const PIP_COLORS = [CYAN, "#ff5ae0", GOLD];
 
 const diamond = (ctx: Ctx, x: number, y: number, lit: boolean, color: string) => {
@@ -1682,7 +1682,7 @@ export const drawVoidBar = (ctx: Ctx, state: VoidState, time: number, still: boo
     diamond(ctx, panelX + panelW - 24 + pip * 7, panelY + 3, pip < pips, PIP_COLORS[pip]);
   // the segmented bar
   const barX = panelX + 12,
-    barY = panelY + 14;
+    barY = panelY + 12;
   const segs = BAR_SEGMENTS;
   rect(ctx, INK, barX - 1, barY - 1, segs * BAR_SEG_PX + 1, 10);
   const fillNow = colossus ? p3Trail(frac, time) : Math.max(0, state.shown);

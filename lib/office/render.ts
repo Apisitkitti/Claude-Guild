@@ -143,7 +143,7 @@ import {
 } from "./voidFx";
 import { drawVoidBack, drawVoidFront, voidVariantOf } from "./voidScene";
 import { VOID_FLOOR } from "./voidTypes";
-import { COLOSSUS_CHEST_Y, VOID_BOSS_SORT_Y, captionScale, knockDx } from "./voidVisualLogic";
+import { COLOSSUS_CHEST_Y, P3_PLATE_LIFE_S, VOID_BOSS_SORT_Y, captionScale, knockDx } from "./voidVisualLogic";
 
 type Ctx = CanvasRenderingContext2D;
 const rect = (ctx: Ctx, color: string, x: number, y: number, width: number, height: number) => {
@@ -3678,7 +3678,8 @@ const limitVoidPlates = (office: Office, floor: number) => {
     if (fx.dungeon !== floor || age < 0 || age >= fx.dur) continue;
     if (!newest || fx.born > newest.born) newest = fx;
   }
-  for (const fx of office.skillFx) if (fx.dungeon === floor && fx !== newest) fx.noText = true;
+  for (const fx of office.skillFx)
+    if (fx.dungeon === floor && (fx !== newest || office.clock - fx.born > P3_PLATE_LIFE_S)) fx.noText = true;
 };
 
 /** one dungeon floor; `mini` (the picture-in-picture on the guild scene) leaves out the tags, hover and the Lord's bar */

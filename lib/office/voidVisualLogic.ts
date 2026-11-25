@@ -282,7 +282,10 @@ export const BANNER_BAND_Y = 22;
 export const BANNER_BAND_H = 18;
 export const SIDE_BAND_Y = 46;
 export const SIDE_BAND_H = 34;
-export const BAR_TOP = 182;
+/** the boss bar's panel top (a slim 26 px panel: it ends at 214, inside the 216 px world) */
+export const BAR_TOP = 188;
+/** the voice caption band sits just above this row (the old bar top), clear of the stand row's feet */
+const VOICE_ANCHOR = 182;
 export const VOICE_BAND_H = 14;
 const VOICE_GAP = 4;
 export interface Band {
@@ -293,7 +296,7 @@ export interface Band {
 export const overlayBands = (): { banner: Band; side: Band; voice: Band } => ({
   banner: { y: BANNER_BAND_Y, height: BANNER_BAND_H },
   side: { y: SIDE_BAND_Y, height: SIDE_BAND_H },
-  voice: { y: BAR_TOP - VOICE_GAP - VOICE_BAND_H, height: VOICE_BAND_H },
+  voice: { y: VOICE_ANCHOR - VOICE_GAP - VOICE_BAND_H, height: VOICE_BAND_H },
 });
 export const bandsOverlap = (first: Band, second: Band): boolean =>
   first.y < second.y + second.height && second.y < first.y + first.height;
@@ -350,7 +353,7 @@ export const knockDx = (age: number, dir: number): number => {
 export const COLOSSUS_EYE_X = 160;
 export const COLOSSUS_EYE_Y = 50;
 /** the colossus is the true form, enlarged in three steps; its chest eye (the core) sits at this row, behind the arena */
-export const COLOSSUS_CHEST_Y = 130;
+export const COLOSSUS_CHEST_Y = 120;
 /** where the chest eye is in the phase 2 true form (1.5x, hem at 192): the ascend starts from there */
 export const COLOSSUS_START_Y = 108;
 /** half the painted chest eye's height (rows): the eye's lower edge is CHEST_Y + this * scale, clear of the front-edge raider spots */
@@ -679,7 +682,11 @@ export const crackStageOf = (crack: number): number => {
 };
 
 // the gaze: the arena goes dark on the BACK layers only (raiders, floor effects and the front stay as they are)
-export const GAZE_DARK_LEVEL = 14;
+/** dither level of the sky and far air; the body gets only a light veil so its silhouette stays readable */
+export const GAZE_DARK_LEVEL = 15;
+export const GAZE_BODY_DARK_LEVEL = 6;
+/** the gaze's layer order: the sky is darkened BEFORE the body is drawn, then the body (lightly veiled), then the eye on top */
+export const GAZE_LAYER_ORDER: readonly string[] = ["sky", "skyVeil", "body", "bodyVeil", "chest"];
 export const GAZE_DARK_RAMP = 0.7;
 export const GAZE_DARK_FADE_S = 0.45;
 export const STILL_GAZE_DARK = 0.7;
@@ -787,3 +794,6 @@ export const p3Fraction = (state: VoidState): number =>
 export const P3_LOW = 0.25;
 /** skill plates at once in phase 3 */
 export const P3_PLATE_LIMIT = 1;
+
+/** a phase 3 skill name plate lives this long (s): the plates stay short, near the caster, never parked over the chest eye */
+export const P3_PLATE_LIFE_S = 0.9;

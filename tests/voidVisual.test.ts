@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
+import { CH_H, VIEW_W, VIEW_X0, WORLD_H } from "@/lib/office/layout";
 import { measurePixelText } from "@/lib/office/pixelFont";
 import {
   VOID_DITHER_STEPS,
@@ -15,8 +15,23 @@ import {
   type VoidForm,
 } from "@/lib/office/voidBossSprite";
 import { colossusBodyPlace, drawColossusEnts, drawColossusFloor, handSprite } from "@/lib/office/voidColossus";
-import { FACE_H, FACE_W, colossusBodyArt, colossusEyeArt, colossusFaceArt } from "@/lib/office/voidColossusArt";
-import { VOID_ROAR_ATTACK_S, VOID_WIPE_S } from "@/lib/office/voidFight";
+import {
+  EYE_RX,
+  EYE_RY,
+  FACE_H,
+  FACE_W,
+  colossusBodyArt,
+  colossusEyeArt,
+  colossusFaceArt,
+} from "@/lib/office/voidColossusArt";
+import {
+  VOID_FRONT_DX,
+  VOID_FRONT_PER_ROW,
+  VOID_FRONT_X0,
+  VOID_FRONT_Y,
+  VOID_ROAR_ATTACK_S,
+  VOID_WIPE_S,
+} from "@/lib/office/voidFight";
 import {
   voidSpotOf,
   VOID_ARENA_Y1,
@@ -101,8 +116,10 @@ import {
   SHARD_HOME_X,
   SHARD_HOME_Y,
   type AscendBeat,
+  BAR_TOP,
   CRACK_STAGES,
   CRIT_RECOIL_PX,
+  GAZE_LAYER_ORDER,
   GAZE_DARK_TARGETS,
   HIT_RECOIL_PX,
   HIT_RECOIL_S,
@@ -792,5 +809,67 @@ describe("phase 3 punch: hand-made colossus, eye reactions, heavy moves", () => 
     expect(finalCrack(0.1, false)).toBeGreaterThan(0);
     expect(finalCrack(1, false)).toBe(1);
     expect(finalCrack(0, true)).toBe(1);
+  });
+});
+
+describe("phase 3: the gaze keeps the colossus on screen, the front row stands clear of the bar", () => {
+  beforeEach(() => vi.stubGlobal("document", { createElement: () => fakeCanvas() }));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("draws the body and then the chest eye around the gaze veils (never the veil last over them)", () => {
+    expect(GAZE_LAYER_ORDER).toEqual(["sky", "skyVeil", "body", "bodyVeil", "chest"]);
+    const fake = fakeCanvas();
+    const events: string[] = [];
+    const ctx = fake.ctx as unknown as Record<string, (...args: unknown[]) => void> & { fillStyle: unknown };
+    const fill = ctx.fillRect;
+    ctx.fillRect = (...args: unknown[]) => {
+      if (typeof ctx.fillStyle === "object") events.push("veil");
+      fill(...args);
+    };
+    ctx.drawImage = (...args: unknown[]) => events.push(`img:${(args[0] as { width: number }).width}`);
+    const state = stateAt("phase3", 0);
+    state.coreX = 170;
+    state.gazeChargeAt = 18.4;
+    state.attack = {
+      kind: "gaze",
+      at: 18.4,
+      targetX: 70,
+      targetY: 150,
+      hitAt: 20.4,
+      endAt: 21.6,
+      landed: false,
+      seed: 1,
+    };
+    const view = voidBackView(state, 20, false);
+    expect(view.gazeDark).toBeGreaterThan(0.5);
+    drawVoidBack(fake.ctx as unknown as CanvasRenderingContext2D, 20, false, view);
+    const scale = COLOSSUS_SCALES[COLOSSUS_SCALES.length - 1];
+    const EYE_RX_PX = EYE_RX * 2;
+    const body = events.indexOf(`img:${Math.round(VOID_TRUE_W * scale)}`);
+    const eye = events.lastIndexOf(`img:${Math.round(EYE_RX_PX * scale)}`);
+    const veils = events.map((event, at) => (event === "veil" ? at : -1)).filter((at) => at >= 0);
+    expect(body).toBeGreaterThan(-1);
+    expect(eye).toBeGreaterThan(body);
+    expect(veils.some((at) => at < body)).toBe(true); // the sky is darkened before the body
+    expect(eye).toBeGreaterThan(veils[veils.length - 1]); // the eye is the last thing drawn
+  });
+
+  it("stands the front row in the arena, above the bar's top, below the chest eye, with no overlaps", () => {
+    const scale = COLOSSUS_SCALES[COLOSSUS_SCALES.length - 1];
+    expect(VOID_FRONT_Y).toBeLessThan(BAR_TOP); // feet above the panel
+    expect(VOID_FRONT_Y - CH_H).toBeGreaterThanOrEqual(COLOSSUS_CHEST_Y + EYE_RY * scale); // heads clear of the eye
+    expect(VOID_FRONT_Y).toBeLessThanOrEqual(VOID_ARENA_Y1);
+    const spot = { x: 0, y: 0 };
+    const xs: number[] = [];
+    for (let slot = 0; slot < VOID_FRONT_PER_ROW; slot++) {
+      voidSpotOf(slot, "warrior", spot, 2);
+      expect(spot.x).toBeGreaterThanOrEqual(VOID_ARENA_X0);
+      expect(spot.x).toBeLessThanOrEqual(VOID_ARENA_X1);
+      expect(spot.y).toBe(VOID_FRONT_Y);
+      xs.push(spot.x);
+    }
+    for (let at = 1; at < xs.length; at++) expect(xs[at] - xs[at - 1]).toBe(VOID_FRONT_DX);
+    expect(VOID_FRONT_DX).toBeGreaterThanOrEqual(16); // a sprite is 16 px wide
+    expect(VOID_FRONT_X0).toBeGreaterThanOrEqual(VOID_ARENA_X0);
   });
 });
