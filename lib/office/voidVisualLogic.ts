@@ -2,8 +2,22 @@
 // which boss form / sprite stage a state shows. Kept out of the drawing files so the numbers here are named.
 import { GLYPH_H, measurePixelText } from "./pixelFont";
 import type { VoidForm } from "./voidBossSprite";
-import { VOID_DYING_S, VOID_PHASE2_BELOW, VOID_PHASE3_BELOW } from "./voidFight";
-import type { VoidPhase } from "./voidTypes";
+import {
+  VOID_ARENA_X0,
+  VOID_ARENA_X1,
+  VOID_ARENA_Y0,
+  VOID_ARENA_Y1,
+  VOID_ASCEND_S,
+  VOID_DYING_S,
+  VOID_EYE_CRACK_S,
+  VOID_EYE_SHATTER_S,
+  VOID_HAND_RISE_S,
+  VOID_HAND_SINK_S,
+  VOID_HAND_SLAM_S,
+  VOID_PHASE2_BELOW,
+  voidTelegraphS,
+} from "./voidFight";
+import type { VoidHandState, VoidPhase } from "./voidTypes";
 
 // ---- the pixel-block wipe -------------------------------------------------------------------------------------------
 /** one wipe block is this many px square */
@@ -134,36 +148,25 @@ export const phasePips = (phase: VoidPhase): number => {
 };
 
 // ---- which sprite -------------------------------------------------------------------------------------------------------
+/** form 1 = veiled (phase 1), 2 = torn veil (only the mid-frame of the phase 2 transformation), 3 = TRUE FORM */
 const FORM_TRUE: VoidForm = 3;
-const FORM_MID: VoidForm = 2;
 /** the boss form for a hp fraction (used when only the fraction is known, like the retreat fade) */
-export const formOfHp = (hpFrac: number): VoidForm =>
-  hpFrac > VOID_PHASE2_BELOW ? 1 : hpFrac > VOID_PHASE3_BELOW ? FORM_MID : FORM_TRUE;
-/** the form shown in `phase` (the hp fraction decides for the phases without their own form) */
+export const formOfHp = (hpFrac: number): VoidForm => (hpFrac > VOID_PHASE2_BELOW ? 1 : FORM_TRUE);
+/**
+ * the form shown in `phase`: veiled in phase 1, the TRUE FORM from phase 2 on. In phase 3 the true form only appears
+ * for the ascend (it rises into the sky eye) and for a death that is not the colossus's; then the colossus takes over.
+ */
 export const formOfPhase = (phase: VoidPhase, hpFrac: number): VoidForm =>
-  phase === "phase3" || phase === "dying"
+  phase === "phase2" || phase === "phase3" || phase === "dying"
     ? FORM_TRUE
-    : phase === "phase2"
-      ? FORM_MID
-      : phase === "fight" || phase === "reveal"
-        ? 1
-        : formOfHp(hpFrac);
+    : phase === "fight" || phase === "reveal"
+      ? 1
+      : formOfHp(hpFrac);
 
 const DITHER_STEPS = 8;
 /** dither level 0..8 of a fade that is `progress` (0..1) of the way out */
 export const ditherLevelOf = (progress: number): number =>
   Math.min(DITHER_STEPS, Math.max(0, Math.round(progress * DITHER_STEPS)));
-
-const CRACK_STAGES = 4;
-const IMPLODE_STAGES = 3;
-/** dying sprite stage 0..6 from the death stage and its progress; -1 once only the flash is left */
-export const dyingStageOf = (stage: "cracks" | "implosion" | "flash", progress: number): number => {
-  if (stage === "flash") return -1;
-  const steps = stage === "cracks" ? CRACK_STAGES : IMPLODE_STAGES;
-  const base = stage === "cracks" ? 0 : CRACK_STAGES;
-  return base + Math.min(steps - 1, Math.max(0, Math.floor(progress * steps)));
-};
-export const DYING_TOTAL_S = VOID_DYING_S;
 
 // ---- captions -----------------------------------------------------------------------------------------------------------
 /** the biggest integer scale (down to 1) at which `text` fits `maxWidth` px */
@@ -339,3 +342,268 @@ export const knockDx = (age: number, dir: number): number => {
   const ratio = age / KNOCK_S;
   return Math.round(dir * KNOCK_PX * Math.sin(ratio * Math.PI)) + 0;
 };
+
+// ---- phase 3: THE VOID AWAKENS ----------------------------------------------------------------------------------------------------
+/** the sky eye of phase 2 (it flies into the colossus's chest during the ascend) */
+export const COLOSSUS_EYE_X = 160;
+export const COLOSSUS_EYE_Y = 50;
+/** the colossus is the true form, enlarged in three steps; its chest eye (the core) sits at this row, behind the arena */
+export const COLOSSUS_CHEST_Y = 130;
+/** where the chest eye is in the phase 2 true form (1.5x, hem at 192): the ascend starts from there */
+export const COLOSSUS_START_Y = 108;
+/** half the painted chest eye's height (rows): the eye's lower edge is CHEST_Y + this * scale, clear of the front-edge raider spots */
+export const COLOSSUS_EYE_HALF_H = 11;
+/** the boss, its cinematics, the colossus's hands and arms are y-sorted at this row: behind every raider */
+export const VOID_BOSS_SORT_Y = -1;
+/** the transformation shockwave: seconds it runs and how far it reaches (px) */
+export const PUSHBACK_S = 0.9;
+export const PUSHBACK_REACH = 260;
+export const pushbackRadius = (age: number): number =>
+  age >= 0 && age < PUSHBACK_S ? (age / PUSHBACK_S) * PUSHBACK_REACH : -1;
+export const COLOSSUS_SCALE_A = 1.5;
+export const COLOSSUS_SCALE_B = 2;
+export const COLOSSUS_SCALE_C = 2.5;
+export const COLOSSUS_SCALES: readonly number[] = [COLOSSUS_SCALE_A, COLOSSUS_SCALE_B, COLOSSUS_SCALE_C];
+/** the painted chest eye centre in the 160x128 true form, and its shoulders (offsets from it, in painted px) */
+export const COLOSSUS_PAINT_CHEST_X = 80;
+export const COLOSSUS_PAINT_CHEST_Y = 72;
+export const COLOSSUS_SHOULDER_DX = 19;
+export const COLOSSUS_SHOULDER_DY = -18;
+const clamp01 = (value: number): number => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+const SMOOTH_A = 3;
+const SMOOTH_B = 2;
+const smooth = (value: number): number => {
+  const tick = clamp01(value);
+  return tick * tick * (SMOOTH_A - SMOOTH_B * tick);
+};
+/** 0..1 through the window [from, to] (fractions of the ascend) at `ratio` */
+const windowAt = (ratio: number, from: number, to: number): number => clamp01((ratio - from) / (to - from));
+
+/** the ascend cinematic as parallel 0..1 beats (fractions of VOID_ASCEND_S) */
+export interface AscendBeat {
+  /** the true form grows (1.5x -> 2x -> 2.5x) and settles into place */
+  rise: number;
+  /** the sky eye flies into its chest */
+  merge: number;
+  /** the broken floor falls away, only the shards under the raiders stay */
+  split: number;
+  /** the whole ascend, 0..1 */
+  all: number;
+}
+const BEAT_RISE_END = 0.5;
+const BEAT_MERGE_FROM = 0.3;
+const BEAT_MERGE_TO = 0.5;
+const BEAT_SPLIT_FROM = 0.45;
+const BEAT_SPLIT_TO = 0.95;
+const GROW_B_AT = 0.14;
+const GROW_C_AT = 0.28;
+/** the beats `age` seconds after the ascend began (all 1 once it is over) */
+export const ascendBeat = (age: number, out: AscendBeat): AscendBeat => {
+  const ratio = clamp01(age / VOID_ASCEND_S);
+  out.rise = windowAt(ratio, 0, BEAT_RISE_END);
+  out.merge = windowAt(ratio, BEAT_MERGE_FROM, BEAT_MERGE_TO);
+  out.split = windowAt(ratio, BEAT_SPLIT_FROM, BEAT_SPLIT_TO);
+  out.all = ratio;
+  return out;
+};
+/** the beats of the finished ascend (reduced motion, and everything after the first four seconds) */
+export const ASCEND_DONE: AscendBeat = { rise: 1, merge: 1, split: 1, all: 1 };
+
+export interface ColossusPlace {
+  /** the chest eye's centre and the index into COLOSSUS_SCALES */
+  x: number;
+  y: number;
+  step: number;
+}
+/** where the colossus's chest is and how big it is: it grows in steps while it settles onto the core's x */
+export const colossusPlace = (beat: AscendBeat, bossX: number, chestX: number, out: ColossusPlace): ColossusPlace => {
+  const move = smooth(beat.rise);
+  out.x = bossX + (chestX - bossX) * move;
+  out.y = COLOSSUS_START_Y + (COLOSSUS_CHEST_Y - COLOSSUS_START_Y) * move;
+  out.step = beat.all >= GROW_C_AT ? COLOSSUS_SCALES.length - 1 : beat.all >= GROW_B_AT ? 1 : 0;
+  return out;
+};
+/** the sky eye flying into the chest: its centre and size factor `merge` 0..1 of the way in */
+export const eyeFlight = (
+  merge: number,
+  chest: { x: number; y: number },
+  out: { x: number; y: number; scale: number },
+) => {
+  const tick = smooth(merge);
+  out.x = COLOSSUS_EYE_X + (chest.x - COLOSSUS_EYE_X) * tick;
+  out.y = COLOSSUS_EYE_Y + (chest.y - COLOSSUS_EYE_Y) * tick;
+  out.scale = 1 - (1 - EYE_FLIGHT_END) * tick;
+};
+const EYE_FLIGHT_END = 0.12;
+
+// ---- the shards of the broken floor ----------------------------------------------------------------------------------------------
+/** raiders stand within SHARD_FREE_R of this point; shards inside it hardly move so the raiders stay on them */
+export const SHARD_HOME_X = 210;
+export const SHARD_HOME_Y = 125;
+export const SHARD_FREE_R = 56;
+const SHARD_RANGE = 130;
+export const SHARD_NEAR_PX = 4;
+export const SHARD_FAR_PX = 34;
+const SHARD_ROW_SQUASH = 1.5;
+/** how far (px) a shard centred at (cx, cy) has drifted once the floor has split `split` (0..1); away from the arena */
+export const shardDrift = (cx: number, cy: number, split: number, out: { x: number; y: number }) => {
+  const dx = cx - SHARD_HOME_X,
+    dy = (cy - SHARD_HOME_Y) * SHARD_ROW_SQUASH;
+  const dist = Math.hypot(dx, dy);
+  const reach = SHARD_NEAR_PX + (SHARD_FAR_PX - SHARD_NEAR_PX) * clamp01((dist - SHARD_FREE_R) / SHARD_RANGE);
+  const ease = smooth(split);
+  const inv = dist > 0 ? 1 / dist : 0;
+  out.x = dx * inv * reach * ease;
+  out.y = (dy / SHARD_ROW_SQUASH) * inv * reach * ease;
+};
+/** the floor that stays under the raiders: an ellipse (rx, ry) around the raiders' home; every other shard falls into the abyss */
+const KEEP_RX = 66;
+const KEEP_RY = 40;
+export const shardStays = (cx: number, cy: number): boolean =>
+  ((cx - SHARD_HOME_X) / KEEP_RX) ** 2 + ((cy - SHARD_HOME_Y) / KEEP_RY) ** 2 <= 1;
+const FALL_DELAY_MAX = 0.55;
+const FALL_DELAY_RANGE = 220;
+/** a falling shard lets go this fraction of the split later the nearer it is to the raiders (0..FALL_DELAY_MAX) */
+export const shardFallDelay = (cx: number, cy: number): number =>
+  FALL_DELAY_MAX * (1 - clamp01(Math.hypot(cx - SHARD_HOME_X, cy - SHARD_HOME_Y) / FALL_DELAY_RANGE));
+/** 0..1 of a shard's own fall at the floor's `split`, given its delay */
+export const shardFallProgress = (split: number, delay: number): number => clamp01((split - delay) / (1 - delay));
+
+// ---- the colossus's hands ------------------------------------------------------------------------------------------------------------
+export const HAND_W = 72;
+export const HAND_H = 84;
+/** the hand's palm centre this far above the floor point it works on when it slams (claws touch the floor) */
+export const HAND_REACH = 34;
+/** how high above the floor point the hand is raised in the windup */
+export const HAND_RAISE = 82;
+const HAND_SINK_DROP = 120;
+const HAND_RISE_FROM = 150;
+const HAND_RECOVER_S = 0.45;
+const HAND_RECOVER_DROP = 90;
+const HAND_BOB_PX = 3;
+const HAND_BOB_HZ = 1.7;
+const HAND_CLAW_AT = 0.3;
+const MIN_WINDUP_S = 0.1;
+const SINK_OPEN_AT = 0.5;
+const STILL_SINK_AT = 0.3;
+export interface HandPlace {
+  x: number;
+  y: number;
+  /** the claw pose (fingers down) instead of the open hand */
+  claw: boolean;
+  /** 0..1 how far through the slam (1 = the impact frame) */
+  slam: number;
+}
+/**
+ * where a hand is (palm centre) and which pose it shows. `home` is where it hovers; for windup / slam / sink the hand's
+ * own x, y is the floor point it works on. `windupS` is how long the windup lasts; `fromSink` = the previous state was
+ * the sink (the hand climbs back from below).
+ */
+export const handPlace = (
+  hand: { state: VoidHandState; x: number; y: number; at: number },
+  home: { x: number; y: number },
+  time: number,
+  windupS: number,
+  still: boolean,
+  fromSink: boolean,
+  out: HandPlace,
+): HandPlace => {
+  // reduced motion holds each state's key pose: risen, raised, slammed, half sunk
+  const age = still
+    ? hand.state === "rise"
+      ? VOID_HAND_RISE_S
+      : hand.state === "windup"
+        ? windupS
+        : hand.state === "slam"
+          ? VOID_HAND_SLAM_S
+          : VOID_HAND_SINK_S * STILL_SINK_AT
+    : time - hand.at;
+  out.claw = false;
+  out.slam = 0;
+  out.x = home.x;
+  out.y = home.y;
+  if (hand.state === "rise") {
+    out.y = home.y + (1 - smooth(age / VOID_HAND_RISE_S)) * (HAND_RISE_FROM + HAND_H);
+  } else if (hand.state === "hover") {
+    const bob = still ? 0 : Math.sin(time * HAND_BOB_HZ + home.x) * HAND_BOB_PX;
+    const recover = fromSink && !still ? (1 - smooth(age / HAND_RECOVER_S)) * HAND_RECOVER_DROP : 0;
+    out.y = home.y + bob + recover;
+  } else if (hand.state === "windup") {
+    const tick = smooth(age / Math.max(MIN_WINDUP_S, windupS));
+    out.x = home.x + (hand.x - home.x) * tick;
+    out.y = home.y + (hand.y - HAND_RAISE - home.y) * tick;
+    out.claw = tick > HAND_CLAW_AT;
+  } else if (hand.state === "slam") {
+    const tick = clamp01(age / VOID_HAND_SLAM_S);
+    out.x = hand.x;
+    out.y = hand.y - HAND_RAISE + (HAND_RAISE - HAND_REACH) * tick * tick;
+    out.claw = true;
+    out.slam = tick;
+  } else {
+    const tick = smooth(age / VOID_HAND_SINK_S);
+    out.x = hand.x + (home.x - hand.x) * tick;
+    out.y = hand.y - HAND_REACH + (home.y + HAND_SINK_DROP - (hand.y - HAND_REACH)) * tick;
+    out.claw = tick < SINK_OPEN_AT;
+  }
+  return out;
+};
+/** the windup length of a hand attack (the telegraph) */
+export const handWindupS = (): number => voidTelegraphS("hand", "phase3");
+
+// ---- the gaze ----------------------------------------------------------------------------------------------------------------------
+export const GAZE_HALF_W = 9;
+/** the beam from the chest eye ends on the floor at this row */
+export const GAZE_FLOOR_Y = 134;
+/** the floor column of the gaze beam at `gx`: it spans the whole depth of the arena */
+export const gazeColumn = (gx: number): Zone => ({
+  x: Math.round(gx - GAZE_HALF_W),
+  y: VOID_ARENA_Y0,
+  width: GAZE_HALF_W * 2 + 1,
+  height: VOID_ARENA_Y1 - VOID_ARENA_Y0,
+});
+/** a point `ratio` (0..1) of the way along the beam from the chest eye (originX, originY) to the floor column `gx` */
+export const gazeBeamPoint = (
+  originX: number,
+  originY: number,
+  gx: number,
+  ratio: number,
+  out: { x: number; y: number },
+) => {
+  out.x = originX + (gx - originX) * ratio;
+  out.y = originY + (GAZE_FLOOR_Y - originY) * ratio;
+};
+/** the arena's left / right edge the gaze sweeps between */
+export const GAZE_LEFT = VOID_ARENA_X0;
+export const GAZE_RIGHT = VOID_ARENA_X1;
+
+// ---- the chest eye (the core) ----------------------------------------------------------------------------------------------------------
+const CORE_PULSE_S = 0.35;
+const CORE_PULSE_GAIN = 0.45;
+/** the chest eye's corona size factor `sinceHit` seconds after a raider's strike (a pulse that settles) */
+export const corePulse = (sinceHit: number): number =>
+  sinceHit >= 0 && sinceHit < CORE_PULSE_S ? 1 + CORE_PULSE_GAIN * (1 - sinceHit / CORE_PULSE_S) : 1;
+/** the damage numbers on the colossus are one scale bigger */
+export const COLOSSUS_NUMBER_BONUS = 1;
+
+// ---- the death of the colossus -------------------------------------------------------------------------------------------------------
+export interface DeathBeat {
+  /** the face cracks (0..1) */
+  crack: number;
+  /** the glass falls away (0..1) */
+  shatter: number;
+  /** the final flash (0..1) */
+  flash: number;
+}
+/** the beats of the eye-shatter death `age` seconds after the last hit */
+export const deathBeat = (age: number, out: DeathBeat): DeathBeat => {
+  out.crack = clamp01(age / VOID_EYE_CRACK_S);
+  out.shatter = clamp01((age - VOID_EYE_CRACK_S) / (VOID_EYE_SHATTER_S - VOID_EYE_CRACK_S));
+  out.flash = clamp01((age - VOID_EYE_SHATTER_S) / (VOID_DYING_S - VOID_EYE_SHATTER_S));
+  return out;
+};
+const FALL_PX = 260;
+const FALL_BASE = 0.55;
+const FALL_SPREAD = 0.9;
+/** how far (px) a face fragment with random `rnd` 0..1 has fallen `shatter` (0..1) into the shatter stage; it accelerates */
+export const fragmentFall = (shatter: number, rnd: number): number =>
+  Math.round(shatter * shatter * FALL_PX * (FALL_BASE + FALL_SPREAD * rnd));

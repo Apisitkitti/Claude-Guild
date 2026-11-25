@@ -35,6 +35,10 @@ export type SfxCue =
   | "voidPhase2"
   | "voidTrueForm"
   | "voidEclipse"
+  | "voidAscend"
+  | "voidHandSlam"
+  | "voidGaze"
+  | "voidShatterEye"
   | "voidDeath"
   | "voidVictory";
 
@@ -282,6 +286,48 @@ const CUES: Record<Exclude<SfxCue, "hit">, Tone[]> = {
     { at: 0.4, freq: midi(52), dur: 2.2, wave: "triangle", gain: 0.35, slideTo: midi(76) },
     { at: 2.4, freq: midi(34), dur: 0.7, wave: "sawtooth", gain: 0.7, slideTo: midi(18) },
     { at: 2.4, freq: midi(70), dur: 0.5, wave: "square", gain: 0.35, slideTo: midi(40) },
+  ],
+  voidAscend: [
+    { at: 0, freq: midi(18), dur: 4, wave: "sawtooth", gain: 0.75, slideTo: midi(30) },
+    { at: 0, freq: midi(30), dur: 4, wave: "triangle", gain: 0.6, slideTo: midi(46) },
+    { at: 0.3, freq: midi(42), dur: 3.5, wave: "sawtooth", gain: 0.35, slideTo: midi(78) },
+    ...[60, 63, 67, 70, 75].map((note, index) => ({
+      at: 1 + index * 0.25,
+      freq: midi(note),
+      dur: 2.6 - index * 0.25,
+      wave: "sine" as Wave,
+      gain: 0.35,
+    })),
+    ...[72, 79, 84].map((note, index) => ({
+      at: 2.4 + index * 0.2,
+      freq: midi(note),
+      dur: 1.4,
+      wave: "triangle" as Wave,
+      gain: 0.3,
+    })),
+    { at: 3.4, freq: midi(96), dur: 0.6, wave: "square", gain: 0.25, slideTo: midi(108) },
+  ],
+  voidHandSlam: [
+    { at: 0, freq: midi(34), dur: 0.5, wave: "sawtooth", gain: 0.75, slideTo: midi(16) },
+    { at: 0, freq: midi(52), dur: 0.2, wave: "square", gain: 0.4, slideTo: midi(30) },
+    { at: 0.08, freq: midi(24), dur: 0.6, wave: "triangle", gain: 0.65, slideTo: midi(14) },
+  ],
+  voidGaze: [
+    { at: 0, freq: midi(40), dur: 1.2, wave: "sawtooth", gain: 0.5, slideTo: midi(88) },
+    { at: 0.1, freq: midi(64), dur: 1.1, wave: "square", gain: 0.25, slideTo: midi(100) },
+    { at: 0.2, freq: midi(76), dur: 1, wave: "sine", gain: 0.35, slideTo: midi(52) },
+  ],
+  voidShatterEye: [
+    ...[108, 103, 99, 105, 96, 101, 94].map((note, index) => ({
+      at: index * 0.07,
+      freq: midi(note),
+      dur: 0.18,
+      wave: "square" as Wave,
+      gain: 0.3,
+      slideTo: midi(note - 30),
+    })),
+    { at: 0, freq: midi(30), dur: 1.2, wave: "sawtooth", gain: 0.6, slideTo: midi(14) },
+    { at: 0.1, freq: midi(80), dur: 0.9, wave: "triangle", gain: 0.3, slideTo: midi(40) },
   ],
   voidDeath: [
     { at: 0, freq: midi(60), dur: 2.4, wave: "sawtooth", gain: 0.5, slideTo: midi(28) },

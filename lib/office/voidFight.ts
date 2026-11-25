@@ -3,12 +3,15 @@
  * rules live here as pure data and pure functions (no DOM, no engine import) so tests drive them directly; engine.ts
  * owns the Office side (moving raiders, damage, rewards). The renderer reads `office.voidFight` (see voidTypes.ts).
  *
- * Sequence: shatter -> transition -> reveal -> fight -> phase2 (<60% hp) -> phase3 (<25% hp) -> dying -> victory,
- * or retreat when every raider left the Void Sanctum before the kill.
+ * Sequence: shatter -> transition -> reveal -> fight (veiled form) -> phase2 (<60% hp, TRUE FORM) -> phase3 (<25% hp,
+ * THE VOID AWAKENS: the colossus) -> dying -> victory, or retreat when every raider left the Void Sanctum before the kill.
  */
 import { hash01 } from "./lordFight";
 import {
   VOID_EYE_MAX,
+  voidHandHome,
+  type VoidHand,
+  type VoidHandState,
   type VoidMinion,
   type VoidAttack,
   type VoidAttackKind,
@@ -16,6 +19,8 @@ import {
   type VoidState,
   voidIdle,
 } from "./voidTypes";
+
+export { VOID_HAND_COUNT, VOID_HAND_HOME_X, VOID_HAND_HOME_Y, voidHandHome } from "./voidTypes";
 
 // ---- hp ----------------------------------------------------------------------------------------------------------
 /** the Veiled One's pool is the Dungeon Lord's pool (lordMaxHp of the raiders and their tier) times this */
@@ -48,11 +53,13 @@ export const VOID_WIPE_MID_S = VOID_WIPE_S / 2;
 const VOID_WIPE_HOLD_S = 0.2;
 /** the Veiled One descends, taunts, the bar fills; nobody can hurt it yet */
 export const VOID_REVEAL_S = 3.5;
-/** the phase 2 roar and the TRUE FORM cinematic: the boss takes no damage */
+/** the old phase 2 roar (kept for the renderer) and the TRUE FORM cinematic that opens phase 2: no damage taken */
 export const VOID_ROAR_S = 1.2;
 export const VOID_TRUE_FORM_S = 2.5;
-/** cracks, implosion and the final flash */
-export const VOID_DYING_S = 4;
+/** THE VOID AWAKENS: the boss rises into the sky eye and the floor breaks into shards; no damage taken */
+export const VOID_ASCEND_S = 4;
+/** cracks, implosion / eye shatter and the final flash */
+export const VOID_DYING_S = 5;
 /** the victory phase (banner, rewards, the walk home starts after RAID_LINGER_S) */
 export const VOID_VICTORY_S = 6;
 /** the boss fades out laughing */
@@ -60,6 +67,9 @@ export const VOID_RETREAT_S = 1.5;
 /** death stages (seconds after the last hit): cracks until, implosion until; the flash is the rest */
 export const VOID_DEATH_CRACK_S = 1.6;
 export const VOID_DEATH_IMPLODE_S = 3.2;
+/** the eye-shatter death (it died as the colossus): the eye cracks until, shatters until; the flash is the rest */
+export const VOID_EYE_CRACK_S = 1.8;
+export const VOID_EYE_SHATTER_S = 3.6;
 
 /** how long the phase lasts; Infinity for the open-ended fighting phases and none */
 export const voidPhaseLength = (phase: VoidPhase): number => {
@@ -98,7 +108,7 @@ export const voidWipeCover = (age: number): number =>
     1,
     Math.max(0, (VOID_WIPE_MID_S - Math.abs(age - VOID_WIPE_MID_S)) / (VOID_WIPE_MID_S - VOID_WIPE_HOLD_S / 2)),
   );
-/** which part of the death sequence `age` seconds after the last hit is in */
+/** which part of the death sequence `age` seconds after the last hit is in (cracks -> implosion -> flash) */
 export type VoidDeathStage = "cracks" | "implosion" | "flash";
 export const voidDeathStage = (age: number): VoidDeathStage =>
   age < VOID_DEATH_CRACK_S ? "cracks" : age < VOID_DEATH_IMPLODE_S ? "implosion" : "flash";
@@ -109,6 +119,17 @@ export const voidDeathStageProgress = (age: number): number => {
   if (stage === "implosion")
     return Math.min(1, (age - VOID_DEATH_CRACK_S) / (VOID_DEATH_IMPLODE_S - VOID_DEATH_CRACK_S));
   return Math.min(1, (age - VOID_DEATH_IMPLODE_S) / (VOID_DYING_S - VOID_DEATH_IMPLODE_S));
+};
+/** the eye-shatter death (state.dyingEye: it died as the phase 3 colossus): cracks -> shatter (glass) -> flash */
+export type VoidEyeDeathStage = "cracks" | "shatter" | "flash";
+export const voidEyeDeathStage = (age: number): VoidEyeDeathStage =>
+  age < VOID_EYE_CRACK_S ? "cracks" : age < VOID_EYE_SHATTER_S ? "shatter" : "flash";
+/** 0..1 through the current eye-death stage */
+export const voidEyeDeathProgress = (age: number): number => {
+  const stage = voidEyeDeathStage(age);
+  if (stage === "cracks") return Math.min(1, Math.max(0, age / VOID_EYE_CRACK_S));
+  if (stage === "shatter") return Math.min(1, (age - VOID_EYE_CRACK_S) / (VOID_EYE_SHATTER_S - VOID_EYE_CRACK_S));
+  return Math.min(1, (age - VOID_EYE_SHATTER_S) / (VOID_DYING_S - VOID_EYE_SHATTER_S));
 };
 
 // ---- voice -------------------------------------------------------------------------------------------------------
@@ -121,8 +142,8 @@ export const VOID_LINES_REVEAL = [
   "EVERY CALL YOU MAKE FEEDS MY VOID.",
   "YOU MEET THE TRUE MASTER.",
 ] as const;
-export const VOID_LINE_PHASE2 = "THE VEIL MEANS NOTHING!";
-export const VOID_LINE_PHASE3 = "BEHOLD MY TRUE FORM!";
+export const VOID_LINE_PHASE2 = "BEHOLD MY TRUE FORM!";
+export const VOID_LINE_PHASE3 = "I AM THE VOID ITSELF!";
 export const VOID_LINE_DYING = "IMPOSSIBLE... THE VOID... FADES...";
 export const VOID_LINE_RETREAT = "HAHAHA... THIS IS NOT THE END.";
 /** idle taunts: one every ~6 s while it fights, by phase; the lines cycle */
@@ -131,7 +152,12 @@ const TAUNT_JITTER = 0.2;
 export const VOID_TAUNTS: Record<string, readonly string[]> = {
   fight: ["YOUR TOOLS ARE NOTHING.", "THE VOID HUNGERS.", "RUN. IT WILL NOT HELP."],
   phase2: ["YOU ONLY TORE THE VEIL!", "FEEL THE FLOOR CRUMBLE!", "I WILL WEAR YOUR LEVELS."],
-  phase3: ["THERE IS NO LIGHT HERE!", "DARKNESS! DARKNESS!", "I AM THE END OF EVERY CALL."],
+  phase3: [
+    "THERE IS NO LIGHT HERE!",
+    "DARKNESS! DARKNESS!",
+    "I AM THE END OF EVERY CALL.",
+    "THE SKY ITSELF WATCHES YOU.",
+  ],
 };
 /** the taunt to say next in `phase` (cycles) */
 export const voidTauntLine = (phase: VoidPhase, index: number): string => {
@@ -234,9 +260,18 @@ const TELEGRAPH_S: Record<VoidAttackKind, number> = {
   collapse: 1.4,
   eclipse: 2.6,
   summon: 1,
+  hand: 1.2,
+  gaze: 1.4,
 };
 /** no warning is shorter than this, so it always reads */
 export const VOID_MIN_TELEGRAPH_S = 0.9;
+/** the colossus hand: the slam, then it sinks back; the gaze beam's sweep across the whole floor */
+export const VOID_HAND_SLAM_S = 0.3;
+export const VOID_HAND_SINK_S = 0.7;
+const VOID_HAND_ACTIVE_S = VOID_HAND_SLAM_S + VOID_HAND_SINK_S;
+/** the hands rise during the ascend and then hover */
+export const VOID_HAND_RISE_S = 3.2;
+export const VOID_GAZE_SWEEP_S = 1.2;
 /** seconds each attack stays up after it lands */
 const ACTIVE_S: Record<VoidAttackKind, number> = {
   beam: 1,
@@ -245,48 +280,54 @@ const ACTIVE_S: Record<VoidAttackKind, number> = {
   collapse: 1.6,
   eclipse: 1.8,
   summon: 0.6,
+  hand: VOID_HAND_ACTIVE_S,
+  gaze: VOID_GAZE_SWEEP_S,
 };
-/** telegraphs get shorter as the boss gets angrier (the eclipse keeps its slow charge) */
+/** telegraphs get shorter as the boss gets angrier (the eclipse and the colossus's hand and gaze keep their charge) */
 const PHASE_PACE: Record<string, number> = { fight: 1, phase2: 0.85, phase3: 0.7 };
+const FIXED_TELEGRAPH: ReadonlySet<VoidAttackKind> = new Set<VoidAttackKind>(["eclipse", "hand", "gaze"]);
 export const voidTelegraphS = (kind: VoidAttackKind, phase: VoidPhase): number =>
-  kind === "eclipse"
-    ? TELEGRAPH_S.eclipse
+  FIXED_TELEGRAPH.has(kind)
+    ? TELEGRAPH_S[kind]
     : Math.max(VOID_MIN_TELEGRAPH_S, TELEGRAPH_S[kind] * (PHASE_PACE[phase] ?? 1));
 export const voidActiveS = (kind: VoidAttackKind): number => ACTIVE_S[kind];
 /** the first attack after the reveal, after the roar and after TRUE FORM */
 export const VOID_FIRST_ATTACK_S = 1.2;
 export const VOID_FIRST_ATTACK_P2_S = 1.6;
-export const VOID_FIRST_ATTACK_P3_S = 1.2;
+export const VOID_FIRST_ATTACK_P3_S = 1.5;
 /** seconds between attacks per phase (+-15% jitter) */
-const GAP_S: Record<string, number> = { fight: 3, phase2: 2.2, phase3: 1.5 };
+const GAP_S: Record<string, number> = { fight: 3, phase2: 2.2, phase3: 2 };
 const GAP_JITTER = 0.1;
 export const voidNextGap = (phase: VoidPhase, rnd: number): number =>
   (GAP_S[phase] ?? GAP_S.fight) * (1 - GAP_JITTER + 2 * GAP_JITTER * rnd);
-/** every Nth attack of phase 3 is the eclipse */
+/** every Nth attack of phase 2 and phase 3 is the eclipse */
 export const VOID_ECLIPSE_EVERY = 3;
 const POOL_P1: readonly VoidAttackKind[] = ["beam", "eyes", "blink", "summon"];
-const POOL_LATER: readonly VoidAttackKind[] = ["beam", "eyes", "blink", "collapse", "summon"];
+const POOL_P2: readonly VoidAttackKind[] = ["beam", "eyes", "blink", "collapse", "summon"];
+const POOL_P3: readonly VoidAttackKind[] = ["hand", "gaze"];
 /**
- * the next attack: phase 1 draws from beam/eyes/blink/summon (no summon while minions live), phase 2 and 3 add collapse, and every VOID_ECLIPSE_EVERY-th
- * attack of phase 3 is the eclipse. Never the same kind twice in a row. `phase3Count` = attacks started in phase 3.
+ * the next attack: phase 1 draws from beam/eyes/blink/summon (no summon while minions live), phase 2 (TRUE FORM) adds
+ * collapse, phase 3 (the colossus) draws hand/gaze (the hand may repeat on another raider, the gaze never twice in a
+ * row), and every VOID_ECLIPSE_EVERY-th attack of phase 2 and 3 is the eclipse. Never the same kind twice in a row
+ * otherwise. `phaseCount` = attacks already started in the current phase.
  */
 export const pickVoidAttack = (
   phase: VoidPhase,
   prev: VoidAttackKind | null,
-  phase3Count: number,
+  phaseCount: number,
   rnd: number,
   minionsAlive = false,
 ): VoidAttackKind => {
-  if (phase === "phase3" && (phase3Count + 1) % VOID_ECLIPSE_EVERY === 0) return "eclipse";
-  const pool = (phase === "fight" ? POOL_P1 : POOL_LATER).filter(
-    (kind) => kind !== prev && !(minionsAlive && kind === "summon"),
+  if ((phase === "phase2" || phase === "phase3") && (phaseCount + 1) % VOID_ECLIPSE_EVERY === 0) return "eclipse";
+  const pool = (phase === "fight" ? POOL_P1 : phase === "phase3" ? POOL_P3 : POOL_P2).filter(
+    (kind) => (kind !== prev || (phase === "phase3" && kind === "hand")) && !(minionsAlive && kind === "summon"),
   );
   return pool[Math.min(pool.length - 1, Math.floor(rnd * pool.length))];
 };
 /** floating eyes per eyes attack */
 const EYES_CALM = 3;
 const EYES_ANGRY = 4;
-export const voidEyeCount = (phase: VoidPhase): number => (phase === "phase3" ? EYES_ANGRY : EYES_CALM);
+export const voidEyeCount = (phase: VoidPhase): number => (phase === "fight" ? EYES_CALM : EYES_ANGRY);
 /** seconds between one eye firing and the next */
 export const VOID_EYE_GAP_S = 0.25;
 /** the beam sweeps left from the boss at this speed; raiders within this half-height of its row are hit */
@@ -301,6 +342,12 @@ export const VOID_ECLIPSE_HIT_HEARTS = 1;
 /** seconds a raider stays in the hurt pose after a hit / after the eclipse */
 export const VOID_HURT_S = 0.6;
 export const VOID_ECLIPSE_HURT_S = 1.4;
+
+/** where the colossus's gaze beam is `clock`: it sweeps from arenaLeft to arenaRight over VOID_GAZE_SWEEP_S after hitAt */
+export const voidGazeX = (attack: VoidAttack, clock: number, arenaLeft: number, arenaRight: number): number => {
+  const progress = Math.min(1, Math.max(0, (clock - attack.hitAt) / VOID_GAZE_SWEEP_S));
+  return arenaLeft + (arenaRight - arenaLeft) * progress;
+};
 
 /** where a beam fired from x = `bossX` reaches a raider at `spotX` (seconds after it lands) */
 export const voidBeamArrive = (bossX: number, spotX: number): number => Math.max(0, bossX - spotX) / VOID_BEAM_SPEED;
@@ -318,6 +365,11 @@ export const VOID_SHAKE_CRIT = 0.25;
 export const VOID_SHAKE_ROAR = 0.7;
 /** TRUE FORM keeps the screen at least this shaken for the whole cinematic */
 export const VOID_SHAKE_TRUE_FORM = 0.65;
+/** THE VOID AWAKENS keeps the screen at least this shaken for the whole ascend */
+export const VOID_SHAKE_ASCEND = 0.75;
+export const VOID_SHAKE_HAND = 0.55;
+export const VOID_SHAKE_GAZE = 0.35;
+export const VOID_SHAKE_EYE_SHATTER = 0.9;
 export const VOID_SHAKE_DEATH = 0.5;
 export const VOID_SHAKE_FLASH = 1;
 export const VOID_SHAKE_VICTORY = 0.6;
@@ -335,6 +387,7 @@ export const VOID_PRAISE_TEXT = "LEGENDARY";
 /** banner seconds (the default banner is 2.5) */
 export const VOID_BANNER_S = 2.2;
 export const VOID_BANNER_TRUE_FORM_S = 2.4;
+export const VOID_BANNER_AWAKENS_S = 2.6;
 export const VOID_BANNER_VICTORY_S = 5.5;
 
 // ---- state -------------------------------------------------------------------------------------------------------
@@ -342,9 +395,9 @@ export const VOID_BANNER_VICTORY_S = 5.5;
 export interface VoidCtl {
   /** clock time of the next attack (-1 = none planned) */
   nextAttackAt: number;
-  /** kind of the previous attack, attacks started in phase 3 */
+  /** kind of the previous attack, attacks started in the current phase */
   prev: VoidAttackKind | null;
-  phase3Count: number;
+  phaseCount: number;
   /** attacks started this fight (seeds the patterns) */
   count: number;
   /** the raiders were moved to the Void floor (the wipe passed its midpoint) */
@@ -370,11 +423,14 @@ export interface VoidCtl {
   stepAt: number;
   /** clock time of the last fight tick (minion drift) */
   lastAt: number;
+  /** the stand ring the raiders are on now and the one they slid back from (see voidSpotOf) */
+  ring: VoidSpotRing;
+  prevRing: VoidSpotRing;
 }
 export const freshVoidCtl = (): VoidCtl => ({
   nextAttackAt: -1,
   prev: null,
-  phase3Count: 0,
+  phaseCount: 0,
   count: 0,
   moved: false,
   done: new Set<string>(),
@@ -389,6 +445,8 @@ export const freshVoidCtl = (): VoidCtl => ({
   nextMenaceAt: -1,
   stepAt: -1,
   lastAt: -1,
+  ring: 0,
+  prevRing: 0,
 });
 
 /** back to nothing happening; the defeat count survives (clear() wipes it separately) */
@@ -398,7 +456,9 @@ export const resetVoid = (state: VoidState, ctl: VoidCtl) => {
   const eyes = state.eyes;
   const attack = state.attack;
   const minions = state.minions;
-  Object.assign(state, idle, { kills, eyes, attack, minions });
+  const hands = state.hands;
+  Object.assign(state, idle, { kills, eyes, attack, minions, hands });
+  hands.forEach((hand, index) => Object.assign(hand, idle.hands[index]));
   for (const eye of eyes) eye.on = false;
   for (const minion of minions) minion.on = false;
   if (attack) attack.endAt = -99;
@@ -521,6 +581,46 @@ export const VOID_MINION_LIFT_PX = 6;
 /** the eclipse shakes the floor this long */
 export const VOID_QUAKE_S = 1.8;
 
+// ---- phase 3: the core and the colossus's hands -----------------------------------------------------------------
+/** the core sways across the arena (sinusoidal), floats down from above the screen, and is hit anywhere in this box */
+export const VOID_CORE_PERIOD_S = 7;
+export const VOID_CORE_SWAY_PX = 58;
+export const VOID_CORE_Y = 46;
+export const VOID_CORE_Y0 = -24;
+export const VOID_CORE_OPEN_S = 1.4;
+export const VOID_CORE_HIT_W = 14;
+export const VOID_CORE_HIT_H = 10;
+const VOID_CORE_CENTER_X = (VOID_ARENA_X0 + VOID_ARENA_X1) / 2;
+/** the core's x `clock` seconds in (the sway starts at the centre when the ascend begins) */
+export const voidCoreX = (clock: number, ascendAt: number): number =>
+  VOID_CORE_CENTER_X + Math.sin(((clock - ascendAt) / VOID_CORE_PERIOD_S) * Math.PI * 2) * VOID_CORE_SWAY_PX;
+/** the core's y: above the screen until coreOpenAt, then eased down to VOID_CORE_Y over VOID_CORE_OPEN_S */
+export const voidCoreY = (clock: number, coreOpenAt: number): number => {
+  const progress = Math.min(1, Math.max(0, (clock - coreOpenAt) / VOID_CORE_OPEN_S));
+  return VOID_CORE_Y0 + (VOID_CORE_Y - VOID_CORE_Y0) * (1 - (1 - progress) * (1 - progress));
+};
+/** the hand that slams a raider at x: the one on that side of the arena (the other when it is busy) */
+export const voidHandFor = (state: VoidState, x: number): number => {
+  const preferred = x < VOID_CORE_CENTER_X ? 0 : 1;
+  const free = (index: number) => state.hands[index].state === "hover";
+  if (free(preferred)) return preferred;
+  return free(1 - preferred) ? 1 - preferred : preferred;
+};
+/** one hand goes to its home spot in `stateName` */
+export const homeVoidHand = (hand: VoidHand, clock: number, stateName: VoidHandState = "hover") => {
+  const home = voidHandHome(hand.side);
+  hand.x = home.x;
+  hand.y = home.y;
+  hand.state = stateName;
+  hand.at = clock;
+};
+/** send every hand back to its side */
+export const homeVoidHands = (state: VoidState, clock: number, stateName: VoidHandState = "hover") => {
+  for (const hand of state.hands) homeVoidHand(hand, clock, stateName);
+};
+/** the hand slam shakes the floor this long */
+export const VOID_HAND_QUAKE_S = 0.5;
+
 // ---- minions -----------------------------------------------------------------------------------------------------
 export const VOID_MINION_LIFE_S = 8;
 export const VOID_MINION_POOF_S = 0.35;
@@ -582,15 +682,42 @@ const SPOT_ANGLE_ORDER = "34251607".split("").map(Number);
 const SPOT_ANGLE_STEPS = 7;
 const DEG_PER_PI = 180;
 const RANGED_CLASSES = new Set(["mage", "ranger"]);
-/** the Sanctum spot of the raider in slot `slot` of class `cls` (writes into `out`) */
-export const voidSpotOf = (slot: number, cls: string, out: { x: number; y: number }) => {
+/** the transformation shockwave (TRUE FORM, THE VOID AWAKENS) pushes the raiders back to a farther stand: ring 1 / 2 */
+export type VoidSpotRing = 0 | 1 | 2;
+/** ring 1 (phase 2): the arc, much farther from the boss */
+const SPOT_R_MELEE_FAR = 80;
+const SPOT_R_RANGED_FAR = 105;
+/** ring 2 (phase 3): a row along the FRONT edge of the arena (large y, nearest the viewer, below the colossus chest),
+ * VOID_FRONT_PER_ROW raiders wide; extra rows stack back toward the colossus */
+export const VOID_FRONT_PER_ROW = 6;
+const VOID_FRONT_MARGIN_X = 25;
+const VOID_FRONT_MARGIN_Y = 8;
+export const VOID_FRONT_X0 = VOID_ARENA_X0 + VOID_FRONT_MARGIN_X;
+export const VOID_FRONT_DX = 26;
+export const VOID_FRONT_Y = VOID_ARENA_Y1 - VOID_FRONT_MARGIN_Y;
+export const VOID_FRONT_ROW_DY = 12;
+/** seconds the raiders slide back to their new stand */
+export const VOID_PUSHBACK_S = 0.6;
+/** the Sanctum spot of the raider in slot `slot` of class `cls` on `spotRing` (writes into `out`) */
+export const voidSpotOf = (slot: number, cls: string, out: { x: number; y: number }, spotRing: VoidSpotRing = 0) => {
   const index = Math.max(0, Math.floor(slot));
+  if (spotRing === 2) {
+    out.x = VOID_FRONT_X0 + (index % VOID_FRONT_PER_ROW) * VOID_FRONT_DX;
+    out.y = VOID_FRONT_Y - Math.floor(index / VOID_FRONT_PER_ROW) * VOID_FRONT_ROW_DY;
+    return;
+  }
   const ring = Math.floor(index / SPOT_PER_RING);
   const step = SPOT_ANGLE_ORDER[index % SPOT_PER_RING];
   const angle = (((step / SPOT_ANGLE_STEPS) * 2 - 1) * SPOT_SPAN_DEG * Math.PI) / DEG_PER_PI;
-  const radius = (RANGED_CLASSES.has(cls) ? SPOT_R_RANGED : SPOT_R_MELEE) + ring * SPOT_R_RING;
+  const ranged = RANGED_CLASSES.has(cls);
+  const base = spotRing === 1 ? (ranged ? SPOT_R_RANGED_FAR : SPOT_R_MELEE_FAR) : ranged ? SPOT_R_RANGED : SPOT_R_MELEE;
+  const radius = base + ring * SPOT_R_RING;
   out.x = Math.round(VOID_HOME_X - SPOT_FRONT_DX - radius * Math.cos(angle));
   out.y = Math.round(VOID_FEET_Y + radius * Math.sin(angle) * SPOT_SQUASH);
+  if (spotRing === 1) {
+    out.x = Math.max(VOID_ARENA_X0, out.x);
+    out.y = Math.min(VOID_ARENA_Y1, Math.max(VOID_ARENA_Y0, out.y));
+  }
 };
 /** seconds the raiders take to walk from the B3 ring up to their Sanctum spots (from the start of the reveal) */
 export const VOID_STEP_S = 2;

@@ -143,7 +143,7 @@ import {
 } from "./voidFx";
 import { drawVoidBack, drawVoidFront, voidVariantOf } from "./voidScene";
 import { VOID_FLOOR } from "./voidTypes";
-import { captionScale, knockDx } from "./voidVisualLogic";
+import { COLOSSUS_CHEST_Y, VOID_BOSS_SORT_Y, captionScale, knockDx } from "./voidVisualLogic";
 
 type Ctx = CanvasRenderingContext2D;
 const rect = (ctx: Ctx, color: string, x: number, y: number, width: number, height: number) => {
@@ -3686,7 +3686,8 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
   if (raiders.length === 0 && floor === 1) ents.push({ y: 0, fn: () => drawSleepers(ctx, time, still) });
   const lordAt = lordPose(office, time, still);
   if (onVoid) {
-    ents.push({ y: VOID_FEET_Y + VOID_HOVER_PX - 10, fn: () => drawVoidBoss(ctx, vs, time, still) });
+    // the boss, its debris, the colossus's hands and core all sit behind every raider (y-sorted first)
+    ents.push({ y: VOID_BOSS_SORT_Y, fn: () => drawVoidBoss(ctx, vs, time, still) });
     vs.minions.forEach((minion, index) => {
       if (minion.on) ents.push({ y: minion.y, fn: () => drawVoidMinion(ctx, minion, time, still, index) });
     });
@@ -3737,7 +3738,9 @@ const drawDungeonFloor = (ctx: Ctx, office: Office, time: number, floor: number,
     const aim = onLordFloor
       ? { x: lordAt.x - LORD_AIM_DX, y: lordAt.y - LORD_AIM_DY }
       : onVoid
-        ? { x: voidBossX(vs) - LORD_AIM_DX, y: VOID_FEET_Y + VOID_HOVER_PX - VOID_AIM_DY - 30 }
+        ? vs.phase === "phase3"
+          ? { x: vs.coreX, y: COLOSSUS_CHEST_Y }
+          : { x: voidBossX(vs) - LORD_AIM_DX, y: VOID_FEET_Y + VOID_HOVER_PX - VOID_AIM_DY - 30 }
         : undefined;
     ents.push({
       y: spot.y + 0.4,

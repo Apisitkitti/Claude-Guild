@@ -9,11 +9,12 @@ export const VOID_FLOOR = 4;
  * shatter    — the Lord's corpse cracks, glows and explodes into pixel shards (still on B3)
  * transition — opaque pixel-block wipe from B3 to the Void Sanctum; raiders on B3 are moved to VOID_FLOOR mid-wipe
  * reveal     — the arena is shown; the Veiled One descends, taunts, the HP bar appears
- * fight      — phase 1
- * phase2     — below 60% hp: the veil tears, faster and harder attacks
- * phase3     — below 25% hp: TRUE FORM — the boss transforms into a towering shape that fills the arena; desperate,
- *              arena-wide attacks; the floor itself starts breaking
- * dying      — death animation, no damage taken
+ * fight      — phase 1 (veiled form)
+ * phase2     — below 60% hp: TRUE FORM (six wings, chest eye): a ~2.5 s invulnerable transformation, then harder attacks
+ * phase3     — below 25% hp: THE VOID AWAKENS — the boss rises into the giant sky eye and becomes a colossus that fills
+ *              the arena (~4 s invulnerable ascend, the floor breaks into shards); raiders hit the glowing CORE that
+ *              floats between the colossus's two hands, which slam the floor; the eye sweeps a gaze beam
+ * dying      — death animation (the colossus eye shatters when it died in phase3), no damage taken
  * victory    — banner + rewards, then raiders walk home and the state returns to none
  * retreat    — every raider left before the kill: the boss fades out of the arena, state returns to none
  */
@@ -21,11 +22,13 @@ export type VoidPhase =
   "none" | "shatter" | "transition" | "reveal" | "fight" | "phase2" | "phase3" | "dying" | "victory" | "retreat";
 
 /** beam: sweeping void beam across the floor · eyes: floating eyes spawn and fire · blink: teleports behind a raider
- *  and strikes · collapse: the floor tiles fall away in a pattern (phase2 only) */
-export type VoidAttackKind = "beam" | "eyes" | "blink" | "collapse" | "eclipse" | "summon";
+ *  and strikes · collapse: the floor tiles fall away in a pattern (phase2 only) · hand (phase3): a colossus hand winds
+ *  up over a raider (targetX/Y) and slams it · gaze (phase3): the colossus eye fires a beam that sweeps the whole floor
+ *  left to right between hitAt and endAt (targetX = sweep start; see voidGazeX in voidFight.ts) */
+export type VoidAttackKind = "beam" | "eyes" | "blink" | "collapse" | "eclipse" | "summon" | "hand" | "gaze";
 // summon (phase 1+): 2-3 void minions rise next to the boss and drift to the raiders; while any lives the boss is
 // `shielded` (raider hits kill a minion instead of hurting it).
-// eclipse (phase3 only): the boss raises both arms, the arena darkens to its palette (opaque, never over characters),
+// eclipse (phase2 and phase3): the boss raises both arms, the arena darkens to its palette (opaque, never over characters),
 // a giant void sun forms above and crashes down on every raider at once; raiders that dodge survive with 1 heart.
 
 export interface VoidAttack {
@@ -70,6 +73,26 @@ export interface VoidMinion {
   strikeAt: number;
 }
 export const VOID_MINION_MAX = 3;
+
+/** the colossus's hands (phase3): exactly VOID_HAND_COUNT slots, side -1 = left of the arena, 1 = right */
+export const VOID_HAND_COUNT = 2;
+/** where an idle hand hovers (world x of each side, and y) */
+export const VOID_HAND_HOME_X = { left: 78, right: 242 } as const;
+export const VOID_HAND_HOME_Y = 104;
+export type VoidHandState = "rise" | "hover" | "windup" | "slam" | "sink";
+export interface VoidHand {
+  side: -1 | 1;
+  /** rise / hover: the hand's home spot; windup / slam / sink: the floor point it works on (the raider it slams) */
+  x: number;
+  y: number;
+  state: VoidHandState;
+  /** clock time the state began */
+  at: number;
+}
+export const voidHandHome = (side: -1 | 1): { x: number; y: number } => ({
+  x: side < 0 ? VOID_HAND_HOME_X.left : VOID_HAND_HOME_X.right,
+  y: VOID_HAND_HOME_Y,
+});
 
 export interface VoidState {
   phase: VoidPhase;
@@ -135,6 +158,23 @@ export interface VoidState {
   voidImpactX: number;
   voidImpactY: number;
   quakeUntil: number;
+  // ---- phase 3: THE VOID AWAKENS ----
+  /** the glowing core raiders hit in phase3: it drifts left/right (sinusoidal, ~7 s period) and floats down from above
+   *  the screen; coreOpenAt = clock time it begins to float down (fully in place, and hittable, when the ascend ends) */
+  coreX: number;
+  coreY: number;
+  coreOpenAt: number;
+  /** the colossus's hands (VOID_HAND_COUNT slots, created idle) */
+  hands: VoidHand[];
+  /** clock time the ascend began (-1 until phase3 starts this fight) */
+  ascendAt: number;
+  /** the transformation shockwave (TRUE FORM, THE VOID AWAKENS): when it went off (-99 = never) and where it came from;
+   *  every raider is knocked away from it and slides back to a farther stand over VOID_PUSHBACK_S */
+  pushbackAt: number;
+  pushbackX: number;
+  pushbackY: number;
+  /** the death in progress is the colossus's eye shattering (it died in phase3) */
+  dyingEye: boolean;
 }
 
 export const voidIdle = (): VoidState => ({
@@ -185,4 +225,13 @@ export const voidIdle = (): VoidState => ({
   voidImpactX: 0,
   voidImpactY: 0,
   quakeUntil: 0,
+  coreX: 0,
+  coreY: 0,
+  coreOpenAt: -1,
+  hands: ([-1, 1] as const).map((side) => ({ side, ...voidHandHome(side), state: "hover" as const, at: -99 })),
+  ascendAt: -1,
+  pushbackAt: -99,
+  pushbackX: 0,
+  pushbackY: 0,
+  dyingEye: false,
 });

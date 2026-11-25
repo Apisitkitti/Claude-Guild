@@ -94,6 +94,8 @@ const eslintConfig = defineConfig([
       "lib/office/voidBossSprite.ts",
       "lib/office/voidScene.ts",
       "lib/office/voidFx.ts",
+      "lib/office/voidColossus.ts",
+      "lib/office/voidAtmosphere.ts",
       "tests/**",
     ],
     rules: { "@typescript-eslint/no-magic-numbers": "off" },

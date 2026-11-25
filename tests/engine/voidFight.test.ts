@@ -5,7 +5,28 @@ import { KIND_LORD, MAX_HEARTS, RAID_IDLE_S, RAID_READY_CALLS, type Employee } f
 import { DESK_COUNT } from "@/lib/office/layout";
 import { lordMaxHp } from "@/lib/office/lordFight";
 import {
+  VOID_ARENA_Y0,
+  VOID_ARENA_Y1,
+  VOID_ASCEND_S,
+  VOID_PUSHBACK_S,
+  VOID_BANNER_AWAKENS_S,
   VOID_BEAM_HALF_PX,
+  VOID_CORE_OPEN_S,
+  VOID_CORE_SWAY_PX,
+  VOID_CORE_Y,
+  VOID_EYE_CRACK_S,
+  VOID_EYE_SHATTER_S,
+  VOID_GAZE_SWEEP_S,
+  VOID_HAND_COUNT,
+  VOID_HAND_RISE_S,
+  VOID_HAND_SINK_S,
+  VOID_HAND_SLAM_S,
+  VOID_ARENA_X0,
+  VOID_ARENA_X1,
+  voidCoreX,
+  voidCoreY,
+  voidEyeDeathStage,
+  voidGazeX,
   VOID_BLINK_DX,
   VOID_DYING_S,
   VOID_ECLIPSE_EVERY,
@@ -31,10 +52,10 @@ import {
   VOID_PHASE3_BELOW,
   VOID_RETREAT_S,
   VOID_REVEAL_S,
-  VOID_ROAR_S,
   VOID_SHATTER_S,
   VOID_TRUE_FORM_S,
   VOID_VICTORY_S,
+  VOID_VOICE_S,
   VOID_WIPE_MID_S,
   VOID_WIPE_S,
   damageVoid,
@@ -120,7 +141,24 @@ const toFight = (raiders = 1) => {
 };
 /** the engine's private fight bookkeeping, for steering attacks in tests */
 const ctlOf = (office: TestOffice) =>
-  (office as unknown as { voidCtl: { nextAttackAt: number; phase3Count: number } }).voidCtl;
+  (office as unknown as { voidCtl: { nextAttackAt: number; phaseCount: number } }).voidCtl;
+/** drop the boss just under 60% and play out the TRUE FORM cinematic */
+const toPhase2 = (office: TestOffice, fighter: Employee) => {
+  const boss = office.voidFight;
+  boss.hp = boss.maxHp * VOID_PHASE2_BELOW + 1;
+  strike(office, fighter.id);
+  expect(boss.phase).toBe("phase2");
+  run(office, VOID_TRUE_FORM_S + STEP * 2);
+};
+/** ... and then just under 25%, playing out THE VOID AWAKENS ascend */
+const toPhase3 = (office: TestOffice, fighter: Employee) => {
+  const boss = office.voidFight;
+  toPhase2(office, fighter);
+  boss.hp = boss.maxHp * VOID_PHASE3_BELOW + 1;
+  strike(office, fighter.id);
+  expect(boss.phase).toBe("phase3");
+  run(office, VOID_ASCEND_S + STEP * 2);
+};
 
 describe("the secret final boss: pure rules", () => {
   it("a hit never carries the hp past the next threshold", () => {
@@ -140,18 +178,39 @@ describe("the secret final boss: pure rules", () => {
     expect(voidDamageFloor("phase3")).toBe(0);
   });
 
-  it("phase 1 draws beam / eyes / blink, later phases add collapse, every third phase 3 attack is the eclipse", () => {
+  it("phase 1 draws beam / eyes / blink / summon, phase 2 adds collapse and the eclipse, phase 3 draws hand / gaze", () => {
     const seen = new Set<string>();
     for (let step = 0; step < 20; step++) seen.add(pickVoidAttack("fight", null, 0, step / 20));
     expect([...seen].sort()).toEqual(["beam", "blink", "eyes", "summon"]);
     for (let step = 0; step < 20; step++) expect(pickVoidAttack("fight", null, 0, step / 20, true)).not.toBe("summon");
     const later = new Set<string>();
     for (let step = 0; step < 20; step++) later.add(pickVoidAttack("phase2", null, 0, step / 20));
-    expect(later.has("collapse")).toBe(true);
-    expect(later.has("eclipse")).toBe(false);
-    for (let count = 0; count < VOID_ECLIPSE_EVERY * 3; count++)
-      expect(pickVoidAttack("phase3", null, count, 0.3) === "eclipse").toBe((count + 1) % VOID_ECLIPSE_EVERY === 0);
+    expect([...later].sort()).toEqual(["beam", "blink", "collapse", "eyes", "summon"]);
+    for (const phase of ["phase2", "phase3"] as const)
+      for (let count = 0; count < VOID_ECLIPSE_EVERY * 3; count++)
+        expect(pickVoidAttack(phase, null, count, 0.3) === "eclipse").toBe((count + 1) % VOID_ECLIPSE_EVERY === 0);
     expect(pickVoidAttack("phase2", "beam", 0, 0)).not.toBe("beam");
+    const colossus = new Set<string>();
+    for (let step = 0; step < 20; step++) colossus.add(pickVoidAttack("phase3", null, 0, step / 20, true));
+    expect([...colossus].sort()).toEqual(["gaze", "hand"]); // never a summon, never the old attacks
+    expect(pickVoidAttack("phase3", "gaze", 0, 0.99)).toBe("hand");
+    expect(pickVoidAttack("phase3", "hand", 0, 0)).toBe("hand"); // the hand may slam again
+  });
+
+  it("the gaze sweeps the floor left to right over its sweep time, the core sways and floats down", () => {
+    const attack = { kind: "gaze", at: 10, targetX: VOID_ARENA_X0, targetY: 100, hitAt: 11.4, endAt: 12.6 } as never;
+    expect(voidGazeX(attack, 10, VOID_ARENA_X0, VOID_ARENA_X1)).toBe(VOID_ARENA_X0);
+    expect(voidGazeX(attack, 11.4 + VOID_GAZE_SWEEP_S / 2, VOID_ARENA_X0, VOID_ARENA_X1)).toBeCloseTo(
+      (VOID_ARENA_X0 + VOID_ARENA_X1) / 2,
+      6,
+    );
+    expect(voidGazeX(attack, 99, VOID_ARENA_X0, VOID_ARENA_X1)).toBe(VOID_ARENA_X1);
+    const mid = (VOID_ARENA_X0 + VOID_ARENA_X1) / 2;
+    expect(voidCoreX(5, 5)).toBeCloseTo(mid, 6);
+    expect(Math.abs(voidCoreX(5 + 7 / 4, 5) - mid)).toBeCloseTo(VOID_CORE_SWAY_PX, 6);
+    expect(voidCoreX(5 + 7, 5)).toBeCloseTo(mid, 6); // a ~7 s period
+    expect(voidCoreY(0, 10)).toBeLessThan(0); // above the screen until it opens
+    expect(voidCoreY(10 + VOID_CORE_OPEN_S, 10)).toBe(VOID_CORE_Y);
   });
 
   it("the wipe is fully opaque around its midpoint, the death has three stages, the voice expires", () => {
@@ -161,6 +220,10 @@ describe("the secret final boss: pure rules", () => {
     expect(voidDeathStage(0)).toBe("cracks");
     expect(voidDeathStage(2)).toBe("implosion");
     expect(voidDeathStage(VOID_DYING_S - 0.1)).toBe("flash");
+    expect(voidEyeDeathStage(0)).toBe("cracks");
+    expect(voidEyeDeathStage((VOID_EYE_CRACK_S + VOID_EYE_SHATTER_S) / 2)).toBe("shatter");
+    expect(voidEyeDeathStage(VOID_DYING_S - 0.1)).toBe("flash");
+    expect(VOID_DYING_S).toBeLessThanOrEqual(5);
     const state = voidIdle();
     state.voice = "HI";
     state.voiceAt = 10;
@@ -321,52 +384,100 @@ describe("the secret final boss: damage, phases and attacks", () => {
     expect(office.popups.some((popup) => popup.dungeon === VOID_FLOOR && popup.text.startsWith("-"))).toBe(true);
   });
 
-  it("phase 2 at 60% with an invulnerable roar", () => {
+  it("phase 2 at 60%: an invulnerable TRUE FORM cinematic with shake, then it can be hurt again", () => {
     const { office, fighters } = toFight();
     const boss = office.voidFight;
-    const cues = new Set<string>();
     boss.hp = boss.maxHp * VOID_PHASE2_BELOW + 1;
+    office.sfxQueue.length = 0;
     strike(office, fighters[0].id, "Bash");
     expect(boss.phase).toBe("phase2");
     expect(boss.phase2At).toBe(office.clock);
+    expect(office.sfxQueue).toContain("voidTrueForm");
     expect(office.voidInvulnerable()).toBe(true);
-    expect(office.banners.some((banner) => banner.epic && banner.text.length > 0)).toBe(true);
+    expect(office.banners.some((banner) => banner.epic && banner.text === "TRUE FORM")).toBe(true);
+    expect(boss.shake).toBeGreaterThan(0);
     const hp = boss.hp;
     strike(office, fighters[0].id, "Bash");
-    expect(boss.hp).toBe(hp); // the roar takes no damage
-    run(office, VOID_ROAR_S + STEP * 2, cues);
-    expect(cues.has("voidPhase2")).toBe(true);
+    expect(boss.hp).toBe(hp); // the cinematic takes no damage
+    run(office, VOID_TRUE_FORM_S / 2);
+    expect(boss.shake).toBeGreaterThan(0); // and keeps shaking
+    strike(office, fighters[0].id, "Bash");
+    expect(boss.hp).toBe(hp);
+    expect(boss.ascendAt).toBe(-1);
+    run(office, VOID_TRUE_FORM_S / 2 + STEP * 2);
     expect(office.voidInvulnerable()).toBe(false);
     strike(office, fighters[0].id, "Bash");
     expect(boss.hp).toBeLessThan(hp);
     expect(boss.phase).toBe("phase2");
   });
 
-  it("phase 3 at 25%: an invulnerable TRUE FORM cinematic with shake, then it can be hurt again", () => {
+  it("phase 3 at 25%: THE VOID AWAKENS, an invulnerable ascend with banner, voice and shake, then the core can be hurt", () => {
     const { office, fighters } = toFight();
     const boss = office.voidFight;
-    boss.hp = boss.maxHp * VOID_PHASE2_BELOW + 1;
-    strike(office, fighters[0].id);
-    run(office, VOID_ROAR_S + STEP * 2);
+    toPhase2(office, fighters[0]);
     boss.hp = boss.maxHp * VOID_PHASE3_BELOW + 1;
     office.sfxQueue.length = 0;
     strike(office, fighters[0].id);
     expect(boss.phase).toBe("phase3");
     expect(boss.phase3At).toBe(office.clock);
-    expect(office.sfxQueue).toContain("voidTrueForm");
-    expect(office.banners.some((banner) => banner.epic && banner.text === "TRUE FORM")).toBe(true);
+    expect(boss.ascendAt).toBe(office.clock);
+    expect(boss.invulnUntil).toBeCloseTo(office.clock + VOID_ASCEND_S, 6);
+    expect(office.sfxQueue).toContain("voidAscend");
+    expect(office.banners.some((banner) => banner.epic && banner.text === "THE VOID AWAKENS")).toBe(true);
+    expect(VOID_BANNER_AWAKENS_S).toBeGreaterThan(0);
     expect(boss.shake).toBeGreaterThan(0);
+    expect(boss.hands.every((hand) => hand.state === "rise")).toBe(true);
     const hp = boss.hp;
     strike(office, fighters[0].id);
     expect(boss.hp).toBe(hp);
-    run(office, VOID_TRUE_FORM_S / 2);
+    run(office, VOID_ASCEND_S / 2);
     expect(boss.shake).toBeGreaterThan(0); // the cinematic keeps shaking
     strike(office, fighters[0].id);
     expect(boss.hp).toBe(hp);
-    run(office, VOID_TRUE_FORM_S / 2 + STEP * 2);
+    expect(boss.attack?.landed ?? true).toBe(true); // nothing is thrown during the ascend
+    run(office, VOID_ASCEND_S / 2 + STEP * 2);
     expect(office.voidInvulnerable()).toBe(false);
+    run(office, VOID_VOICE_S / 2);
+    expect(office.voidLine()).toBe("I AM THE VOID ITSELF!"); // the voice follows its banner
     strike(office, fighters[0].id);
     expect(boss.hp).toBeLessThan(hp);
+  });
+
+  it("the core floats down, sways across the arena, takes the hits, and the hands settle into hover", () => {
+    const { office, fighters } = toFight();
+    const boss = office.voidFight;
+    toPhase2(office, fighters[0]);
+    boss.hp = boss.maxHp * VOID_PHASE3_BELOW + 1;
+    strike(office, fighters[0].id);
+    expect(boss.hands).toHaveLength(VOID_HAND_COUNT);
+    expect(boss.coreOpenAt).toBeCloseTo(boss.ascendAt + VOID_ASCEND_S - VOID_CORE_OPEN_S, 6);
+    expect(boss.coreY).toBeLessThan(0); // still above the screen
+    run(office, VOID_ASCEND_S + STEP * 2);
+    expect(boss.coreY).toBe(VOID_CORE_Y);
+    ctlOf(office).nextAttackAt = 1e9;
+    const xs = new Set<number>();
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let k = 0; k < 7 * 20; k++) {
+      run(office, STEP);
+      xs.add(Math.round(boss.coreX));
+      lo = Math.min(lo, boss.coreX);
+      hi = Math.max(hi, boss.coreX);
+      expect(Math.abs(boss.coreX - voidCoreX(office.clock, boss.ascendAt))).toBeLessThan(VOID_CORE_SWAY_PX / 10); // one frame behind at most
+    }
+    expect(xs.size).toBeGreaterThan(10);
+    expect(hi - lo).toBeGreaterThan(VOID_CORE_SWAY_PX);
+    expect(lo).toBeGreaterThanOrEqual(VOID_ARENA_X0);
+    expect(hi).toBeLessThanOrEqual(VOID_ARENA_X1);
+    expect(boss.hands.every((hand) => hand.state === "hover")).toBe(true);
+    expect(boss.hands.map((hand) => hand.side)).toEqual([-1, 1]);
+    const before = boss.hp;
+    strike(office, fighters[0].id);
+    expect(boss.hp).toBeLessThan(before);
+    expect(Math.abs(boss.lastHitX - boss.coreX)).toBeLessThanOrEqual(10);
+    expect(Math.abs(boss.lastHitY - boss.coreY)).toBeLessThanOrEqual(10);
+    expect(boss.lastHitMinion).toBe(false);
+    expect(VOID_HAND_RISE_S).toBeGreaterThan(0);
   });
 
   it("a huge hit still plays every phase", () => {
@@ -443,13 +554,10 @@ describe("the secret final boss: damage, phases and attacks", () => {
       const boss = office.voidFight;
       boss.hp = boss.maxHp * VOID_PHASE2_BELOW + 1;
       strike(office, fighters[0].id);
-      run(office, VOID_ROAR_S + STEP * 2);
-      boss.hp = boss.maxHp * VOID_PHASE3_BELOW + 1;
-      strike(office, fighters[0].id);
       run(office, VOID_TRUE_FORM_S + STEP * 2);
-      expect(boss.phase).toBe("phase3");
+      expect(boss.phase).toBe("phase2");
       for (const raider of fighters) raider.hearts = MAX_HEARTS;
-      ctlOf(office).phase3Count = VOID_ECLIPSE_EVERY - 1; // the next one is the eclipse
+      ctlOf(office).phaseCount = VOID_ECLIPSE_EVERY - 1; // the next one is the eclipse
       ctlOf(office).nextAttackAt = office.clock;
       fixedRandom(roll);
       const cues = run(office, STEP * 2);
@@ -481,12 +589,7 @@ describe("the secret final boss: damage, phases and attacks", () => {
 describe("the secret final boss: the end", () => {
   const slayVoid = (office: TestOffice, fighter: Employee) => {
     const boss = office.voidFight;
-    boss.hp = boss.maxHp * VOID_PHASE2_BELOW + 1;
-    strike(office, fighter.id);
-    run(office, VOID_ROAR_S + STEP * 2);
-    boss.hp = boss.maxHp * VOID_PHASE3_BELOW + 1;
-    strike(office, fighter.id);
-    run(office, VOID_TRUE_FORM_S + STEP * 2);
+    toPhase3(office, fighter);
     boss.hp = 1;
     strike(office, fighter.id);
   };
@@ -633,12 +736,7 @@ describe("the secret final boss: the end", () => {
 describe("the secret final boss: it acts and it shows", () => {
   const slay = (office: TestOffice, fighter: Employee) => {
     const boss = office.voidFight;
-    boss.hp = boss.maxHp * VOID_PHASE2_BELOW + 1;
-    strike(office, fighter.id);
-    run(office, VOID_ROAR_S + STEP * 2);
-    boss.hp = boss.maxHp * VOID_PHASE3_BELOW + 1;
-    strike(office, fighter.id);
-    run(office, VOID_TRUE_FORM_S + STEP * 2);
+    toPhase3(office, fighter);
     boss.hp = 1;
     strike(office, fighter.id);
   };
@@ -651,16 +749,17 @@ describe("the secret final boss: it acts and it shows", () => {
     expect(boss.attack).not.toBeNull();
     expect(boss.attack!.at - fightAt).toBeGreaterThanOrEqual(VOID_FIRST_ATTACK_S - STEP);
     expect(boss.attack!.at - fightAt).toBeLessThan(VOID_FIRST_ATTACK_S + 0.4);
-    for (const kind of ["beam", "eyes", "blink", "collapse", "summon", "eclipse"] as const)
+    for (const kind of ["beam", "eyes", "blink", "collapse", "summon", "eclipse", "hand", "gaze"] as const)
       for (const phase of ["fight", "phase2", "phase3"] as const)
         expect(voidTelegraphS(kind, phase)).toBeGreaterThanOrEqual(VOID_MIN_TELEGRAPH_S);
+    for (const kind of ["hand", "gaze"] as const) expect(voidTelegraphS(kind, "phase3")).toBeGreaterThanOrEqual(1);
   });
 
-  it("the gaps between attacks shrink by phase (3.0 / 2.2 / 1.5 s, +-10%)", () => {
+  it("the gaps between attacks shrink by phase (3.0 / 2.2 / 2.0 s, +-10%)", () => {
     for (const [phase, gap] of [
       ["fight", 3],
       ["phase2", 2.2],
-      ["phase3", 1.5],
+      ["phase3", 2],
     ] as const) {
       expect(voidNextGap(phase, 0)).toBeCloseTo(gap * 0.9, 6);
       expect(voidNextGap(phase, 1)).toBeCloseTo(gap * 1.1, 6);
@@ -829,7 +928,7 @@ describe("the secret final boss: it acts and it shows", () => {
     expect(office.voidLine()).not.toBe("");
   });
 
-  it("the death plays its full four seconds before the victory plaque", () => {
+  it("the death plays its full length before the victory plaque", () => {
     const { office, fighters } = toFight();
     const phases: string[] = [];
     slay(office, fighters[0]);
@@ -873,5 +972,313 @@ describe("the secret final boss: it acts and it shows", () => {
     slay(office, fighters[0]);
     run(office, VOID_DYING_S + 0.5);
     expect(office.particles.some((particle) => particle.on && particle.spr === "coin" && particle.under)).toBe(true);
+  });
+});
+
+describe("the secret final boss: THE VOID AWAKENS (phase 3)", () => {
+  /** the party reaches the colossus with the ascend over, and nothing planned */
+  const toColossus = (raiders = 1) => {
+    const { office, fighters } = toFight(raiders);
+    toPhase3(office, fighters[0]);
+    for (const raider of fighters) raider.hearts = MAX_HEARTS;
+    ctlOf(office).nextAttackAt = 1e9;
+    return { office, fighters, boss: office.voidFight };
+  };
+  /** start the attack the pool index `roll` picks (< 0.5 hand, otherwise gaze) and run to the end of its warning */
+  const startAttack = (office: TestOffice, roll: number, dodgeRoll: number) => {
+    ctlOf(office).phaseCount = 0;
+    ctlOf(office).nextAttackAt = office.clock;
+    fixedRandom(roll);
+    run(office, STEP * 2);
+    const attack = office.voidFight.attack!;
+    fixedRandom(dodgeRoll);
+    return attack;
+  };
+
+  it("hands: exactly two slots, side -1 / 1, idle at the arena sides, then rise, hover, windup, slam, sink, hover", () => {
+    const { office, fighters, boss } = toColossus();
+    expect(boss.hands.map((hand) => hand.side)).toEqual([-1, 1]);
+    expect(voidIdle().hands.every((hand) => hand.state === "hover")).toBe(true);
+    expect(boss.hands.every((hand) => hand.state === "hover")).toBe(true);
+    expect(boss.hands[0].x).toBeLessThan(boss.hands[1].x);
+    const attack = startAttack(office, 0.1, 0.9); // hand, nobody dodges
+    expect(attack.kind).toBe("hand");
+    expect(attack.hitAt - attack.at).toBeGreaterThanOrEqual(1);
+    const busy = boss.hands.filter((hand) => hand.state === "windup");
+    expect(busy).toHaveLength(1);
+    expect(busy[0].x).toBe(attack.targetX); // it winds up over the raider
+    expect(busy[0].y).toBe(attack.targetY);
+    const idle = boss.hands.find((hand) => hand !== busy[0])!;
+    expect(idle.state).toBe("hover");
+    expect(boss.invulnUntil).toBeLessThan(office.clock);
+    for (let k = 0; k < 5; k++) strike(office, fighters[0].id); // keep the party awake
+    const cues = run(office, attack.hitAt - office.clock + STEP * 2);
+    expect(busy[0].state).toBe("slam");
+    expect(busy[0].at).toBeGreaterThanOrEqual(attack.hitAt);
+    expect(cues.has("voidHandSlam")).toBe(true);
+    expect(boss.quakeUntil).toBeGreaterThan(office.clock);
+    expect(boss.voidImpactX).toBe(attack.targetX);
+    expect(boss.voidImpactY).toBe(attack.targetY);
+    run(office, VOID_HAND_SLAM_S + STEP);
+    expect(busy[0].state).toBe("sink");
+    run(office, VOID_HAND_SINK_S + STEP);
+    expect(busy[0].state).toBe("hover");
+    expect(busy[0].y).toBe(idle.y);
+  });
+
+  it("the hand slam hits the raider under it, or is dodged", () => {
+    for (const [dodgeRoll, hit] of [
+      [0.9, true],
+      [0.01, false],
+    ] as const) {
+      const { office, fighters, boss } = toColossus(2);
+      const attack = startAttack(office, 0.1, dodgeRoll);
+      expect(attack.kind).toBe("hand");
+      const victim = fighters.find((raider) => office.raiderPoint(raider).x === attack.targetX)!;
+      expect(victim).toBeDefined();
+      victim.hearts = MAX_HEARTS;
+      run(office, attack.hitAt - office.clock + STEP * 2);
+      expect(victim.voidHitAt >= attack.hitAt).toBe(hit);
+      expect(victim.dodgeAt >= attack.hitAt).toBe(!hit);
+      if (hit) {
+        expect(victim.hearts).toBeLessThan(MAX_HEARTS);
+        expect(boss.lastHurtId).toBe(victim.id);
+      } else expect(victim.hearts).toBe(MAX_HEARTS);
+      vi.restoreAllMocks();
+      fixedRandom(0.5);
+    }
+  });
+
+  it("the gaze telegraphs 1.4 s, sweeps the floor and hits every raider it passes (dodge roll each)", () => {
+    for (const [dodgeRoll, hit] of [
+      [0.9, true],
+      [0.01, false],
+    ] as const) {
+      const { office, fighters, boss } = toColossus(3);
+      const attack = startAttack(office, 0.9, dodgeRoll);
+      expect(attack.kind).toBe("gaze");
+      expect(attack.hitAt - attack.at).toBeGreaterThanOrEqual(1.4 - 1e-6);
+      expect(attack.endAt - attack.hitAt).toBeCloseTo(VOID_GAZE_SWEEP_S, 6);
+      expect(attack.targetX).toBe(VOID_ARENA_X0);
+      expect(fighters.every((raider) => raider.voidHitAt < attack.hitAt)).toBe(true);
+      const cues = run(office, attack.hitAt - office.clock + STEP * 2);
+      expect(cues.has("voidGaze")).toBe(true);
+      run(office, VOID_GAZE_SWEEP_S);
+      for (const raider of fighters) {
+        expect(raider.voidHitAt >= attack.hitAt).toBe(hit);
+        expect(raider.dodgeAt >= attack.hitAt).toBe(!hit);
+      }
+      expect(boss.lastHurtAt >= attack.hitAt).toBe(hit);
+      vi.restoreAllMocks();
+      fixedRandom(0.5);
+    }
+  });
+
+  it("never summons: phase 2 can, the minions are gone at the transition and none appear in phase 3", () => {
+    const { office, fighters } = toFight();
+    const boss = office.voidFight;
+    toPhase2(office, fighters[0]);
+    fixedRandom(0.9); // phase 2 can summon
+    ctlOf(office).nextAttackAt = office.clock;
+    run(office, STEP * 2);
+    expect(boss.attack?.kind).toBe("summon");
+    run(office, boss.attack!.hitAt - office.clock + 0.2);
+    expect(boss.shielded).toBe(true);
+    ctlOf(office).nextAttackAt = 1e9;
+    boss.hp = boss.maxHp * VOID_PHASE3_BELOW + 1;
+    for (let k = 0; k < 8 && boss.phase === "phase2"; k++) strike(office, fighters[0].id); // minions die first
+    expect(boss.phase).toBe("phase3");
+    expect(boss.shielded).toBe(false);
+    run(office, VOID_ASCEND_S + STEP * 2);
+    const kinds = new Set<string>();
+    for (let round = 0; round < 6; round++) {
+      ctlOf(office).nextAttackAt = office.clock;
+      for (let step = 0; step < 90; step++) {
+        run(office, STEP);
+        if (boss.attack) kinds.add(boss.attack.kind);
+        if (step % 20 === 0) strike(office, fighters[0].id);
+      }
+      expect(boss.minions.some((minion) => minion.on && minion.clearedAt < 0)).toBe(false);
+    }
+    expect(kinds.has("summon")).toBe(false);
+    for (const kind of kinds) expect(["hand", "gaze", "eclipse"]).toContain(kind);
+  });
+
+  it("dies as the eye shatters: cracks, shatter, flash over the full dying time", () => {
+    const { office, fighters } = toFight(2);
+    const boss = office.voidFight;
+    toPhase3(office, fighters[0]);
+    const coreAt = { x: boss.coreX, y: boss.coreY };
+    const cues = new Set<string>();
+    boss.hp = 1;
+    office.sfxQueue.length = 0;
+    strike(office, fighters[0].id);
+    expect(boss.phase).toBe("dying");
+    expect(boss.dyingEye).toBe(true);
+    expect(boss.hands.every((hand) => hand.state === "sink")).toBe(true);
+    const stages: string[] = [];
+    for (let elapsed = 0; elapsed < VOID_DYING_S - STEP; elapsed += STEP) {
+      run(office, STEP, cues);
+      const stage = voidEyeDeathStage(office.clock - boss.dyingAt);
+      if (!stages.length || stages[stages.length - 1] !== stage) stages.push(stage);
+    }
+    expect(stages).toEqual(["cracks", "shatter", "flash"]);
+    expect(cues.has("voidShatterEye")).toBe(true);
+    expect(boss.coreX).toBe(coreAt.x); // the core stays where it died
+    expect(boss.coreY).toBe(coreAt.y);
+    run(office, STEP * 4 + 0.3, cues);
+    expect(boss.phase).toBe("victory");
+    expect(boss.kills).toBe(1);
+  });
+
+  it("under reduced motion the ascend, the hand slam and the gaze never shake", () => {
+    const { office, fighters } = toFight();
+    office.reducedMotion = true;
+    const boss = office.voidFight;
+    let worst = 0;
+    const watch = (seconds: number) => {
+      for (let elapsed = 0; elapsed < seconds; elapsed += STEP) {
+        run(office, STEP);
+        worst = Math.max(worst, boss.shake);
+      }
+    };
+    boss.hp = boss.maxHp * VOID_PHASE2_BELOW + 1;
+    strike(office, fighters[0].id);
+    watch(VOID_TRUE_FORM_S + STEP * 2);
+    boss.hp = boss.maxHp * VOID_PHASE3_BELOW + 1;
+    strike(office, fighters[0].id);
+    expect(boss.phase).toBe("phase3");
+    watch(VOID_ASCEND_S + STEP * 2);
+    for (const roll of [0.1, 0.9]) {
+      startAttack(office, roll, 0.9);
+      for (let k = 0; k < 4; k++) strike(office, fighters[0].id);
+      watch(boss.attack!.endAt - office.clock + STEP);
+    }
+    expect(boss.quakeUntil).toBe(0);
+    expect(worst).toBe(0);
+  });
+
+  it("clear() forgets the colossus: core, hands and ascend", () => {
+    const { office, boss } = toColossus();
+    office.clear();
+    expect(office.voidFight.ascendAt).toBe(-1);
+    expect(office.voidFight.coreOpenAt).toBe(-1);
+    expect(office.voidFight.hands.every((hand) => hand.state === "hover")).toBe(true);
+    expect(boss.phase).toBe("none");
+  });
+});
+
+describe("the secret final boss: the transformation shockwave", () => {
+  const stands = (office: TestOffice, fighters: Employee[]) => fighters.map((raider) => office.raiderPoint(raider));
+  const distToBoss = (office: TestOffice, point: { x: number; y: number }) =>
+    Math.hypot(point.x - office.voidFight.x, point.y - VOID_FEET_Y);
+
+  it("TRUE FORM and THE VOID AWAKENS knock every raider back without costing a heart, and move them farther", () => {
+    const { office, fighters } = toFight(6);
+    const boss = office.voidFight;
+    for (const raider of fighters) raider.hearts = MAX_HEARTS;
+    run(office, 1);
+    const before = stands(office, fighters);
+    expect(boss.pushbackAt).toBe(-99);
+    boss.hp = boss.maxHp * VOID_PHASE2_BELOW + 1;
+    strike(office, fighters[0].id);
+    expect(boss.phase).toBe("phase2");
+    expect(boss.pushbackAt).toBe(office.clock);
+    expect(boss.pushbackX).toBe(boss.x);
+    for (const raider of fighters) {
+      expect(raider.voidHitAt).toBe(office.clock);
+      expect(raider.voidKnock).toBe(-1); // away from the boss
+      expect(raider.hurtUntil).toBeGreaterThan(office.clock);
+      expect(raider.hearts).toBe(MAX_HEARTS);
+    }
+    run(office, VOID_PUSHBACK_S + STEP * 2);
+    const ring1 = stands(office, fighters);
+    ring1.forEach((point, index) => {
+      expect(distToBoss(office, point)).toBeGreaterThan(distToBoss(office, before[index]) + 20);
+      expect(point.x).toBeGreaterThanOrEqual(VOID_ARENA_X0);
+      expect(point.y).toBeGreaterThanOrEqual(VOID_ARENA_Y0);
+      expect(point.y).toBeLessThanOrEqual(VOID_ARENA_Y1);
+    });
+    run(office, VOID_TRUE_FORM_S);
+    boss.hp = boss.maxHp * VOID_PHASE3_BELOW + 1;
+    strike(office, fighters[0].id);
+    expect(boss.phase).toBe("phase3");
+    expect(boss.pushbackAt).toBe(office.clock);
+    for (const raider of fighters) {
+      expect(raider.voidHitAt).toBe(office.clock);
+      expect(raider.hearts).toBe(MAX_HEARTS);
+    }
+    run(office, VOID_PUSHBACK_S + STEP * 2);
+    const ring2 = stands(office, fighters);
+    const keys = new Set<string>();
+    for (const point of ring2) {
+      expect(point.x).toBeGreaterThanOrEqual(VOID_ARENA_X0);
+      expect(point.x).toBeLessThanOrEqual(VOID_ARENA_X1);
+      expect(point.y).toBeGreaterThanOrEqual(VOID_ARENA_Y0);
+      expect(point.y).toBeGreaterThan(VOID_FEET_Y); // the front edge, nearest the viewer, below the colossus chest
+      expect(point.y).toBeLessThanOrEqual(VOID_ARENA_Y1);
+      keys.add(`${point.x},${point.y}`);
+    }
+    expect(keys.size).toBe(fighters.length); // nobody stacks
+    expect(new Set(ring1.map((other) => `${other.x},${other.y}`)).size).toBeGreaterThan(1);
+  });
+
+  it("the retreat is a slide over VOID_PUSHBACK_S, and instant under reduced motion", () => {
+    for (const reduced of [false, true]) {
+      const { office, fighters } = toFight(2);
+      office.reducedMotion = reduced;
+      run(office, 1);
+      const start = office.raiderPoint(fighters[0]);
+      const boss = office.voidFight;
+      boss.hp = boss.maxHp * VOID_PHASE2_BELOW + 1;
+      strike(office, fighters[0].id);
+      const now = office.raiderPoint(fighters[0]);
+      run(office, VOID_PUSHBACK_S / 2);
+      const half = office.raiderPoint(fighters[0]);
+      run(office, VOID_PUSHBACK_S);
+      const end = office.raiderPoint(fighters[0]);
+      if (reduced) {
+        expect(now).toEqual(end);
+        expect(half).toEqual(end);
+      } else {
+        expect(now).toEqual(start);
+        expect(half.x).not.toBe(start.x);
+        expect(half.x).not.toBe(end.x);
+      }
+      expect(end.x).not.toBe(start.x);
+    }
+  });
+
+  it("hand slams and the gaze still reach raiders at their new stands", () => {
+    const { office, fighters } = toFight(3);
+    const boss = office.voidFight;
+    toPhase3(office, fighters[0]);
+    for (const raider of fighters) raider.hearts = MAX_HEARTS;
+    ctlOf(office).phaseCount = 0;
+    ctlOf(office).nextAttackAt = office.clock;
+    fixedRandom(0.1);
+    run(office, STEP * 2);
+    const attack = boss.attack!;
+    expect(attack.kind).toBe("hand");
+    const victim = fighters.find((raider) => {
+      const spot = office.raiderPoint(raider);
+      return spot.x === attack.targetX && spot.y === attack.targetY;
+    });
+    expect(victim).toBeDefined(); // the windup is over the raider's actual stand
+    fixedRandom(0.9);
+    run(office, attack.hitAt - office.clock + STEP * 2);
+    expect(victim!.voidHitAt).toBeGreaterThanOrEqual(attack.hitAt);
+    ctlOf(office).nextAttackAt = 1e9;
+    run(office, Math.max(0, boss.attack!.endAt - office.clock) + STEP * 2);
+    ctlOf(office).phaseCount = 0;
+    ctlOf(office).nextAttackAt = office.clock;
+    fixedRandom(0.9);
+    for (const raider of fighters) raider.voidHitAt = -99;
+    run(office, STEP * 2);
+    const gaze = boss.attack!;
+    expect(gaze.kind).toBe("gaze");
+    for (let k = 0; k < 4; k++) strike(office, fighters[0].id);
+    run(office, gaze.endAt - office.clock + STEP * 2);
+    expect(fighters.every((raider) => raider.voidHitAt >= gaze.hitAt)).toBe(true);
   });
 });

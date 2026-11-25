@@ -10,16 +10,17 @@ import { lordSprite } from "./dungeonLordSprite";
 import { VIEW_W, VIEW_X0, WORLD_H } from "./layout";
 import { hash01 } from "./lordFight";
 import { GLYPH_H, drawPixelText, measurePixelText } from "./pixelFont";
+import { drawDebrisRing, drawBossRuneCircle } from "./voidAtmosphere";
 import {
   VOID_BLINK_IN_FRAME,
   VOID_BLINK_OUT_FRAME,
   VOID_CAST_FRAME,
   VOID_RAISE_FRAME,
-  voidBossDyingSprite,
   voidBossSprite,
   voidFormSize,
   type VoidForm,
 } from "./voidBossSprite";
+import { colossusBodyPlace, drawColossusEnts, drawColossusFlash, drawColossusFloor } from "./voidColossus";
 import {
   VOID_ARENA_X0,
   VOID_ARENA_Y0,
@@ -36,6 +37,7 @@ import {
   VOID_ROAR_S,
   voidFightingPhase,
   VOID_TRUE_FORM_S,
+  VOID_ASCEND_S,
   VOID_VICTORY_S,
   VOID_WIPE_S,
   VOID_ARENA_X1,
@@ -44,6 +46,8 @@ import {
   voidCollapseCell,
   voidDeathStage,
   voidDeathStageProgress,
+  voidEyeDeathProgress,
+  voidEyeDeathStage,
   voidHpFrac,
   voidVoice,
 } from "./voidFight";
@@ -62,7 +66,6 @@ import {
   captionScale,
   descendLift,
   ditherLevelOf,
-  dyingStageOf,
   formOfHp,
   formOfPhase,
   nameLetters,
@@ -86,6 +89,17 @@ import {
   spotZone,
   strikeReach,
   BAR_TOP,
+  ASCEND_DONE,
+  COLOSSUS_CHEST_Y,
+  COLOSSUS_NUMBER_BONUS,
+  PUSHBACK_REACH,
+  pushbackRadius,
+  eyeFlight,
+  ascendBeat,
+  deathBeat,
+  type AscendBeat,
+  type ColossusPlace,
+  type DeathBeat,
   type Zone,
 } from "./voidVisualLogic";
 
@@ -246,7 +260,9 @@ const BLINK_IN_S = 0.3;
 export const voidBossX = (state: VoidState): number => (state.x > 0 ? state.x : VOID_HOME_X);
 /** the sprite bottom: the Veiled One hovers well above the floor so its tall body stands over the raiders */
 export const VOID_HOVER_PX = 30;
-const bottomOf = (_form: VoidForm) => VOID_FEET_Y + VOID_HOVER_PX;
+/** the true form is 1.5x bigger: its hem sits low so its crown stays inside the canvas */
+const TRUE_BOTTOM = 192;
+const bottomOf = (form: VoidForm) => (form === 3 ? TRUE_BOTTOM : VOID_FEET_Y + VOID_HOVER_PX);
 
 /** which sprite / where the Veiled One is right now (the cinematics handle their own phases) */
 const setPose = (x: number, bottom: number, sprite: HTMLCanvasElement, form: VoidForm, lift: number, shake: number) => {
@@ -285,11 +301,13 @@ export const voidBossPose = (state: VoidState, time: number, still: boolean): Vo
     dither = ditherLevelOf(age / VOID_RETREAT_S);
     shake = still ? 0 : Math.floor(time * 12) % 2 ? 1 : -1;
   } else if (state.phase === "dying") {
-    const stage = voidDeathStage(age);
-    const index = dyingStageOf(stage, voidDeathStageProgress(age));
-    if (index < 0) return hidden;
-    shake = still ? 0 : (Math.floor(time * 30) % 2 ? 1 : -1) * (1 + (stage === "implosion" ? 1 : 0));
-    return setPose(x, bottomOf(3), voidBossDyingSprite(index), 3, 0, shake);
+    // the colossus dies as a face (drawn by the scene); only a death that is not the colossus's dissolves the true form
+    if (state.dyingEye || voidDeathStage(age) === "flash") return hidden;
+    shake = still ? 0 : Math.floor(time * 30) % 2 ? 1 : -1;
+    const level = ditherLevelOf(voidDeathStageProgress(age) * 0.5 + (voidDeathStage(age) === "implosion" ? 0.5 : 0));
+    return setPose(x, bottomOf(3), voidBossSprite(3, 0, false, level), 3, 0, shake);
+  } else if (state.phase === "phase3") {
+    return hidden; // the true form has risen into the sky eye: the colossus takes over
   } else if (state.attack && !still) {
     const attack = state.attack;
     const phase = voidAttackPhase(state, time);
@@ -329,7 +347,7 @@ export const voidBossPose = (state: VoidState, time: number, still: boolean): Vo
 const STILL_ECLIPSE = 0.5;
 export const voidEclipseLevel = (state: VoidState, time: number, still = false): number => {
   const attack = state.attack;
-  if (!attack || attack.kind !== "eclipse" || state.phase !== "phase3") return 0;
+  if (!attack || attack.kind !== "eclipse" || (state.phase !== "phase3" && state.phase !== "phase2")) return 0;
   if (time < attack.at || time >= attack.endAt) return 0;
   if (still) return STILL_ECLIPSE;
   if (time < attack.hitAt) return ease((time - attack.at) / (attack.hitAt - attack.at));
@@ -344,12 +362,77 @@ export const voidCrackGrow = (state: VoidState, time: number): number => {
   return 0;
 };
 
-/** what the scene's back layer needs for this state */
-export const voidBackView = (state: VoidState, time: number, still = false): VoidBackView => ({
-  variant: voidVariantOf(state.phase),
-  crack: voidCrackGrow(state, time),
-  eclipse: voidEclipseLevel(state, time, still),
-});
+/** what the scene's back layer needs for this state (one shared object: read it before the next call) */
+const DEATH: DeathBeat = { crack: 0, shatter: 0, flash: 0 };
+const CHEST: ColossusPlace = { x: 0, y: 0, step: 0 };
+const FLIGHT = { x: 0, y: 0, scale: 1 };
+const BACK_VIEW: VoidBackView = {
+  variant: 0,
+  crack: 0,
+  eclipse: 0,
+  colossus: {
+    on: false,
+    x: 0,
+    y: 0,
+    step: 0,
+    split: 0,
+    eyeFly: 1,
+    eyeX: 0,
+    eyeY: 0,
+    eyeScale: 1,
+    shake: 0,
+    charge: 0,
+    sinceHit: 99,
+    dying: false,
+    deathCrack: 0,
+    deathShatter: 0,
+  },
+};
+const STILL_CRACK = 0.7;
+const STILL_SHATTER = 0.5;
+const GROW_SHAKE_PX = 2;
+const BEAT: AscendBeat = { ...ASCEND_DONE };
+export const voidBackView = (state: VoidState, time: number, still = false): VoidBackView => {
+  const view = BACK_VIEW;
+  const col = view.colossus;
+  const phase = state.phase;
+  const eyeDeath = phase === "dying" && state.dyingEye;
+  Object.assign(BEAT, ASCEND_DONE);
+  if (phase === "phase3" && !still) ascendBeat(time - (state.ascendAt >= 0 ? state.ascendAt : state.phaseAt), BEAT);
+  view.variant = phase === "dying" && !eyeDeath ? 1 : voidVariantOf(phase);
+  view.crack = voidCrackGrow(state, time);
+  view.eclipse = voidEclipseLevel(state, time, still);
+  col.on = view.variant === 2;
+  colossusBodyPlace(state, time, still, CHEST);
+  col.x = CHEST.x;
+  col.y = CHEST.y;
+  col.step = CHEST.step;
+  col.split = BEAT.split;
+  col.eyeFly = BEAT.merge;
+  eyeFlight(BEAT.merge, CHEST, FLIGHT);
+  col.eyeX = FLIGHT.x;
+  col.eyeY = FLIGHT.y;
+  col.eyeScale = FLIGHT.scale;
+  // the growth spurts shake the body (never under reduced motion)
+  col.shake = !still && phase === "phase3" && BEAT.all < 1 ? GROW_SHAKE_PX : 0;
+  col.sinceHit = time - state.lastHitAt;
+  col.dying = eyeDeath;
+  col.deathCrack = 0;
+  col.deathShatter = 0;
+  const attack = state.attack;
+  col.charge = 0;
+  if (attack && !still && attack.kind === "gaze" && time < attack.endAt)
+    col.charge = time >= attack.hitAt ? 1 : clamp01((time - attack.at) / (attack.hitAt - attack.at));
+  if (eyeDeath) {
+    const age = time - state.phaseAt;
+    deathBeat(age, DEATH);
+    const stage = voidEyeDeathStage(age);
+    col.deathCrack = still ? STILL_CRACK : DEATH.crack;
+    col.deathShatter = still ? (stage === "cracks" ? 0 : stage === "shatter" ? STILL_SHATTER : 1) : DEATH.shatter;
+    if (stage === "flash") col.deathShatter = 1;
+  }
+  return view;
+};
 
 // ---- shards and bursts (analytic: no arrays) -----------------------------------------------------------------------------------
 const SHARD_COLORS = ["#2c2140", "#53407c", "#b3182c", "#d9a82a", "#ffffff", "#ff8a2a", "#9a7bff"];
@@ -671,24 +754,32 @@ const drawCollapse = (ctx: Ctx, state: VoidState, time: number, still: boolean) 
 };
 
 const ECLIPSE_X = 160;
+/** in phase 3 the sun forms above the colossus's crown, where its chest sways */
+const ECLIPSE_CROWN_Y = 30;
 const ECLIPSE_Y = 38;
 const ECLIPSE_FLOOR_Y = 128;
 const SUN_R = 36;
+/** the phase 3 eclipse is bigger */
+const ECLIPSE_BIG = 1.4;
 const drawEclipse = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
   const attack = state.attack;
   if (!attack || attack.kind !== "eclipse") return;
   const phase = voidAttackPhase(state, time);
   if (phase === "none") return;
   const spin = still ? 0 : time * 0.8;
+  const big = state.phase === "phase3" ? ECLIPSE_BIG : 1;
+  const sunX = state.phase === "phase3" && state.coreX > 0 ? state.coreX : ECLIPSE_X;
+  const sunTop = state.phase === "phase3" ? ECLIPSE_CROWN_Y : ECLIPSE_Y;
+  const sunR = Math.round(SUN_R * big);
   let radius: number;
-  let cy = ECLIPSE_Y;
+  let cy = sunTop;
   if (phase === "telegraph")
-    radius = Math.max(3, Math.round(SUN_R * ease((time - attack.at) / (attack.hitAt - attack.at))));
+    radius = Math.max(3, Math.round(sunR * ease((time - attack.at) / (attack.hitAt - attack.at))));
   else {
     const age = time - attack.hitAt;
-    radius = SUN_R + (still ? 0 : Math.round(clamp01(age / 0.3) * 8));
-    cy = ECLIPSE_Y + (still ? 0 : Math.round(clamp01(age / 0.22) ** 2 * (ECLIPSE_FLOOR_Y - ECLIPSE_Y)));
-    if (age > 0.5 && !still) radius = Math.round(SUN_R * clamp01(1 - (age - 0.5) / 0.7));
+    radius = sunR + (still ? 0 : Math.round(clamp01(age / 0.3) * 8));
+    cy = sunTop + (still ? 0 : Math.round(clamp01(age / 0.22) ** 2 * (ECLIPSE_FLOOR_Y - sunTop)));
+    if (age > 0.5 && !still) radius = Math.round(sunR * clamp01(1 - (age - 0.5) / 0.7));
   }
   // corona: alternating red and gold rays around the black disc
   const rays = 24;
@@ -699,7 +790,7 @@ const drawEclipse = (ctx: Ctx, state: VoidState, time: number, still: boolean) =
       rect(
         ctx,
         step > radius + 3 ? (i % 2 ? GOLD : "#d0381c") : "#ff8a2a",
-        ECLIPSE_X + Math.cos(angle) * step,
+        sunX + Math.cos(angle) * step,
         cy + Math.sin(angle) * step * 0.9,
         2,
         2,
@@ -707,12 +798,12 @@ const drawEclipse = (ctx: Ctx, state: VoidState, time: number, still: boolean) =
   }
   for (let row = -radius; row <= radius; row++) {
     const half = Math.round(Math.sqrt(Math.max(0, radius * radius - row * row)));
-    rect(ctx, VOID_BLACK, ECLIPSE_X - half, cy + row, half * 2 + 1, 1);
+    rect(ctx, VOID_BLACK, sunX - half, cy + row, half * 2 + 1, 1);
   }
   rect(
     ctx,
     "#1c1040",
-    ECLIPSE_X - Math.round(radius * 0.5),
+    sunX - Math.round(radius * 0.5),
     cy - Math.round(radius * 0.6),
     Math.max(1, Math.round(radius * 0.4)),
     1,
@@ -721,19 +812,18 @@ const drawEclipse = (ctx: Ctx, state: VoidState, time: number, still: boolean) =
     // the floor under it: ringed warnings spreading across the arena
     const hot = still || Math.floor(time * 7) % 2 === 0;
     for (let row = -44; row <= 44; row += 4) {
-      const half = Math.round(78 * Math.sqrt(1 - (row * row) / (45 * 45)));
-      rect(ctx, (row / 4) % 2 === 0 ? STRIPE_RED : STRIPE_VIOLET, ECLIPSE_X - half, ECLIPSE_FLOOR_Y + row, half * 2, 3);
+      const half = Math.round(78 * big * Math.sqrt(1 - (row * row) / (45 * 45)));
+      rect(ctx, (row / 4) % 2 === 0 ? STRIPE_RED : STRIPE_VIOLET, sunX - half, ECLIPSE_FLOOR_Y + row, half * 2, 3);
     }
-    ring(ctx, ECLIPSE_X, ECLIPSE_FLOOR_Y, 70, hot ? WARN : "#8a2a9a", 2, 0.1);
-    ring(ctx, ECLIPSE_X, ECLIPSE_FLOOR_Y, 40, hot ? "#8a2a9a" : WARN, 2, 0.14);
+    ring(ctx, sunX, ECLIPSE_FLOOR_Y, 70 * big, hot ? WARN : "#8a2a9a", 2, 0.1);
+    ring(ctx, sunX, ECLIPSE_FLOOR_Y, 40 * big, hot ? "#8a2a9a" : WARN, 2, 0.14);
   } else {
     // the crushing shockwave
     const age = time - attack.hitAt - 0.2;
     if (age > 0 && !still)
       for (let k = 0; k < 3; k++) {
-        const wave = (age - k * 0.09) * 300;
-        if (wave > 0)
-          ring(ctx, ECLIPSE_X, ECLIPSE_FLOOR_Y, wave, k === 0 ? WHITE : k === 1 ? GOLD : "#d0381c", 3, 0.04);
+        const wave = (age - k * 0.09) * 300 * big;
+        if (wave > 0) ring(ctx, sunX, ECLIPSE_FLOOR_Y, wave, k === 0 ? WHITE : k === 1 ? GOLD : "#d0381c", 3, 0.04);
       }
   }
 };
@@ -840,10 +930,45 @@ const drawSummonZone = (ctx: Ctx, state: VoidState, time: number, still: boolean
 };
 const SUMMON_SLOTS = 3;
 const BOSS_SHADOW_R = [24, 14];
+/** the orbiting debris circles the true form's body at this height */
+const DEBRIS_CY = 100;
 /** everything that lies on the floor of the Sanctum: warnings, beam, pits, the sun, light, the boss's shadow */
+/** the transformation shockwave that throws the raiders back (engine fields pushbackAt / pushbackX / pushbackY, all optional) */
+const drawPushback = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
+  const raw = state as unknown as Record<string, unknown>;
+  const at = typeof raw.pushbackAt === "number" ? raw.pushbackAt : -99;
+  const radius = still ? -1 : pushbackRadius(time - at);
+  if (radius < 0) return;
+  const ox = typeof raw.pushbackX === "number" ? raw.pushbackX : voidBossX(state);
+  const oy = typeof raw.pushbackY === "number" ? raw.pushbackY : VOID_FEET_Y + 8;
+  const fade = 1 - radius / PUSHBACK_REACH;
+  ring(ctx, ox, oy, radius, WHITE, 3, 0.03);
+  ring(ctx, ox, oy, radius * 0.86, GOLD_HI, 2, 0.04);
+  ring(ctx, ox, oy, radius * 0.7, "#d0381c", 2, 0.05);
+  // dust kicked along the floor, flying with the wave
+  for (let i = 0; i < 40; i++) {
+    const angle = hash01(i + 1300) * Math.PI * 2;
+    const dist = radius * (0.55 + hash01(i + 1400) * 0.45);
+    rect(
+      ctx,
+      i % 3 ? "#8a6a5a" : "#4a2536",
+      ox + Math.cos(angle) * dist,
+      oy + Math.sin(angle) * dist * SQUASH - fade * 6 * hash01(i + 1500),
+      2 + (i % 2),
+      2,
+    );
+  }
+};
+
 export const drawVoidFloorFx = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
+  drawPushback(ctx, state, time, still);
   drawRevealLight(ctx, state, time, still);
   const pose = voidBossPose(state, time, still);
+  if (pose.visible && pose.form === 3 && state.phase === "phase2") {
+    // the fullness of phase 2: the pulsing rune circle under the boss and the far half of its orbiting debris
+    drawBossRuneCircle(ctx, pose.x, VOID_FEET_Y + 10, time, still, 1.25);
+    drawDebrisRing(ctx, pose.x, DEBRIS_CY, time, still, false);
+  }
   if (pose.visible) {
     const rx = pose.form === 3 ? BOSS_SHADOW_R[0] + 22 : BOSS_SHADOW_R[0] + 10;
     const squeeze = pose.lift > 0 ? Math.max(0.4, 1 - pose.lift / 120) : 1;
@@ -859,6 +984,7 @@ export const drawVoidFloorFx = (ctx: Ctx, state: VoidState, time: number, still:
     else if (attack.kind === "collapse") drawCollapse(ctx, state, time, still);
     else if (attack.kind === "eclipse") drawEclipse(ctx, state, time, still);
   }
+  if (state.phase === "phase3" || state.phase === "dying") drawColossusFloor(ctx, state, time, still);
   if (attack?.kind === "blink") drawBlink(ctx, state, time, still);
   if (attack?.kind === "summon") drawSummonZone(ctx, state, time, still);
   drawEyes(ctx, state, time, still);
@@ -870,7 +996,7 @@ export const drawVoidFloorFx = (ctx: Ctx, state: VoidState, time: number, still:
   const roarAge = time - state.phaseAt;
   if (!still && state.phase === "phase2" && roarAge < VOID_ROAR_S)
     ring(ctx, voidBossX(state), VOID_FEET_Y + 2, ease(roarAge / VOID_ROAR_S) * 110, VIOLET_HI, 2, 0.05);
-  if (!still && state.phase === "phase3" && roarAge < VOID_TRUE_FORM_S) {
+  if (!still && state.phase === "phase2" && roarAge < VOID_TRUE_FORM_S) {
     const x = voidBossX(state);
     for (let i = 0; i < 10; i++) {
       const height = 20 + hash01(i + 40) * 60 * clamp01(roarAge / 1.2);
@@ -892,64 +1018,43 @@ const SILHOUETTE = "#0a0418";
 const drawSprite = (ctx: Ctx, sprite: HTMLCanvasElement, cx: number, bottom: number) =>
   ctx.drawImage(sprite, Math.round(cx - sprite.width / 2), Math.round(bottom - sprite.height));
 
-/** the phase 2 veil tearing (0..1): cyan rips race across the figure, shreds fly, then the torn form stands */
-const drawTearing = (ctx: Ctx, state: VoidState, time: number, still: boolean, age: number) => {
-  const tick = clamp01(age / VOID_ROAR_S);
-  const x = voidBossX(state);
-  const bottom = bottomOf(1);
-  const shake = still ? 0 : (Math.floor(time * 32) % 2 ? 1 : -1) * 2;
-  if (tick < 0.55 && !still) {
-    drawSprite(ctx, voidBossSprite(1, Math.floor(time * 3) % 4), x + shake, bottom);
-    for (let rip = 0; rip < 5; rip++) {
-      const reach = clamp01(tick * 2.2 - rip * 0.12);
-      const sx = x - 20 + rip * 10,
-        sy = bottom - 70;
-      for (let step = 0; step < reach * 40; step++)
-        rect(
-          ctx,
-          step % 4 === 0 ? CYAN_HI : CYAN,
-          sx + step * 0.35 * (rip % 2 ? 1 : -1) + shake,
-          sy + step * 1.4,
-          1,
-          1,
-        );
-    }
-    return;
+/** the veil tears: cyan rips race across the figure (`tick` 0..1 of the rip stage) */
+const drawVeilRips = (ctx: Ctx, x: number, bottom: number, tick: number, shake: number) => {
+  for (let rip = 0; rip < 5; rip++) {
+    const reach = clamp01(tick * 2.2 - rip * 0.12);
+    const sx = x - 30 + rip * 15,
+      sy = bottom - 100;
+    for (let step = 0; step < reach * 50; step++)
+      rect(ctx, step % 4 === 0 ? CYAN_HI : CYAN, sx + step * 0.5 * (rip % 2 ? 1 : -1) + shake, sy + step * 1.6, 1, 1);
   }
-  drawSprite(
-    ctx,
-    voidBossSprite(2, still ? 0 : Math.floor(time * 3) % 4),
-    x + (still ? 0 : shake * (1 - tick)),
-    bottom,
-  );
-  if (!still)
-    burst(
-      ctx,
-      x,
-      bottom - 45,
-      (tick - 0.55) * VOID_ROAR_S,
-      36,
-      110,
-      60,
-      0.8,
-      ["#1d1040", "#3c2878", "#120a28", CYAN, "#d8fff4"],
-      501,
-    );
 };
 
+/** phase 2: the veil tears, the torn figure shakes, a silhouette grows, the wings unfold and the crown ignites (the TRUE FORM) */
+const RIP_END = 0.3;
+const TORN_END = 0.6;
+const GROW_S = 0.9;
+const UNFOLD_FROM = 1.45;
+const UNFOLD_S = 0.55;
+const IGNITE_AT = 2;
 const drawTransform = (ctx: Ctx, state: VoidState, time: number, still: boolean, age: number) => {
   const x = voidBossX(state);
   const full = voidBossSprite(3, still ? 0 : Math.floor(time * 3) % 4);
   const bottom = bottomOf(3);
   const shake = still ? 0 : Math.floor(time * 30) % 2 ? 1 : -1;
-  if (age < 0.5 && !still) {
-    drawSprite(ctx, voidBossSprite(2, Math.floor(time * 3) % 4), x + shake * 2, bottomOf(2));
+  if (!still && age < TORN_END) {
+    if (age < RIP_END) {
+      drawSprite(ctx, voidBossSprite(1, Math.floor(time * 3) % 4), x + shake * 2, bottomOf(1));
+      drawVeilRips(ctx, x, bottomOf(1), age / RIP_END, shake * 2);
+    } else {
+      drawSprite(ctx, voidBossSprite(2, Math.floor(time * 3) % 4), x + shake * 3, bottomOf(1));
+      burst(ctx, x, bottomOf(1) - 70, age - RIP_END, 26, 100, 60, 0.4, ["#1d1040", "#3c2878", CYAN, CYAN_HI], 501);
+    }
     return;
   }
-  const grow = clamp01((age - 0.5) / 0.9);
-  const unfold = clamp01((age - 1.4) / 0.6);
+  const grow = clamp01((age - TORN_END) / GROW_S);
+  const unfold = clamp01((age - UNFOLD_FROM) / UNFOLD_S);
   const flat = flatOf(full, SILHOUETTE);
-  if (still || age >= 2) {
+  if (still || age >= IGNITE_AT) {
     drawSprite(ctx, full, x, bottom);
   } else if (unfold <= 0) {
     // a silhouette growing out of the dark, outlined in cold light
@@ -975,44 +1080,44 @@ const drawTransform = (ctx: Ctx, state: VoidState, time: number, still: boolean,
       full.height,
     );
   }
-  if (age >= 2 - 0.01 && age < VOID_TRUE_FORM_S && !still) {
+  if (age >= IGNITE_AT - 0.01 && age < VOID_TRUE_FORM_S && !still) {
     // the crown ignites: gold flames burst off the thorns
-    burst(ctx, x, bottom - 112, age - 2, 30, 60, -50, 0.5, [GOLD, GOLD_HI, WHITE, "#ff8a2a"], 612);
+    burst(ctx, x, bottom - 170, age - IGNITE_AT, 36, 70, -50, 0.5, [GOLD, GOLD_HI, WHITE, "#ff8a2a"], 612);
   }
+};
+
+/** phase 3 begins: the body grows in the back layer; here the burst rings of the sky eye hitting its chest, then the hands */
+const ASCEND = { rise: 0, merge: 0, split: 0, all: 0 };
+const ASCEND_CHEST: ColossusPlace = { x: 0, y: 0, step: 0 };
+const RING_AT = 0.5;
+const RING_LEN = 0.3;
+const drawAscend = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
+  const age = time - (state.ascendAt >= 0 ? state.ascendAt : state.phaseAt);
+  if (!still && age < VOID_ASCEND_S) {
+    ascendBeat(age, ASCEND);
+    colossusBodyPlace(state, time, still, ASCEND_CHEST);
+    const bloom = (ASCEND.all - RING_AT) / RING_LEN;
+    if (bloom > 0 && bloom < 1)
+      for (let k = 0; k < 3; k++) {
+        const radius = (bloom - k * 0.12) * 330;
+        if (radius > 0)
+          ring(ctx, ASCEND_CHEST.x, ASCEND_CHEST.y, radius, k === 0 ? WHITE : k === 1 ? GOLD_HI : "#d0381c", 2, 0.04);
+      }
+  }
+  drawColossusEnts(ctx, state, time, still);
 };
 
 const drawDying = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
   const age = time - state.phaseAt;
-  const x = voidBossX(state);
-  const stage = voidDeathStage(age);
-  const pose = voidBossPose(state, time, still);
-  const cx = x,
-    cy = bottomOf(3) - 60;
-  if (pose.visible && pose.sprite) {
-    drawSprite(ctx, pose.sprite, pose.x, pose.bottom);
-    if (!still && stage !== "flash") {
-      // beams of light leaking out of the cracks
-      const power = stage === "cracks" ? voidDeathStageProgress(age) * 0.5 : 0.5 + voidDeathStageProgress(age) * 0.5;
-      for (let i = 0; i < 9; i++) {
-        const angle = (i / 9) * Math.PI * 2 + age * 0.4;
-        const length = 10 + power * 50 * hash01(i + 20);
-        for (let step = 8; step < length; step += 2)
-          rect(ctx, step % 4 ? GOLD_HI : WHITE, cx + Math.cos(angle) * step, cy + Math.sin(angle) * step * 0.9, 2, 1);
-      }
-    }
-    return;
+  const stage: string = state.dyingEye ? voidEyeDeathStage(age) : voidDeathStage(age);
+  if (state.dyingEye) drawColossusEnts(ctx, state, time, still);
+  else {
+    const pose = voidBossPose(state, time, still);
+    if (pose.visible && pose.sprite) drawSprite(ctx, pose.sprite, pose.x, pose.bottom);
   }
-  if (stage === "flash" && !still) {
-    const pt = voidDeathStageProgress(age);
-    const radius = 6 + ease(pt) * 44;
-    for (let row = -radius; row <= radius; row += 2) {
-      const half = Math.round(Math.sqrt(Math.max(0, radius * radius - row * row)));
-      rect(ctx, pt > 0.55 ? GOLD_HI : WHITE, cx - half, cy + row, half * 2, 2);
-    }
-    ring(ctx, cx, cy, ease(pt) * 150, WHITE, 3, 0.04);
-    ring(ctx, cx, cy, ease(pt * 0.8) * 120, GOLD, 2, 0.05);
-    if (pt > 0.4)
-      burst(ctx, cx, cy, (pt - 0.4) * 2.2, 90, 170, 60, 1.4, ["#ffffff", GOLD_HI, GOLD, VIOLET_HI, CYAN], 702);
+  if (stage === "flash") {
+    const flash = still ? 0.5 : state.dyingEye ? voidEyeDeathProgress(age) : voidDeathStageProgress(age);
+    drawColossusFlash(ctx, state, flash, time, still);
   }
 };
 
@@ -1023,7 +1128,7 @@ const OUTLINE_DIRS: readonly (readonly [number, number])[] = [
   [0, 1],
 ];
 const MOTES = 16;
-const EYES_TRUE = [5, 11];
+const EYES_TRUE = [-9, 10];
 const EYES_VEILED = [-8, 8];
 const MENACE_S = 0.7;
 const SHIELD_DOTS = 44;
@@ -1047,7 +1152,7 @@ const drawBossAmbient = (ctx: Ctx, state: VoidState, pose: VoidBossPose, time: n
     }
   const menace = time - ex.menaceAt;
   if (!still && menace >= 0 && menace < MENACE_S) {
-    const eyeY = pose.bottom - high + (pose.form === 3 ? 41 : 39);
+    const eyeY = pose.bottom - high + (pose.form === 3 ? 57 : 39);
     const xs = pose.form === 3 ? EYES_TRUE : EYES_VEILED;
     for (const dx of xs) {
       rect(ctx, WARN, pose.x + dx - 3, eyeY - 1, 7, 4);
@@ -1079,8 +1184,8 @@ export const drawVoidBoss = (ctx: Ctx, state: VoidState, time: number, still: bo
   if (!BOSS_VISIBLE.has(state.phase)) return;
   const age = time - state.phaseAt;
   if (state.phase === "dying") return drawDying(ctx, state, time, still);
-  if (state.phase === "phase2" && age < VOID_ROAR_S) return drawTearing(ctx, state, time, still, age);
-  if (state.phase === "phase3" && age < VOID_TRUE_FORM_S) return drawTransform(ctx, state, time, still, age);
+  if (state.phase === "phase3") return drawAscend(ctx, state, time, still);
+  if (state.phase === "phase2" && age < VOID_TRUE_FORM_S) return drawTransform(ctx, state, time, still, age);
   const pose = voidBossPose(state, time, still);
   if (pose.visible && pose.sprite) {
     const ex = extrasOf(state);
@@ -1099,6 +1204,7 @@ export const drawVoidBoss = (ctx: Ctx, state: VoidState, time: number, still: bo
     }
     drawSprite(ctx, pose.sprite, pose.x, pose.bottom);
     drawBossAmbient(ctx, state, pose, time, still);
+    if (pose.form === 3 && state.phase === "phase2") drawDebrisRing(ctx, pose.x, DEBRIS_CY, time, still, true);
   }
   // the cast orb of the eclipse and the glow of a beam charging, drawn on the boss itself
   const attack = state.attack;
@@ -1133,6 +1239,7 @@ const drawVoiceCaption = (ctx: Ctx, state: VoidState, time: number, still: boole
 };
 
 const NAME = "THE VEILED ONE";
+const NAME_AWAKE = "THE VOID AWAKENED";
 const SUBTITLE = "THE ONE BEHIND IT ALL";
 const drawNameCard = (ctx: Ctx, state: VoidState, time: number, still: boolean) => {
   if (state.phase !== "reveal") return;
@@ -1224,8 +1331,9 @@ const heart = (ctx: Ctx, x: number, y: number) => {
 };
 
 const impactPoint = (state: VoidState, ex: VoidExtras, out: { x: number; y: number }) => {
-  out.x = ex.lastHitX > 0 ? ex.lastHitX : voidBossX(state) - 16;
-  out.y = ex.lastHitY > 0 ? ex.lastHitY : bottomOf(1) - 72;
+  const colossus = state.phase === "phase3";
+  out.x = ex.lastHitX > 0 ? ex.lastHitX : colossus ? state.coreX : voidBossX(state) - 16;
+  out.y = colossus ? COLOSSUS_CHEST_Y : ex.lastHitY > 0 ? ex.lastHitY : bottomOf(1) - 72;
 };
 const IMPACT = { x: 0, y: 0 };
 
@@ -1320,7 +1428,7 @@ export const drawVoidHits = (
         IMPACT.y - 14 - (still ? 0 : num.rise),
         crit ? GOLD_HI : WHITE,
         {
-          scale: num.scale,
+          scale: num.scale + (state.phase === "phase3" ? COLOSSUS_NUMBER_BONUS : 0),
           align: "center",
           shadow: crit ? "#5a2a00" : "#2a0a3a",
           outline: true,
@@ -1420,11 +1528,13 @@ export const drawVoidBar = (ctx: Ctx, state: VoidState, time: number, still: boo
   const pips = phasePips(state.phase);
   const colors = BAR_PHASE_COLORS[Math.max(0, pips - 1)];
   const dying = state.phase === "dying";
+  // phase 3 wears a red-and-gold frame
+  const awake = pips >= 3 && !dying;
   rect(ctx, INK, panelX - 2, panelY - 2, panelW + 4, PANEL_H + 4);
-  rect(ctx, "#3a2c78", panelX - 1, panelY - 1, panelW + 2, PANEL_H + 2);
-  rect(ctx, "#6a58c0", panelX - 1, panelY - 1, panelW + 2, 1);
-  rect(ctx, "#150c2e", panelX, panelY, panelW, PANEL_H);
-  rect(ctx, "#1f1342", panelX + 1, panelY + 1, panelW - 2, 1);
+  rect(ctx, awake ? GOLD_SH : "#3a2c78", panelX - 1, panelY - 1, panelW + 2, PANEL_H + 2);
+  rect(ctx, awake ? GOLD_HI : "#6a58c0", panelX - 1, panelY - 1, panelW + 2, 1);
+  rect(ctx, awake ? "#2a0c14" : "#150c2e", panelX, panelY, panelW, PANEL_H);
+  rect(ctx, awake ? "#4a1420" : "#1f1342", panelX + 1, panelY + 1, panelW - 2, 1);
   // gold corners
   for (let corner = 0; corner < 4; corner++) {
     const cx = corner % 2 ? panelX + panelW - 2 : panelX - 2,
@@ -1445,7 +1555,9 @@ export const drawVoidBar = (ctx: Ctx, state: VoidState, time: number, still: boo
   rect(ctx, VOID_BLACK, ex + look, panelY - 5, 1, 5);
   rect(ctx, WHITE, ex - 2 + look, panelY - 5, 1, 1);
   // name, percent, the three phase pips
-  drawPixelText(ctx, NAME, panelX + 8, panelY + 4, dying ? "#c4c9d4" : WHITE, { shadow: INK });
+  drawPixelText(ctx, awake ? NAME_AWAKE : NAME, panelX + 8, panelY + 4, dying ? "#c4c9d4" : awake ? GOLD_HI : WHITE, {
+    shadow: INK,
+  });
   const pct = dying ? "FALLEN" : `${Math.ceil(voidHpFrac(state) * 100)}%`;
   drawPixelText(ctx, pct, panelX + panelW - 30, panelY + 4, dying ? "#8d93a0" : GOLD_HI, {
     shadow: INK,

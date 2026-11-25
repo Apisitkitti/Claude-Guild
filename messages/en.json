@@ -456,6 +456,7 @@
   "void_banner_reveal": "The true master awakens: The Veiled One!",
   "void_banner_phase2": "The veil tears!",
   "void_banner_true_form": "TRUE FORM",
+  "void_banner_awakens": "THE VOID AWAKENS",
   "void_banner_slain": "{tag} and the raiders of {project} slew the Veiled One!",
   "void_banner_retreat": "The Veiled One slips back into the void…",
   "void_log_slain_detail": "The Veiled One slain ({count} so far)",

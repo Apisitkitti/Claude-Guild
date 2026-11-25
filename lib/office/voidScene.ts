@@ -7,16 +7,19 @@
  * The front layer keeps to the top band and the far bottom corners, so it never covers an adventurer's body.
  */
 import { VIEW_W, VIEW_X0, WORLD_H } from "./layout";
+import { drawAtmosphereBack } from "./voidAtmosphere";
+import { drawColossusBack, type ColossusView } from "./voidColossus";
 import { VOID_ARENA_X0, VOID_ARENA_Y0, VOID_HOME_X, VOID_FEET_Y } from "./voidFight";
-import { noise2 } from "./voidVisualLogic";
+import { COLOSSUS_EYE_X, COLOSSUS_EYE_Y, noise2 } from "./voidVisualLogic";
 
 type Ctx = CanvasRenderingContext2D;
+/** 0 = the veiled arena (phase 1), 1 = TRUE FORM (phase 2: blood-red sky, burning eye), 2 = the colossus (phase 3: starfield, face, shards) */
 export type VoidVariant = 0 | 1 | 2;
 
 const TILE = 30;
 const BLOCK = 3;
 const ISLAND = { cx: 144, cy: 152, rx: 252, ry: 112 };
-const EYE = { x: 150, y: 44 };
+const EYE = { x: COLOSSUS_EYE_X, y: COLOSSUS_EYE_Y };
 const ARENA_CX = 160;
 const ARENA_CY = 130;
 const SQUASH = 0.62;
@@ -24,24 +27,24 @@ const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
 const SKY: string[][] = [
   ["#04010a", "#080413", "#0e0820", "#160c30", "#1e1040"],
-  ["#04010a", "#080413", "#100822", "#1a0d36", "#26144c"],
+  ["#0a0103", "#1a0408", "#340910", "#5a1218", "#8a2a1c"],
   ["#0a0103", "#1a0408", "#340910", "#5a1218", "#8a2a1c"],
 ];
 const STAR_COLORS: string[][] = [
   ["#5a4a98", "#9a8ae0", "#cfc8ff"],
-  ["#5a4a98", "#9a8ae0", "#d8fff4"],
+  ["#a04a58", "#e8a070", "#ffe0a0"],
   ["#a04a58", "#e8a070", "#ffe0a0"],
 ];
 /** slab tones per variant: base, light bevel, shadow bevel, deep line */
 const SLAB: string[][] = [
   ["#2a2150", "#43377a", "#1c1538", "#120c26"],
-  ["#2a2150", "#43377a", "#1c1538", "#120c26"],
+  ["#2e1624", "#4a2536", "#1c0c16", "#10060c"],
   ["#2e1624", "#4a2536", "#1c0c16", "#10060c"],
 ];
 const SLAB_ALT: string[] = ["#322762", "#2e1a2c", "#2e1a2c"];
-const RUNE_A: string[] = ["#2a8a9a", "#2a8a9a", "#a03040"];
-const RUNE_B: string[] = ["#6a48c8", "#6a48c8", "#d08a30"];
-const GLYPH: string[] = ["#c8a040", "#c8a040", "#ffd070"];
+const RUNE_A: string[] = ["#2a8a9a", "#a03040", "#a03040"];
+const RUNE_B: string[] = ["#6a48c8", "#d08a30", "#d08a30"];
+const GLYPH: string[] = ["#c8a040", "#ffd070", "#ffd070"];
 const ROCK = ["#150f2a", "#231a40", "#34285c"];
 const CHAIN = ["#3a3a5a", "#1c1c34", "#6a6a9a"];
 
@@ -101,12 +104,12 @@ const IRIS = 46;
 const eyeCache = new Map<string, HTMLCanvasElement | null>();
 const EYE_TONES: string[][] = [
   ["#0b061c", "#1a1236", "#2a1e56", "#3c2c78"],
-  ["#0b061c", "#1a1236", "#2a1e56", "#3c2c78"],
+  ["#1a0408", "#3a0a12", "#5a1420", "#7a2030"],
   ["#1a0408", "#3a0a12", "#5a1420", "#7a2030"],
 ];
 const IRIS_TONES: string[][] = [
   ["#0d5a58", "#1d9a8c", "#5ff5d8", "#d8fff4"],
-  ["#0d5a58", "#1d9a8c", "#5ff5d8", "#d8fff4"],
+  ["#7a1010", "#d0381c", "#ffb030", "#fff0a0"],
   ["#7a1010", "#d0381c", "#ffb030", "#fff0a0"],
 ];
 const bakeEye = (variant: VoidVariant): { sclera: HTMLCanvasElement | null; iris: HTMLCanvasElement | null } => {
@@ -153,7 +156,7 @@ const bakeSclera = (variant: VoidVariant): HTMLCanvasElement | null => {
     for (let step = 0; step < 14; step++) {
       vx += vein < 4 ? 3 : -3;
       vy += (noise2(vein, step) - 0.5) * 4 + (mid - vy) * 0.08;
-      rect(made.c, variant === 2 ? "#8a2a2a" : "#4a3a90", vx, vy, 1, 1);
+      rect(made.c, variant >= 1 ? "#8a2a2a" : "#4a3a90", vx, vy, 1, 1);
     }
   }
   return made.cv;
@@ -178,22 +181,33 @@ const bakeIris = (variant: VoidVariant): HTMLCanvasElement | null => {
   return made.cv;
 };
 
-const drawEye = (ctx: Ctx, time: number, still: boolean, variant: VoidVariant) => {
+const drawEye = (
+  ctx: Ctx,
+  time: number,
+  still: boolean,
+  variant: VoidVariant,
+  eyeX: number,
+  eyeY: number,
+  scale: number,
+) => {
   const { sclera, iris } = bakeEye(variant);
   if (!sclera || !iris) return;
-  ctx.drawImage(sclera, EYE.x - EYE_W / 2, EYE.y - EYE_H / 2);
-  const ox = still ? 0 : Math.round(Math.sin(time * 0.25) * 24),
-    oy = still ? 0 : Math.round(Math.cos(time * 0.19) * 6);
-  ctx.drawImage(iris, EYE.x - IRIS / 2 + ox, EYE.y - IRIS / 2 + oy);
+  const wide = Math.max(2, Math.round(EYE_W * scale)),
+    high = Math.max(2, Math.round(EYE_H * scale));
+  ctx.drawImage(sclera, Math.round(eyeX - wide / 2), Math.round(eyeY - high / 2), wide, high);
+  const ox = still ? 0 : Math.round(Math.sin(time * 0.25) * 24 * scale),
+    oy = still ? 0 : Math.round(Math.cos(time * 0.19) * 6 * scale);
+  const irisPx = Math.max(2, Math.round(IRIS * scale));
+  ctx.drawImage(iris, Math.round(eyeX - irisPx / 2 + ox), Math.round(eyeY - irisPx / 2 + oy), irisPx, irisPx);
   // the slowly turning rune ring around the iris
   const turn = still ? 0 : time * 0.35;
   for (let tick = 0; tick < 14; tick++) {
     const angle = turn + (tick / 14) * Math.PI * 2;
     rect(
       ctx,
-      variant === 2 ? "#ffb030" : "#5ff5d8",
-      EYE.x + ox + Math.cos(angle) * 30,
-      EYE.y + oy + Math.sin(angle) * 30 * 0.8,
+      variant >= 1 ? "#ffb030" : "#5ff5d8",
+      eyeX + ox + Math.cos(angle) * 30 * scale,
+      eyeY + oy + Math.sin(angle) * 30 * 0.8 * scale,
       tick % 3 === 0 ? 2 : 1,
       tick % 3 === 0 ? 2 : 1,
     );
@@ -212,7 +226,7 @@ const chain = (ctx: Ctx, x: number, y0: number, y1: number, seed: number) => {
 };
 
 const crystal = (ctx: Ctx, x: number, y: number, high: number, cyan: boolean, variant: VoidVariant) => {
-  const warm = variant === 2;
+  const warm = variant >= 1;
   const body = warm ? "#c8402a" : cyan ? "#2ab8b0" : "#8a5ae0";
   const hi = warm ? "#ffd070" : cyan ? "#d8fff4" : "#d8c4ff";
   const sh = warm ? "#6a1a18" : cyan ? "#0f6a68" : "#4a2a90";
@@ -291,13 +305,13 @@ const island = (ctx: Ctx, variant: VoidVariant) => {
         tileRow = Math.round((gy - VOID_ARENA_Y0) / TILE);
       const inArena = tileCol >= 0 && tileCol < 6 && tileRow >= 0 && tileRow < 4;
       const edge = Math.hypot((gx + TILE / 2 - ISLAND.cx) / ISLAND.rx, (gy + TILE / 2 - ISLAND.cy) / ISLAND.ry);
-      const lost = !inArena && edge > 0.78 && noise2(tileCol + 40, tileRow + 40) < (variant === 2 ? 0.62 : 0.32);
+      const lost = !inArena && edge > 0.78 && noise2(tileCol + 40, tileRow + 40) < (variant === 0 ? 0.32 : 0.62);
       if (lost) continue;
       for (let ly = 0; ly < TILE; ly += BLOCK)
         for (let lx = 0; lx < TILE; lx += BLOCK) {
           const bx = gx + lx,
             by = gy + ly;
-          const bite = noise2(bx >> 2, by >> 2) * (variant === 2 ? 0.14 : 0.07);
+          const bite = noise2(bx >> 2, by >> 2) * (variant === 0 ? 0.07 : 0.14);
           if (!insideIsland(bx + 1, by + 1, bite)) continue;
           rect(ctx, slabColor(tileCol, tileRow, lx, ly, variant), bx, by, BLOCK, BLOCK);
         }
@@ -309,7 +323,7 @@ const island = (ctx: Ctx, variant: VoidVariant) => {
     if (Math.abs(nx) >= 1) continue;
     const bottom = ISLAND.cy + ISLAND.ry * Math.sqrt(1 - nx * nx);
     if (bottom > WORLD_H) continue;
-    const drop = 6 + noise2(x >> 1, 9) * 16 * (variant === 2 ? 1.5 : 1);
+    const drop = 6 + noise2(x >> 1, 9) * 16 * (variant === 0 ? 1 : 1.5);
     for (let y = Math.floor(bottom); y < bottom + drop; y++)
       rect(ctx, ROCK[(y - Math.floor(bottom)) % 4 === 0 ? 1 : 0], x, y, 1, 1);
   }
@@ -328,7 +342,7 @@ const ellipsePoints = (
   const steps = Math.round(rx * 5);
   for (let i = 0; i < steps; i++) {
     const angle = (i / steps) * Math.PI * 2;
-    if (variant === 2 && noise2(seed, i >> 3) < 0.4) continue;
+    if (variant >= 1 && noise2(seed, i >> 3) < 0.4) continue;
     if (i % gapEvery < gapEvery - 2)
       rect(ctx, color, cx + Math.cos(angle) * rx, cy + Math.sin(angle) * rx * SQUASH, 1, 1);
   }
@@ -348,7 +362,7 @@ const runes = (ctx: Ctx, variant: VoidVariant) => {
     const angle = (i / 12) * Math.PI * 2 + 0.26;
     const gx = ARENA_CX + Math.cos(angle) * 80,
       gy = ARENA_CY + Math.sin(angle) * 80 * SQUASH;
-    if (variant === 2 && i % 3 === 0) continue;
+    if (variant >= 1 && i % 3 === 0) continue;
     rect(ctx, SLAB[variant][3], gx - 3, gy - 2, 7, 5);
     rect(ctx, GLYPH[variant], gx - 1, gy - 2, 3, 1);
     rect(ctx, GLYPH[variant], gx, gy - 2, 1, 5);
@@ -364,7 +378,18 @@ const runes = (ctx: Ctx, variant: VoidVariant) => {
   rect(ctx, GLYPH[variant], ARENA_CX - 1, ARENA_CY - 1, 3, 3);
 };
 
-/** the baked back layer of a variant (draw once per frame at VIEW_X0, 0) */
+/** the baked floor of a variant: the island, its runes and (veiled / true form) the crystals along the far rim */
+const buildVoidFloor = (ctx: Ctx, variant: VoidVariant) => {
+  island(ctx, variant);
+  runes(ctx, variant);
+  for (let i = 0; i < 9; i++) {
+    const x = -70 + i * 50 + Math.round(noise2(i, 5) * 20);
+    const edge = ISLAND.cy - ISLAND.ry * Math.sqrt(Math.max(0, 1 - ((x - ISLAND.cx) / ISLAND.rx) ** 2));
+    crystal(ctx, x, Math.round(edge) + 8, 10 + Math.round(noise2(i, 6) * 12), i % 2 === 0, variant);
+  }
+};
+
+/** the baked back layer of a variant (draw once per frame at VIEW_X0, 0); the colossus's is just the sky: its face and floor shards are drawn live */
 export const buildVoidBack = (ctx: Ctx, variant: VoidVariant) => {
   skyAndStars(ctx, variant);
   // chains rising from behind the island into the dark
@@ -379,14 +404,7 @@ export const buildVoidBack = (ctx: Ctx, variant: VoidVariant) => {
     const edge = ISLAND.cy - ISLAND.ry * Math.sqrt(Math.max(0, 1 - ((x - ISLAND.cx) / ISLAND.rx) ** 2));
     chain(ctx, x, 0, Math.round(edge) + 6, seed);
   }
-  island(ctx, variant);
-  runes(ctx, variant);
-  // crystals along the far rim
-  for (let i = 0; i < 9; i++) {
-    const x = -70 + i * 50 + Math.round(noise2(i, 5) * 20);
-    const edge = ISLAND.cy - ISLAND.ry * Math.sqrt(Math.max(0, 1 - ((x - ISLAND.cx) / ISLAND.rx) ** 2));
-    crystal(ctx, x, Math.round(edge) + 8, 10 + Math.round(noise2(i, 6) * 12), i % 2 === 0, variant);
-  }
+  if (variant < 2) buildVoidFloor(ctx, variant);
 };
 
 /** the baked front layer: the top band and the far bottom corners only */
@@ -473,7 +491,7 @@ for (let crack = 0; crack < CRACKS; crack++) {
 }
 const CRACK_COLORS: string[][] = [
   ["#1d9a8c", "#d8fff4"],
-  ["#1d9a8c", "#d8fff4"],
+  ["#d0381c", "#ffd070"],
   ["#d0381c", "#ffd070"],
 ];
 
@@ -483,49 +501,70 @@ export interface VoidBackView {
   crack: number;
   /** 0..1: the eclipse darkening of the background (the back layers only) */
   eclipse: number;
+  /** the colossus's face, eye, shards and death (phase 3) */
+  colossus: ColossusView;
 }
 
-/** floor 4 behind everything: sky, eye, floating chunks, the island, glowing cracks, falling debris, the eclipse */
+const floors: (HTMLCanvasElement | null | undefined)[] = [];
+const floorOf = (variant: VoidVariant): HTMLCanvasElement | null => {
+  if (floors[variant] === undefined) floors[variant] = layerOf((target) => buildVoidFloor(target, variant));
+  return floors[variant] ?? null;
+};
+
+/** floor 4 behind everything: sky, eye, the colossus, floating chunks, the island or its shards, cracks, the air, the eclipse */
 export const drawVoidBack = (ctx: Ctx, time: number, still: boolean, view: VoidBackView) => {
   const { variant } = view;
   if (backs[variant] === undefined) backs[variant] = layerOf((target) => buildVoidBack(target, variant));
   const cached = backs[variant];
   if (cached) ctx.drawImage(cached, VIEW_X0, 0);
   else buildVoidBack(ctx, variant);
-  drawEye(ctx, time, still, variant);
-  // twinkling stars drifting slowly (two parallax speeds)
-  if (!still)
-    for (let i = 0; i < 34; i++) {
-      const speed = i % 2 ? 2.2 : 0.9;
-      const x = VIEW_X0 + ((noise2(i, 11) * VIEW_W + time * speed) % VIEW_W);
-      if (Math.floor(time * 2 + i) % 3 === 0) rect(ctx, STAR_COLORS[variant][2], x, 4 + noise2(i, 12) * 40, 1, 1);
-    }
+  if (variant === 2) {
+    twinkle(ctx, time, still, variant);
+    drawAtmosphereBack(ctx, time, still, true, "far");
+    if (view.colossus.eyeFly < 1)
+      drawEye(ctx, time, still, 1, view.colossus.eyeX, view.colossus.eyeY, view.colossus.eyeScale);
+    // the shards are cut from the phase 2 island, so the floor is whole when the ascend begins
+    drawColossusBack(ctx, view.colossus, time, still, floorOf(1));
+    drawChunks(ctx, time, still, 1);
+    drawAtmosphereBack(ctx, time, still, true, "near");
+  } else {
+    drawEye(ctx, time, still, variant, EYE.x, EYE.y, 1);
+    twinkle(ctx, time, still, variant);
+    drawChunks(ctx, time, still, variant);
+    if (view.crack > 0) drawFloorCracks(ctx, time, still, variant, view.crack);
+    if (variant === 1) drawAtmosphereBack(ctx, time, still, true, "all");
+  }
+  if (view.eclipse > 0) drawDitherVeil(ctx, "#05020b", view.eclipse * 14, VIEW_X0, 0, VIEW_W, WORLD_H);
+};
+
+const twinkle = (ctx: Ctx, time: number, still: boolean, variant: VoidVariant) => {
+  if (still) return;
+  for (let i = 0; i < 34; i++) {
+    const speed = i % 2 ? 2.2 : 0.9;
+    const x = VIEW_X0 + ((noise2(i, 11) * VIEW_W + time * speed) % VIEW_W);
+    if (Math.floor(time * 2 + i) % 3 === 0) rect(ctx, STAR_COLORS[variant][2], x, 4 + noise2(i, 12) * 40, 1, 1);
+  }
+};
+const drawChunks = (ctx: Ctx, time: number, still: boolean, variant: VoidVariant) => {
   CHUNKS.forEach((chunk, index) => {
     const sprite = bakeChunk(index, variant);
     if (!sprite) return;
     const bob = still ? 0 : Math.round(Math.sin(time * 0.7 * chunk.par + index) * 3);
     const drift = still ? 0 : Math.round(Math.sin(time * 0.2 * chunk.par + index * 2) * 4);
-    const crumble = variant === 2 && !still ? Math.round(((time * 3 + index) % 8) * 0.4) : 0;
+    const crumble = variant >= 1 && !still ? Math.round(((time * 3 + index) % 8) * 0.4) : 0;
     ctx.drawImage(sprite, chunk.x + drift, chunk.y + bob + crumble);
   });
-  if (view.crack > 0) {
-    const shown = Math.floor(CRACK_LEN * Math.min(1, view.crack));
-    const colors = CRACK_COLORS[variant];
-    const flick = still ? 0 : Math.floor(time * 6);
-    for (let crack = 0; crack < CRACKS; crack++)
-      for (let i = 0; i < shown; i++) {
-        const at = crack * CRACK_LEN + i;
-        rect(ctx, (i + flick + crack) % 4 === 0 ? colors[1] : colors[0], CRACK_XS[at], CRACK_YS[at], 1, 1);
-        if (i % 6 === 0) rect(ctx, colors[0], CRACK_XS[at] + 1, CRACK_YS[at], 2, 1);
-      }
-  }
-  if (variant === 2 && !still)
-    for (let i = 0; i < 18; i++) {
-      const fall = (time * (14 + noise2(i, 21) * 20) + noise2(i, 22) * WORLD_H) % WORLD_H;
-      const size = 1 + Math.floor(noise2(i, 23) * 3);
-      rect(ctx, i % 4 === 0 ? "#ffb030" : ROCK[2], VIEW_X0 + noise2(i, 24) * VIEW_W, fall, size, size);
+};
+const drawFloorCracks = (ctx: Ctx, time: number, still: boolean, variant: VoidVariant, grow: number) => {
+  const shown = Math.floor(CRACK_LEN * Math.min(1, grow));
+  const colors = CRACK_COLORS[variant];
+  const flick = still ? 0 : Math.floor(time * 6);
+  for (let crack = 0; crack < CRACKS; crack++)
+    for (let i = 0; i < shown; i++) {
+      const at = crack * CRACK_LEN + i;
+      rect(ctx, (i + flick + crack) % 4 === 0 ? colors[1] : colors[0], CRACK_XS[at], CRACK_YS[at], 1, 1);
+      if (i % 6 === 0) rect(ctx, colors[0], CRACK_XS[at] + 1, CRACK_YS[at], 2, 1);
     }
-  if (view.eclipse > 0) drawDitherVeil(ctx, "#05020b", view.eclipse * 14, VIEW_X0, 0, VIEW_W, WORLD_H);
 };
 
 /** the front of floor 4 (top band and far corners): after every character */
@@ -536,6 +575,6 @@ export const drawVoidFront = (ctx: Ctx, variant: VoidVariant) => {
   else buildVoidFront(ctx, variant);
 };
 
-/** the scene variant of a phase */
+/** the scene variant of a phase (phase 3 and the death are the colossus's) */
 export const voidVariantOf = (phase: string): VoidVariant =>
   phase === "phase3" || phase === "dying" ? 2 : phase === "phase2" ? 1 : 0;

@@ -112,6 +112,8 @@ import {
 import { BoardNotes, sanitizeQuests, type QuestMsgRow } from "./questNotes";
 import { drawScene } from "./render";
 import {
+  VOID_ASCEND_S,
+  VOID_BANNER_AWAKENS_S,
   VOID_BANNER_S,
   VOID_BANNER_TRUE_FORM_S,
   VOID_BANNER_VICTORY_S,
@@ -120,6 +122,9 @@ import {
   VOID_BLINK_DX,
   VOID_BODY_H,
   VOID_COIN_COUNT,
+  VOID_CORE_HIT_H,
+  VOID_CORE_HIT_W,
+  VOID_CORE_OPEN_S,
   VOID_COIN_SPREAD,
   VOID_CRACK_EVERY_S,
   VOID_CRIT_POP_S,
@@ -131,6 +136,8 @@ import {
   VOID_ECLIPSE_DODGED_HEARTS,
   VOID_ECLIPSE_HIT_HEARTS,
   VOID_ECLIPSE_HURT_S,
+  VOID_EYE_CRACK_S,
+  VOID_EYE_SHATTER_S,
   VOID_FEET_Y,
   VOID_FIRST_ATTACK_P2_S,
   VOID_FIRST_ATTACK_P3_S,
@@ -146,6 +153,9 @@ import {
   VOID_FX_ROAR,
   VOID_FX_SHATTER,
   VOID_GOLD,
+  VOID_HAND_RISE_S,
+  VOID_HAND_SINK_S,
+  VOID_HAND_SLAM_S,
   VOID_HEART_FLOOR,
   VOID_HOME_X,
   VOID_HP_MULT,
@@ -165,16 +175,18 @@ import {
   VOID_PRAISE_TEXT,
   VOID_REVEAL_S,
   VOID_RETREAT_S,
-  VOID_ROAR_S,
+  VOID_SHAKE_ASCEND,
   VOID_SHAKE_BEAM,
   VOID_SHAKE_COLLAPSE,
   VOID_SHAKE_CRIT,
   VOID_SHAKE_DEATH,
   VOID_SHAKE_DECAY,
   VOID_SHAKE_ECLIPSE,
+  VOID_SHAKE_EYE_SHATTER,
+  VOID_SHAKE_GAZE,
+  VOID_SHAKE_HAND,
   VOID_SHAKE_FLASH,
   VOID_SHAKE_REVEAL,
-  VOID_SHAKE_ROAR,
   VOID_SHAKE_SHATTER,
   VOID_SHAKE_TRUE_FORM,
   VOID_SHAKE_VICTORY,
@@ -190,6 +202,8 @@ import {
   VOID_XP,
   beginVoidAttack,
   damageVoid,
+  homeVoidHand,
+  homeVoidHands,
   freshVoidCtl,
   pickVoidAttack,
   resetVoid,
@@ -199,6 +213,10 @@ import {
   voidAttackPhase,
   voidBeamArrive,
   voidCollapseAt,
+  voidCoreX,
+  voidCoreY,
+  voidGazeX,
+  voidHandFor,
   voidEyeCount,
   voidFightingPhase,
   voidHpFrac,
@@ -223,7 +241,9 @@ import {
   VOID_MINION_REACH_PX,
   VOID_MINION_SPEED,
   VOID_MINION_STRIKE_EVERY_S,
+  VOID_PUSHBACK_S,
   VOID_QUAKE_S,
+  VOID_HAND_QUAKE_S,
   VOID_STEP_S,
   VOID_TAUNT_EVERY_S,
   clearVoidMinion,
@@ -5186,9 +5206,19 @@ export class Office {
     const slot = dungeonSpotIndex(this.raidSpotIndex(emp));
     const to = { x: 0, y: 0 };
     voidSpotOf(slot, emp.look.cls, to);
-    const stepAt = this.voidCtl.stepAt;
-    if (stepAt < 0) return dungeonSpotOf(slot, DUNGEON_FLOORS);
-    const progress = this.reducedMotion ? 1 : Math.min(1, Math.max(0, (this.clock - stepAt) / VOID_STEP_S));
+    const ctl = this.voidCtl;
+    if (ctl.stepAt < 0) return dungeonSpotOf(slot, DUNGEON_FLOORS);
+    if (ctl.ring !== 0) {
+      // pushed back by a transformation shockwave: slide from the previous ring to the new one
+      const prev = { x: 0, y: 0 };
+      voidSpotOf(slot, emp.look.cls, prev, ctl.prevRing);
+      voidSpotOf(slot, emp.look.cls, to, ctl.ring);
+      const slide = this.reducedMotion
+        ? 1
+        : Math.min(1, Math.max(0, (this.clock - this.voidFight.pushbackAt) / VOID_PUSHBACK_S));
+      return { x: prev.x + (to.x - prev.x) * slide, y: prev.y + (to.y - prev.y) * slide };
+    }
+    const progress = this.reducedMotion ? 1 : Math.min(1, Math.max(0, (this.clock - ctl.stepAt) / VOID_STEP_S));
     const from = dungeonSpotOf(slot, DUNGEON_FLOORS);
     return { x: from.x + (to.x - from.x) * progress, y: from.y + (to.y - from.y) * progress };
   }
@@ -5204,6 +5234,25 @@ export class Office {
     if (this.reducedMotion) return;
     const boss = this.voidFight;
     boss.shake = atLeast ? Math.max(boss.shake, amount) : Math.min(1, boss.shake + amount);
+  }
+
+  /** the transformation shockwave: knock every raider away from the boss (no heart lost) and move their stand back */
+  private voidPushback(ring: 1 | 2) {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      origin = this.voidBody();
+    for (const emp of this.voidFighters()) {
+      const at = this.raiderPoint(emp); // where they stand now: the slide starts from here
+      emp.voidHitAt = this.clock;
+      emp.voidKnock = at.x <= origin.x ? -1 : 1;
+      emp.hurtUntil = this.clock + VOID_HURT_S;
+    }
+    ctl.prevRing = ctl.ring;
+    ctl.ring = ring;
+    boss.pushbackAt = this.clock;
+    boss.pushbackX = origin.x;
+    boss.pushbackY = origin.y;
+    this.voidImpact(origin.x, origin.y);
   }
 
   /** the boss's body centre, for effects */
@@ -5414,54 +5463,22 @@ export class Office {
     boss.shielded = false;
   }
 
-  /** below 60% hp: the veil tears, a short invulnerable roar, then faster attacks (and the collapse) */
+  /** below 60% hp: the TRUE FORM cinematic (invulnerable, shaking), then harder attacks with the collapse and the eclipse */
   private startVoidPhase2() {
     const boss = this.voidFight,
       ctl = this.voidCtl,
       clock = this.clock;
     setVoidPhase(boss, clock, "phase2");
     boss.phase2At = clock;
-    boss.invulnUntil = clock + VOID_ROAR_S;
+    boss.invulnUntil = clock + VOID_TRUE_FORM_S;
     stopVoidAttack(boss, clock);
     this.clearVoidMinions();
     ctl.nextAttackAt = boss.invulnUntil + VOID_FIRST_ATTACK_P2_S;
     ctl.nextTauntAt = boss.invulnUntil + VOID_TAUNT_EVERY_S / 2;
+    ctl.phaseCount = 0;
+    this.voidPushback(1);
     cutVoidBeats(boss, ctl, clock);
-    this.voidBeats({ text: m.void_banner_phase2(), dur: VOID_BANNER_S }, VOID_LINE_PHASE2);
-    this.sfx("voidPhase2");
-    this.voidShake(VOID_SHAKE_ROAR);
-    const body = this.voidBody();
-    this.onFloor(VOID_FLOOR, () =>
-      this.burst(
-        body.x,
-        body.y,
-        VOID_FX_ROAR.n,
-        VOID_FX_ROAR.cols,
-        VOID_FX_ROAR.speed,
-        VOID_FX_ROAR.gravity,
-        VOID_FX_ROAR.life,
-        1,
-        true,
-      ),
-    );
-    this.bumpStats();
-  }
-
-  /** below 25% hp: the TRUE FORM cinematic (invulnerable, shaking), then desperate attacks with the eclipse */
-  private startVoidPhase3() {
-    const boss = this.voidFight,
-      ctl = this.voidCtl,
-      clock = this.clock;
-    setVoidPhase(boss, clock, "phase3");
-    boss.phase3At = clock;
-    boss.invulnUntil = clock + VOID_TRUE_FORM_S;
-    stopVoidAttack(boss, clock);
-    this.clearVoidMinions();
-    ctl.nextAttackAt = boss.invulnUntil + VOID_FIRST_ATTACK_P3_S;
-    ctl.nextTauntAt = boss.invulnUntil + VOID_TAUNT_EVERY_S / 2;
-    ctl.phase3Count = 0;
-    cutVoidBeats(boss, ctl, clock);
-    this.voidBeats({ text: m.void_banner_true_form(), dur: VOID_BANNER_TRUE_FORM_S }, VOID_LINE_PHASE3);
+    this.voidBeats({ text: m.void_banner_true_form(), dur: VOID_BANNER_TRUE_FORM_S }, VOID_LINE_PHASE2);
     this.sfx("voidTrueForm");
     this.voidShake(VOID_SHAKE_TRUE_FORM, true);
     const body = this.voidBody();
@@ -5481,6 +5498,70 @@ export class Office {
     this.bumpStats();
   }
 
+  /**
+   * below 25% hp: THE VOID AWAKENS. The boss rises into the sky eye (invulnerable ascend, shaking), the core floats
+   * down between the colossus's hands, then the hands slam and the eye sweeps a gaze beam (no minions).
+   */
+  private startVoidPhase3() {
+    const boss = this.voidFight,
+      ctl = this.voidCtl,
+      clock = this.clock;
+    setVoidPhase(boss, clock, "phase3");
+    boss.phase3At = clock;
+    boss.ascendAt = clock;
+    boss.invulnUntil = clock + VOID_ASCEND_S;
+    boss.coreOpenAt = boss.invulnUntil - VOID_CORE_OPEN_S;
+    boss.x = VOID_HOME_X;
+    this.tickVoidCore();
+    stopVoidAttack(boss, clock);
+    this.clearVoidMinions();
+    homeVoidHands(boss, clock, "rise");
+    ctl.nextAttackAt = boss.invulnUntil + VOID_FIRST_ATTACK_P3_S;
+    ctl.nextTauntAt = boss.invulnUntil + VOID_TAUNT_EVERY_S / 2;
+    ctl.phaseCount = 0;
+    this.voidPushback(2);
+    cutVoidBeats(boss, ctl, clock);
+    this.voidBeats({ text: m.void_banner_awakens(), dur: VOID_BANNER_AWAKENS_S }, VOID_LINE_PHASE3);
+    this.sfx("voidAscend");
+    this.voidShake(VOID_SHAKE_ASCEND, true);
+    const body = this.voidBody();
+    this.onFloor(VOID_FLOOR, () =>
+      this.burst(
+        body.x,
+        body.y,
+        VOID_FX_FLASH.n,
+        VOID_FX_FLASH.cols,
+        VOID_FX_FLASH.speed,
+        VOID_FX_FLASH.gravity,
+        VOID_FX_FLASH.life,
+        1,
+        true,
+      ),
+    );
+    this.bumpStats();
+  }
+
+  /** the core drifts across the arena and floats down from above (phase 3, until it dies) */
+  private tickVoidCore() {
+    const boss = this.voidFight;
+    boss.coreX = voidCoreX(this.clock, boss.ascendAt);
+    boss.coreY = voidCoreY(this.clock, boss.coreOpenAt);
+  }
+
+  /** the colossus's hands: rise -> hover, slam -> sink -> hover */
+  private tickVoidHands() {
+    const boss = this.voidFight,
+      clock = this.clock;
+    for (const hand of boss.hands) {
+      const age = clock - hand.at;
+      if (hand.state === "rise" && age >= VOID_HAND_RISE_S) homeVoidHand(hand, clock, "hover");
+      else if (hand.state === "slam" && age >= VOID_HAND_SLAM_S) {
+        hand.state = "sink";
+        hand.at = clock;
+      } else if (hand.state === "sink" && age >= VOID_HAND_SINK_S) homeVoidHand(hand, clock, "hover");
+    }
+  }
+
   /** the pool is spent: the multi-stage death (no victory plaque until it has played out) */
   private startVoidDying() {
     const boss = this.voidFight,
@@ -5489,6 +5570,8 @@ export class Office {
     boss.hp = 0;
     setVoidPhase(boss, clock, "dying");
     boss.dyingAt = clock;
+    boss.dyingEye = boss.ascendAt >= 0; // it died as the colossus: the eye shatters
+    if (boss.dyingEye) homeVoidHands(boss, clock, "sink");
     boss.invulnUntil = Infinity;
     stopVoidAttack(boss, clock);
     this.clearVoidMinions();
@@ -5509,6 +5592,7 @@ export class Office {
       clock = this.clock;
     setVoidPhase(boss, clock, "retreat");
     stopVoidAttack(boss, clock);
+    homeVoidHands(boss, clock);
     this.clearVoidMinions();
     ctl.nextAttackAt = -1;
     cutVoidBeats(boss, ctl, clock);
@@ -5568,9 +5652,14 @@ export class Office {
     const boss = this.voidFight;
     damageVoid(boss, dmg);
     boss.hitAt = this.clock; // only when damage was applied
-    const body = this.voidBody();
-    const hitX = boss.x + rand(-VOID_BODY_W / 2, VOID_BODY_W / 2);
-    const hitY = VOID_FEET_Y - VOID_BODY_H * rand(VOID_HIT_Y_MIN, VOID_HIT_Y_MAX);
+    const colossus = boss.phase === "phase3";
+    const body = colossus ? { x: boss.coreX, y: boss.coreY + VOID_BODY_H / 2 } : this.voidBody(); // the core is the weak point
+    const hitX = colossus
+      ? boss.coreX + rand(-VOID_CORE_HIT_W / 2, VOID_CORE_HIT_W / 2)
+      : boss.x + rand(-VOID_BODY_W / 2, VOID_BODY_W / 2);
+    const hitY = colossus
+      ? boss.coreY + rand(-VOID_CORE_HIT_H / 2, VOID_CORE_HIT_H / 2)
+      : VOID_FEET_Y - VOID_BODY_H * rand(VOID_HIT_Y_MIN, VOID_HIT_Y_MAX);
     boss.lastHitX = hitX;
     boss.lastHitY = hitY;
     boss.lastHitDmg = dmg;
@@ -5606,7 +5695,12 @@ export class Office {
       clock = this.clock;
     const dt = ctl.lastAt < 0 ? 0 : Math.min(MAX_FRAME_DT, clock - ctl.lastAt);
     ctl.lastAt = clock;
-    if (boss.phase === "phase3" && clock < boss.invulnUntil) this.voidShake(VOID_SHAKE_TRUE_FORM, true);
+    if (boss.phase === "phase2" && clock < boss.invulnUntil) this.voidShake(VOID_SHAKE_TRUE_FORM, true);
+    if (boss.phase === "phase3") {
+      if (clock < boss.invulnUntil) this.voidShake(VOID_SHAKE_ASCEND, true);
+      this.tickVoidCore();
+      this.tickVoidHands();
+    }
     if (clock >= ctl.nextMenaceAt) {
       boss.menaceAt = clock;
       ctl.nextMenaceAt = clock + VOID_MENACE_EVERY_S;
@@ -5694,17 +5788,25 @@ export class Office {
       ctl = this.voidCtl,
       fighters = this.voidFighters();
     if (!fighters.length) return;
-    const kind = pickVoidAttack(boss.phase, ctl.prev, ctl.phase3Count, Math.random(), voidMinionsAlive(boss) > 0);
+    const kind = pickVoidAttack(boss.phase, ctl.prev, ctl.phaseCount, Math.random(), voidMinionsAlive(boss) > 0);
     const victim = fighters[Math.floor(Math.random() * fighters.length) % fighters.length];
-    const at = this.raiderPoint(victim);
+    const at =
+      kind === "gaze" ? { x: VOID_ARENA_X0, y: (VOID_ARENA_Y0 + VOID_ARENA_Y1) / 2 } : this.raiderPoint(victim);
     ctl.count++;
     ctl.prev = kind;
-    if (boss.phase === "phase3") ctl.phase3Count++;
+    if (boss.phase === "phase2" || boss.phase === "phase3") ctl.phaseCount++;
     ctl.targetId = victim.id;
     ctl.done.clear();
     const attack = beginVoidAttack(boss, this.clock, kind, at.x, at.y, ctl.count);
     if (kind === "eyes") spawnVoidEyes(boss, this.clock, attack, voidEyeCount(boss.phase));
     if (kind === "eclipse") this.sfx("voidEclipse");
+    if (kind === "hand") {
+      const hand = boss.hands[voidHandFor(boss, at.x)];
+      hand.state = "windup";
+      hand.at = this.clock;
+      hand.x = at.x;
+      hand.y = at.y;
+    }
     ctl.nextAttackAt = attack.endAt + voidNextGap(boss.phase, Math.random());
   }
 
@@ -5725,7 +5827,6 @@ export class Office {
         boss.blinkFromX = boss.x;
         boss.blinkAt = this.clock;
         boss.x = (victim ? this.raiderPoint(victim).x : attack.targetX) + VOID_BLINK_DX;
-        if (boss.phase === "phase3") boss.x = Math.max(boss.x, VOID_HOME_X); // the towering form never covers the raiders
         this.sfx("voidBlink");
         this.voidImpact(boss.x, attack.targetY);
         if (victim && victim.inDungeon && victim.floor === VOID_FLOOR) this.voidStrike(victim, "attack");
@@ -5745,6 +5846,25 @@ export class Office {
         boss.quakeUntil = this.clock + VOID_QUAKE_S;
         this.voidImpact((VOID_ARENA_X0 + VOID_ARENA_X1) / 2, (VOID_ARENA_Y0 + VOID_ARENA_Y1) / 2);
         for (const emp of this.voidFighters()) this.voidStrike(emp, "eclipse");
+        break;
+      case "hand": {
+        this.sfx("voidHandSlam");
+        this.voidShake(VOID_SHAKE_HAND);
+        if (!this.reducedMotion) boss.quakeUntil = this.clock + VOID_HAND_QUAKE_S;
+        this.voidImpact(attack.targetX, attack.targetY);
+        for (const hand of boss.hands)
+          if (hand.state === "windup") {
+            hand.state = "slam";
+            hand.at = this.clock;
+          }
+        const victim = this.employees.get(ctl.targetId);
+        if (victim && victim.inDungeon && victim.floor === VOID_FLOOR) this.voidStrike(victim, "attack");
+        break;
+      }
+      case "gaze":
+        this.sfx("voidGaze");
+        this.voidShake(VOID_SHAKE_GAZE);
+        this.voidImpact(VOID_ARENA_X0, attack.targetY);
         break;
       case "summon": {
         this.sfx("lordSummon");
@@ -5788,6 +5908,10 @@ export class Office {
         if (Math.abs(spot.y - attack.targetY) > VOID_BEAM_HALF_PX) continue;
         if (clock >= attack.hitAt + voidBeamArrive(boss.x, spot.x)) this.voidStrike(emp, "attack");
       }
+    } else if (attack.kind === "gaze") {
+      const sweepX = voidGazeX(attack, clock, VOID_ARENA_X0, VOID_ARENA_X1);
+      for (const emp of this.voidFighters())
+        if (!ctl.done.has(emp.id) && this.raiderPoint(emp).x <= sweepX) this.voidStrike(emp, "attack");
     } else if (attack.kind === "eyes") {
       for (const eye of boss.eyes) {
         if (!eye.on || eye.fired || clock < eye.fireAt) continue;
@@ -5872,8 +5996,12 @@ export class Office {
   /** the dying boss: cracks of light, then the implosion, then the final flash */
   private tickVoidDeath(age: number) {
     const ctl = this.voidCtl,
-      body = this.voidBody();
-    if (age < VOID_DEATH_CRACK_S) {
+      boss = this.voidFight,
+      eye = boss.dyingEye,
+      body = eye ? { x: boss.coreX, y: boss.coreY } : this.voidBody();
+    const crackS = eye ? VOID_EYE_CRACK_S : VOID_DEATH_CRACK_S;
+    const implodeS = eye ? VOID_EYE_SHATTER_S : VOID_DEATH_IMPLODE_S;
+    if (age < crackS) {
       if (this.clock - ctl.crackAt >= VOID_CRACK_EVERY_S) {
         ctl.crackAt = this.clock;
         this.voidShake(VOID_SHAKE_CRIT);
@@ -5891,10 +6019,11 @@ export class Office {
       }
       return;
     }
-    if (age < VOID_DEATH_IMPLODE_S) {
+    if (age < implodeS) {
       if (ctl.deathStep < VOID_STEP_IMPLODE) {
         ctl.deathStep = VOID_STEP_IMPLODE;
-        this.voidShake(VOID_SHAKE_DEATH);
+        if (eye) this.sfx("voidShatterEye");
+        this.voidShake(eye ? VOID_SHAKE_EYE_SHATTER : VOID_SHAKE_DEATH);
         this.onFloor(VOID_FLOOR, () =>
           this.ring(
             body.x,

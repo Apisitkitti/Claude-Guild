@@ -4,12 +4,13 @@
 //  - form 1 (80x96): robed, veiled, cracked porcelain mask, black thorn crown, ring of eyes. Frames 0-3 idle (float +
 //    veil sway + eyes opening), 4 cast (arms out, cyan orb), 5 blink-out, 6 blink-in.
 //  - form 2 (80x96): the veil is torn, the mask is half broken around a glowing eye, two extra shadow arms. Same frames.
-//  - form 3 TRUE FORM (160x128): towering, shattered mask, giant chest eye, six wings of void and eyes, crown ablaze.
-//    Frames 0-3 idle, 4 raise-arms (the eclipse).
-//  - voidBossDyingSprite(stage): form 3 with cracks spreading (0-3), then imploding (4-6).
+//  - form 3 TRUE FORM (160x128 painted, 240x192 on screen): towering, shattered mask, giant chest eye, six wings of void
+//    and eyes, crown ablaze. Phase 2 is this form. Frames 0-3 idle, 4 raise-arms (the eclipse, and the phase 3 ascend).
+//  - form 2 (the torn veil) is no longer a phase: it is only the mid-frame of the phase 2 transformation.
 // All sprites face the viewer, bottom-centre anchored (draw at x - wide/2, y - high).
 
 import { Grid as BaseGrid, lighten, mix } from "./sprites";
+import { COLOSSUS_SCALES } from "./voidVisualLogic";
 
 export type VoidForm = 1 | 2 | 3;
 
@@ -24,20 +25,19 @@ export const VOID_BLINK_IN_FRAME = 6;
 export const VOID_RAISE_FRAME = 4;
 /** dither levels 0 (whole) .. VOID_DITHER_STEPS (nothing left) */
 export const VOID_DITHER_STEPS = 8;
-/** dying stages: 0-3 cracks spreading, 4-6 imploding */
-export const VOID_DYING_STAGES = 7;
-export const VOID_CRACK_STAGES = 4;
 
 /** the veiled forms are drawn at this scale (nearest-neighbour, before the outline) so they tower over the raiders */
 export const VOID_FIGURE_SCALE = 1.5;
+/** the true form is painted at 160x128 and shown 1.5x bigger: it fills the sky above the arena */
+export const VOID_TRUE_SCALE = 1.5;
 export const voidFormSize = (form: VoidForm): { wide: number; high: number } =>
   form === 3
-    ? { wide: VOID_TRUE_W, high: VOID_TRUE_H }
+    ? { wide: Math.round(VOID_TRUE_W * VOID_TRUE_SCALE), high: Math.round(VOID_TRUE_H * VOID_TRUE_SCALE) }
     : { wide: Math.round(VOID_W * VOID_FIGURE_SCALE), high: Math.round(VOID_H * VOID_FIGURE_SCALE) };
 export const voidFormFrames = (form: VoidForm): number => (form === 3 ? 5 : 7);
 
 // ---- palette (deep violet / black, bone white, sickly cyan and gold) ------------------------------------------------
-interface Ramp {
+export interface Ramp {
   base: string;
   hi: string;
   sh: string;
@@ -436,7 +436,7 @@ const wing = (grid: Grid, sx: number, sy: number, side: number, def: WingDef, fr
   eye(grid, sx + side * Math.sin(mid) * def.len * 0.32, sy - Math.cos(mid) * def.len * 0.32, 2, GOLD);
 };
 
-const drawTrue = (grid: Grid, frame: number) => {
+const drawTrue = (grid: Grid, frame: number, arms = true) => {
   const cx = 80,
     raise = frame === VOID_RAISE_FRAME,
     idle = raise ? 1 : frame % VOID_IDLE_FRAMES;
@@ -563,8 +563,8 @@ const drawTrue = (grid: Grid, frame: number) => {
       if (wide > 0) grid.row(tipY - 1 - i, fx - wide + 1, fx + wide - 1, i < flameH * 0.6 ? GOLD_HI : WHITE);
     }
   }
-  // arms and claws
-  for (const side of [-1, 1]) {
+  // arms and claws (the colossus has none: its hands are separate, joined by drawn arms)
+  for (const side of arms ? [-1, 1] : []) {
     if (raise) {
       grid.limb(cx + side * 22, 52, 5, cx + side * 30, 34, 4, ROBE3);
       grid.limb(cx + side * 30, 34, 4, cx + side * 36, 16, 3, ROBE3);
@@ -628,7 +628,7 @@ export const voidBossSprite = (form: VoidForm, frame: number, hurt = false, dith
   if (form === 3) drawTrue(grid, index);
   else drawVeiled(grid, form, index);
   if (form !== 3 && index >= VOID_BLINK_OUT_FRAME) squeeze(grid, index, VOID_W);
-  if (form !== 3) grid = grid.upscaled(VOID_FIGURE_SCALE);
+  grid = grid.upscaled(form === 3 ? VOID_TRUE_SCALE : VOID_FIGURE_SCALE);
   grid.outline();
   grid.dither(level);
   if (hurt) grid.recolorFill(hurtTone);
@@ -637,47 +637,41 @@ export const voidBossSprite = (form: VoidForm, frame: number, hurt = false, dith
   return canvas;
 };
 
-const crackPath = (index: number, reach: number): number[][] => {
-  const out: number[][] = [];
-  let px = 80,
-    py = 68;
-  const heading = (index / 9) * Math.PI * 2 + hash(index) * 0.6;
-  for (let i = 0; i < reach; i++) {
-    const wander = (hash(index * 31 + i) - 0.5) * 1.5;
-    px += Math.cos(heading + wander) * 1.4;
-    py += Math.sin(heading + wander) * 1.5;
-    out.push([px, py]);
-  }
-  return out;
-};
+/** the painting grid of the Veiled One's sprites (ellipses, limbs, strands, dither), for the colossus's hands */
+export { Grid as VoidGrid };
 
-/** the true form dying: stages 0-3 the light cracks through it, 4-6 it implodes toward its eye */
-export const voidBossDyingSprite = (stage: number): HTMLCanvasElement => {
-  const index = clampLevel(stage, VOID_DYING_STAGES - 1);
-  const key = `dying|${index}`;
+// ---- the colossus: the true form enlarged, armless, with a dark rim and a rim light --------------------------------------------
+const RIM_TINT = "#ff7a5a";
+/** every filled cell touching the outline gets a bright rim (a lit edge on the dark silhouette) */
+const rimLight = (grid: Grid) => {
+  const { width, height, cells, inked } = grid;
+  const out = cells.slice();
+  for (let y = 1; y < height - 1; y++)
+    for (let x = 1; x < width - 1; x++) {
+      const at = y * width + x;
+      const color = cells[at];
+      if (!color || inked.has(at)) continue;
+      if (inked.has(at - 1) || inked.has(at + 1) || inked.has(at - width) || inked.has(at + width))
+        out[at] = lighten(mix(color, RIM_TINT, 0.35), 0.4);
+    }
+  grid.cells = out;
+};
+export const VOID_COLOSSUS_FRAMES = 4;
+/** the colossus body at COLOSSUS_SCALES[step]: the true form (painted 160x128) with no arms, a 2 px dark outline and a lit rim */
+export const voidColossusSprite = (step: number, frame: number): HTMLCanvasElement => {
+  const scaleIndex = clampLevel(step, COLOSSUS_SCALES.length - 1);
+  const index = wrapIndex(frame, VOID_COLOSSUS_FRAMES);
+  const key = `colossus|${scaleIndex}|${index}`;
   const known = cache.get(key);
   if (known) return known;
   const grid = new Grid(VOID_TRUE_W, VOID_TRUE_H);
-  grid.dy = 4;
-  drawTrue(grid, 0);
-  const reach = 10 + index * 8;
-  const cracks = Math.min(9, 3 + index * 2);
-  for (let crack = 0; crack < cracks; crack++) {
-    crackPath(crack, reach).forEach(([cx, cy], step) => {
-      if (grid.get(cx, cy - 4) === null) return;
-      const bright = (step + crack) % 3 === 0;
-      grid.set(cx, cy - 4, bright ? WHITE : GOLD_HI);
-      if (step % 4 === 0) grid.set(cx + 1, cy - 4, GOLD);
-    });
-  }
-  if (index >= VOID_CRACK_STAGES) {
-    const shrink = [0.82, 0.52, 0.26][index - VOID_CRACK_STAGES];
-    grid.rescale(80, 68, shrink, shrink);
-    grid.ell(80, 68, 4 + (index - VOID_CRACK_STAGES) * 0.5, 4, { base: WHITE, hi: WHITE, sh: GOLD_HI, dk: GOLD });
-    grid.recolorFill((color) => lighten(color, 0.25 * (index - VOID_CRACK_STAGES + 1)));
-  }
-  grid.outline();
-  const canvas = grid.toCanvas();
+  grid.dy = 4 + BOB[index];
+  drawTrue(grid, index, false);
+  const big = grid.upscaled(COLOSSUS_SCALES[scaleIndex]);
+  big.outline();
+  rimLight(big);
+  big.outline();
+  const canvas = big.toCanvas();
   cache.set(key, canvas);
   return canvas;
 };

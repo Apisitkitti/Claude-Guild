@@ -276,6 +276,7 @@
   "void_banner_reveal": "ผู้เป็นนายตัวจริงตื่นแล้ว: The Veiled One!",
   "void_banner_phase2": "ม่านฉีกขาด!",
   "void_banner_true_form": "TRUE FORM",
+  "void_banner_awakens": "THE VOID AWAKENS",
   "void_banner_slain": "{tag} กับเหล่านักบุกของ {project} สังหาร The Veiled One ได้แล้ว!",
   "void_banner_retreat": "The Veiled One หลบกลับเข้าสู่ void…",
   "void_log_slain_detail": "The Veiled One ถูกสังหาร (รวม {count} ครั้ง)",
